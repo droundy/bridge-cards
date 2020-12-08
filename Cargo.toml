@@ -7,6 +7,7 @@ edition = "2018"
 description = "Yet another library for playing cards and sets of cards"
 repository = "https://github.com/droundy/bridge-deck"
 readme = "README.md"
+license = "MIT/Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
