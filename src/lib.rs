@@ -89,83 +89,83 @@ impl Card {
 
     /// 2 of Diamonds
     pub const D2: Card = Card::new(Suit::Diamonds, 2);
-    /// 2 of Diamonds
+    /// 3 of Diamonds
     pub const D3: Card = Card::new(Suit::Diamonds, 3);
-    /// 2 of Diamonds
+    /// 4 of Diamonds
     pub const D4: Card = Card::new(Suit::Diamonds, 4);
-    /// 2 of Diamonds
+    /// 5 of Diamonds
     pub const D5: Card = Card::new(Suit::Diamonds, 5);
-    /// 2 of Diamonds
+    /// 6 of Diamonds
     pub const D6: Card = Card::new(Suit::Diamonds, 6);
-    /// 2 of Diamonds
+    /// 7 of Diamonds
     pub const D7: Card = Card::new(Suit::Diamonds, 7);
-    /// 2 of Diamonds
+    /// 8 of Diamonds
     pub const D8: Card = Card::new(Suit::Diamonds, 8);
-    /// 2 of Diamonds
+    /// 9 of Diamonds
     pub const D9: Card = Card::new(Suit::Diamonds, 9);
-    /// 2 of Diamonds
+    /// 10 of Diamonds
     pub const D10: Card = Card::new(Suit::Diamonds, 10);
-    /// 2 of Diamonds
+    /// Jack of Diamonds
     pub const DJ: Card = Card::new(Suit::Diamonds, 11);
-    /// 2 of Diamonds
+    /// Queen of Diamonds
     pub const DQ: Card = Card::new(Suit::Diamonds, 12);
-    /// 2 of Diamonds
+    /// King of Diamonds
     pub const DK: Card = Card::new(Suit::Diamonds, 13);
-    /// 2 of Diamonds
+    /// Ace of Diamonds
     pub const DA: Card = Card::new(Suit::Diamonds, 14);
 
     /// 2 of Hearts
     pub const H2: Card = Card::new(Suit::Hearts, 2);
-    /// 2 of Hearts
+    /// 3 of Hearts
     pub const H3: Card = Card::new(Suit::Hearts, 3);
-    /// 2 of Hearts
+    /// 4 of Hearts
     pub const H4: Card = Card::new(Suit::Hearts, 4);
-    /// 2 of Hearts
+    /// 5 of Hearts
     pub const H5: Card = Card::new(Suit::Hearts, 5);
-    /// 2 of Hearts
+    /// 6 of Hearts
     pub const H6: Card = Card::new(Suit::Hearts, 6);
-    /// 2 of Hearts
+    /// 7 of Hearts
     pub const H7: Card = Card::new(Suit::Hearts, 7);
-    /// 2 of Hearts
+    /// 8 of Hearts
     pub const H8: Card = Card::new(Suit::Hearts, 8);
-    /// 2 of Hearts
+    /// 9 of Hearts
     pub const H9: Card = Card::new(Suit::Hearts, 9);
-    /// 2 of Hearts
+    /// 10 of Hearts
     pub const H10: Card = Card::new(Suit::Hearts, 10);
-    /// 2 of Hearts
+    /// Jack of Hearts
     pub const HJ: Card = Card::new(Suit::Hearts, 11);
-    /// 2 of Hearts
+    /// Queen of Hearts
     pub const HQ: Card = Card::new(Suit::Hearts, 12);
-    /// 2 of Hearts
+    /// King of Hearts
     pub const HK: Card = Card::new(Suit::Hearts, 13);
-    /// 2 of Hearts
+    /// Ace of Hearts
     pub const HA: Card = Card::new(Suit::Hearts, 14);
 
     /// 2 of Spades
     pub const S2: Card = Card::new(Suit::Spades, 2);
-    /// 2 of Spades
+    /// 3 of Spades
     pub const S3: Card = Card::new(Suit::Spades, 3);
-    /// 2 of Spades
+    /// 4 of Spades
     pub const S4: Card = Card::new(Suit::Spades, 4);
-    /// 2 of Spades
+    /// 5 of Spades
     pub const S5: Card = Card::new(Suit::Spades, 5);
-    /// 2 of Spades
+    /// 6 of Spades
     pub const S6: Card = Card::new(Suit::Spades, 6);
-    /// 2 of Spades
+    /// 7 of Spades
     pub const S7: Card = Card::new(Suit::Spades, 7);
-    /// 2 of Spades
+    /// 8 of Spades
     pub const S8: Card = Card::new(Suit::Spades, 8);
-    /// 2 of Spades
+    /// 9 of Spades
     pub const S9: Card = Card::new(Suit::Spades, 9);
-    /// 2 of Spades
+    /// 10 of Spades
     pub const S10: Card = Card::new(Suit::Spades, 10);
-    /// 2 of Spades
+    /// Jack of Spades
     pub const SJ: Card = Card::new(Suit::Spades, 11);
-    /// 2 of Spades
+    /// Queen of Spades
     pub const SQ: Card = Card::new(Suit::Spades, 12);
-    /// 2 of Spades
+    /// King of Spades
     pub const SK: Card = Card::new(Suit::Spades, 13);
-    /// 2 of Spades
+    /// Ace of Spades
     pub const SA: Card = Card::new(Suit::Spades, 14);
 }
 
