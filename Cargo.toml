@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["David Roundy <daveroundy@gmail.com>"]
 edition = "2018"
 
+description = "Yet another library for playing cards and sets of cards"
+repository = "https://github.com/droundy/bridge-deck"
+readme = "README.md"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
