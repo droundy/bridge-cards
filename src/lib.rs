@@ -1,12 +1,45 @@
+#![deny(missing_docs)]
+//! This crate defines a type [`Card`] for an individual card ([`Card`]) and
+//! another type [`Cards`] for a deck or hand of cards.
 
 /// A single card
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Card {
     offset: u8,
 }
 
+impl std::fmt::Debug for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let rank = self.rank();
+        match rank {
+            11 => write!(f, "J{:?}", self.suit()),
+            12 => write!(f, "Q{:?}", self.suit()),
+            13 => write!(f, "K{:?}", self.suit()),
+            14 => write!(f, "A{:?}", self.suit()),
+            _ => write!(f, "{}{:?}", rank, self.suit()),
+        }
+    }
+}
+impl std::fmt::Debug for Suit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Suit::Clubs => write!(f, "C"),
+            Suit::Diamonds => write!(f, "D"),
+            Suit::Hearts => write!(f, "H"),
+            Suit::Spades => write!(f, "S"),
+        }
+    }
+}
+
+#[test]
+fn debug() {
+    assert_eq!(&format!("{:?}", Card::new(Suit::Hearts, 4)), "4H");
+    assert_eq!(&format!("{:?}", Card::SA), "AS");
+}
+
 /// This module defines card constants
 impl Card {
+    /// Create a new card with given rank and suit.
     pub const fn new(suit: Suit, rank: u8) -> Card {
         // debug_assert!(rank < 15);
         // debug_assert!(rank > 1);
@@ -14,68 +47,138 @@ impl Card {
             offset: rank + 16 * suit as u8,
         }
     }
+    /// What is the Suit?
+    pub const fn suit(self) -> Suit {
+        match self.offset >> 4 {
+            0 => Suit::Clubs,
+            1 => Suit::Diamonds,
+            2 => Suit::Hearts,
+            _ => Suit::Spades,
+        }
+    }
+    /// What is my rank?
+    pub const fn rank(self) -> u8 {
+        self.offset % 16
+    }
+    /// 2 of Clubs
     pub const C2: Card = Card::new(Suit::Clubs, 2);
+    /// 3 of Clubs
     pub const C3: Card = Card::new(Suit::Clubs, 3);
+    /// 4 of Clubs
     pub const C4: Card = Card::new(Suit::Clubs, 4);
+    /// 5 of Clubs
     pub const C5: Card = Card::new(Suit::Clubs, 5);
+    /// 6 of Clubs
     pub const C6: Card = Card::new(Suit::Clubs, 6);
+    /// 7 of Clubs
     pub const C7: Card = Card::new(Suit::Clubs, 7);
+    /// 8 of Clubs
     pub const C8: Card = Card::new(Suit::Clubs, 8);
+    /// 9 of Clubs
     pub const C9: Card = Card::new(Suit::Clubs, 9);
+    /// 10 of Clubs
     pub const C10: Card = Card::new(Suit::Clubs, 10);
+    /// Jack of Clubs
     pub const CJ: Card = Card::new(Suit::Clubs, 11);
+    /// Queen of Clubs
     pub const CQ: Card = Card::new(Suit::Clubs, 12);
+    /// King of Clubs
     pub const CK: Card = Card::new(Suit::Clubs, 13);
+    /// Ace of Clubs
     pub const CA: Card = Card::new(Suit::Clubs, 14);
 
+    /// 2 of Diamonds
     pub const D2: Card = Card::new(Suit::Diamonds, 2);
+    /// 2 of Diamonds
     pub const D3: Card = Card::new(Suit::Diamonds, 3);
+    /// 2 of Diamonds
     pub const D4: Card = Card::new(Suit::Diamonds, 4);
+    /// 2 of Diamonds
     pub const D5: Card = Card::new(Suit::Diamonds, 5);
+    /// 2 of Diamonds
     pub const D6: Card = Card::new(Suit::Diamonds, 6);
+    /// 2 of Diamonds
     pub const D7: Card = Card::new(Suit::Diamonds, 7);
+    /// 2 of Diamonds
     pub const D8: Card = Card::new(Suit::Diamonds, 8);
+    /// 2 of Diamonds
     pub const D9: Card = Card::new(Suit::Diamonds, 9);
+    /// 2 of Diamonds
     pub const D10: Card = Card::new(Suit::Diamonds, 10);
+    /// 2 of Diamonds
     pub const DJ: Card = Card::new(Suit::Diamonds, 11);
+    /// 2 of Diamonds
     pub const DQ: Card = Card::new(Suit::Diamonds, 12);
+    /// 2 of Diamonds
     pub const DK: Card = Card::new(Suit::Diamonds, 13);
+    /// 2 of Diamonds
     pub const DA: Card = Card::new(Suit::Diamonds, 14);
 
+    /// 2 of Hearts
     pub const H2: Card = Card::new(Suit::Hearts, 2);
+    /// 2 of Hearts
     pub const H3: Card = Card::new(Suit::Hearts, 3);
+    /// 2 of Hearts
     pub const H4: Card = Card::new(Suit::Hearts, 4);
+    /// 2 of Hearts
     pub const H5: Card = Card::new(Suit::Hearts, 5);
+    /// 2 of Hearts
     pub const H6: Card = Card::new(Suit::Hearts, 6);
+    /// 2 of Hearts
     pub const H7: Card = Card::new(Suit::Hearts, 7);
+    /// 2 of Hearts
     pub const H8: Card = Card::new(Suit::Hearts, 8);
+    /// 2 of Hearts
     pub const H9: Card = Card::new(Suit::Hearts, 9);
+    /// 2 of Hearts
     pub const H10: Card = Card::new(Suit::Hearts, 10);
+    /// 2 of Hearts
     pub const HJ: Card = Card::new(Suit::Hearts, 11);
+    /// 2 of Hearts
     pub const HQ: Card = Card::new(Suit::Hearts, 12);
+    /// 2 of Hearts
     pub const HK: Card = Card::new(Suit::Hearts, 13);
+    /// 2 of Hearts
     pub const HA: Card = Card::new(Suit::Hearts, 14);
 
+    /// 2 of Spades
     pub const S2: Card = Card::new(Suit::Spades, 2);
+    /// 2 of Spades
     pub const S3: Card = Card::new(Suit::Spades, 3);
+    /// 2 of Spades
     pub const S4: Card = Card::new(Suit::Spades, 4);
+    /// 2 of Spades
     pub const S5: Card = Card::new(Suit::Spades, 5);
+    /// 2 of Spades
     pub const S6: Card = Card::new(Suit::Spades, 6);
+    /// 2 of Spades
     pub const S7: Card = Card::new(Suit::Spades, 7);
+    /// 2 of Spades
     pub const S8: Card = Card::new(Suit::Spades, 8);
+    /// 2 of Spades
     pub const S9: Card = Card::new(Suit::Spades, 9);
+    /// 2 of Spades
     pub const S10: Card = Card::new(Suit::Spades, 10);
+    /// 2 of Spades
     pub const SJ: Card = Card::new(Suit::Spades, 11);
+    /// 2 of Spades
     pub const SQ: Card = Card::new(Suit::Spades, 12);
+    /// 2 of Spades
     pub const SK: Card = Card::new(Suit::Spades, 13);
+    /// 2 of Spades
     pub const SA: Card = Card::new(Suit::Spades, 14);
 }
 
+/// The four suits
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Suit {
+    /// Clubs
     Clubs = 0,
+    /// Diamonds
     Diamonds = 1,
+    /// Hearts
     Hearts = 2,
+    /// Spades
     Spades = 3,
 }
 
@@ -86,6 +189,7 @@ pub struct Cards {
 }
 
 impl Cards {
+    /// How many cards are there?
     pub const fn len(&self) -> usize {
         self.bits.count_ones() as usize
     }
@@ -100,12 +204,15 @@ impl Cards {
         self.bits & (1 << card.offset) != 0
     }
 
+    /// Join two stacks of cards together
     pub fn union(&self, cards: Cards) -> Cards {
         Cards {
             bits: self.bits | cards.bits,
         }
     }
 
+    /// Randomly pick `num` cards to remove from the deck.
+    /// Returns `None` only if there aren't enough cards.
     pub fn pick(&mut self, mut num: usize) -> Option<Cards> {
         let mut bits = self.bits;
         let mut n_left = self.len();
@@ -143,7 +250,11 @@ impl Cards {
         Some(Cards { bits: given })
     }
 
-    pub const ALL: Cards = Cards { bits: 7 };
+    /// All 52 cards.
+    pub const ALL: Cards = Cards {
+        bits: 0x7ffc + (0x7ffc << 16) + (0x7ffc << 32) + (0x7ffc << 48),
+    };
+    /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
 }
 
@@ -161,6 +272,13 @@ impl Iterator for Cards {
     }
 }
 
+#[test]
+fn all_cards() {
+    for c in Cards::ALL {
+        println!("c: {:?}", c);
+    }
+    assert_eq!(Cards::ALL.len(), 52);
+}
 #[test]
 fn iterate() {
     let mut cards = Cards::EMPTY;
