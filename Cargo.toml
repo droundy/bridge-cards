@@ -1,11 +1,11 @@
 [package]
 name = "bridge-deck"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David Roundy <daveroundy@gmail.com>"]
 edition = "2018"
 
 description = "Yet another library for playing cards and sets of cards"
-repository = "https://github.com/droundy/bridge-deck"
+repository = "https://github.com/droundy/bridge-cards"
 readme = "README.md"
 license = "MIT/Apache-2.0"
 
