@@ -14,3 +14,13 @@ license = "MIT/Apache-2.0"
 [dependencies]
 
 rand = "0.7.3"
+
+[dev-dependencies]
+
+quickcheck = "^0.9.2"
+easybench = "1.0.0"
+cardpack = "0.3.8"
+
+[[bench]]
+name = "bench"
+harness = false
