@@ -18,5 +18,9 @@ fn main() {
         "deal 1 card (cardpack) {}",
         bench(|| cardpack::Pack::spades_deck().cards().shuffle().draw(1))
     );
+    println!(
+        "deal 1 cards (simple_cards) {}",
+        bench(|| simple_cards::Deck::default().draw())
+    );
     println!();
 }
