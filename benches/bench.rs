@@ -23,4 +23,15 @@ fn main() {
         bench(|| simple_cards::Deck::default().draw())
     );
     println!();
+    println!();
+    println!();
+    println!(
+        "count hcp in 13 card hands {}",
+        bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().high_card_points())
+    );
+    println!(
+        "count hcp in 4+ card suits of 13 card hands {}",
+        bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().long_suits(4).high_card_points())
+    );
+    println!();
 }
