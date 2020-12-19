@@ -206,6 +206,13 @@ impl Cards {
         }
     }
 
+    /// remove a card from the deck or hand
+    pub const fn remove(self, card: Card) -> Cards {
+        Cards {
+            bits: self.bits & !(1 << card.offset),
+        }
+    }
+
     /// A deck with one card
     pub const fn singleton(card: Card) -> Cards {
         Cards {
@@ -359,6 +366,19 @@ impl Cards {
                         .union(Cards::JACKS),
                 )
                 .len()
+    }
+
+    /// Long suits
+    pub const fn long_suits(self, at_least: usize) -> Cards {
+        let spades = self.spades();
+        let spades = if spades.len() >= at_least { spades } else { Cards::EMPTY };
+        let hearts = self.hearts();
+        let hearts = if hearts.len() >= at_least { hearts } else { Cards::EMPTY };
+        let diamonds = self.diamonds();
+        let diamonds = if diamonds.len() >= at_least { diamonds } else { Cards::EMPTY };
+        let clubs = self.clubs();
+        let clubs = if clubs.len() >= at_least { clubs } else { Cards::EMPTY };
+        spades.union(hearts).union(diamonds).union(clubs)
     }
 }
 
