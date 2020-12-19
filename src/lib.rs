@@ -255,12 +255,69 @@ impl Cards {
         Some(Cards { bits: given })
     }
 
+    const fn add_cards(self, rhs: Self) -> Self {
+        Cards {
+            bits: self.bits | rhs.bits,
+        }
+    }
+    const fn intersection(self, rhs: Self) -> Self {
+        Cards {
+            bits: self.bits & rhs.bits,
+        }
+    }
+
     /// All 52 cards.
-    pub const ALL: Cards = Cards {
-        bits: 0x7ffc + (0x7ffc << 16) + (0x7ffc << 32) + (0x7ffc << 48),
-    };
+    pub const ALL: Cards = Self::SPADES
+        .add_cards(Self::HEARTS)
+        .add_cards(Self::DIAMONDS)
+        .add_cards(Self::CLUBS);
+    /// All club cards.
+    pub const CLUBS: Cards = Cards { bits: 0x7ffc };
+    /// Just the clubs from this hand
+    pub const fn clubs(self) -> Cards {
+        self.intersection(Cards::CLUBS)
+    }
+    /// All diamond cards.
+    pub const DIAMONDS: Cards = Cards { bits: 0x7ffc << 16 };
+    /// Just the diamonds from this hand
+    pub const fn diamonds(self) -> Cards {
+        self.intersection(Cards::DIAMONDS)
+    }
+    /// All heart cards.
+    pub const HEARTS: Cards = Cards { bits: 0x7ffc << 32 };
+    /// Just the hearts from this hand
+    pub const fn hearts(self) -> Cards {
+        self.intersection(Cards::HEARTS)
+    }
+    /// All spade cards.
+    pub const SPADES: Cards = Cards { bits: 0x7ffc << 48 };
+    /// Just the spades from this hand
+    pub const fn spades(self) -> Cards {
+        self.intersection(Cards::SPADES)
+    }
+    ///
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
+}
+
+impl std::ops::Add for Cards {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        self.add_cards(rhs)
+    }
+}
+
+impl std::ops::AddAssign for Cards {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = self.add_cards(rhs)
+    }
+}
+
+impl std::ops::BitAnd for Cards {
+    type Output = Self;
+    fn bitand(self, rhs: Self) -> Self {
+        self.intersection(rhs)
+    }
 }
 
 impl Iterator for Cards {
