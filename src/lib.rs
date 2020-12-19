@@ -200,17 +200,26 @@ impl Cards {
     }
 
     /// insert a card to the deck or hand
-    pub fn insert(&mut self, card: Card) {
-        self.bits = self.bits | (1 << card.offset)
+    pub const fn insert(self, card: Card) -> Cards {
+        Cards {
+            bits: self.bits | (1 << card.offset),
+        }
+    }
+
+    /// A deck with one card
+    pub const fn singleton(card: Card) -> Cards {
+        Cards {
+            bits: 1 << card.offset,
+        }
     }
 
     /// Check if we contain a card
-    pub fn contains(&self, card: Card) -> bool {
+    pub const fn contains(&self, card: Card) -> bool {
         self.bits & (1 << card.offset) != 0
     }
 
     /// Join two stacks of cards together
-    pub fn union(&self, cards: Cards) -> Cards {
+    pub const fn union(&self, cards: Cards) -> Cards {
         Cards {
             bits: self.bits | cards.bits,
         }
@@ -255,11 +264,6 @@ impl Cards {
         Some(Cards { bits: given })
     }
 
-    const fn add_cards(self, rhs: Self) -> Self {
-        Cards {
-            bits: self.bits | rhs.bits,
-        }
-    }
     const fn intersection(self, rhs: Self) -> Self {
         Cards {
             bits: self.bits & rhs.bits,
@@ -268,9 +272,9 @@ impl Cards {
 
     /// All 52 cards.
     pub const ALL: Cards = Self::SPADES
-        .add_cards(Self::HEARTS)
-        .add_cards(Self::DIAMONDS)
-        .add_cards(Self::CLUBS);
+        .union(Self::HEARTS)
+        .union(Self::DIAMONDS)
+        .union(Self::CLUBS);
     /// All club cards.
     pub const CLUBS: Cards = Cards { bits: 0x7ffc };
     /// Just the clubs from this hand
@@ -298,18 +302,94 @@ impl Cards {
     ///
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
+
+    /// The aces
+    pub const ACES: Cards = Cards::EMPTY
+        .insert(Card::CA)
+        .insert(Card::DA)
+        .insert(Card::HA)
+        .insert(Card::SA);
+    /// Just the aces from this hand
+    pub const fn aces(self) -> Cards {
+        self.intersection(Cards::ACES)
+    }
+    /// The kings
+    pub const KINGS: Cards = Cards::EMPTY
+        .insert(Card::CK)
+        .insert(Card::DK)
+        .insert(Card::HK)
+        .insert(Card::SK);
+    /// Just the kins from this hand
+    pub const fn kings(self) -> Cards {
+        self.intersection(Cards::KINGS)
+    }
+    /// The queens
+    pub const QUEENS: Cards = Cards::EMPTY
+        .insert(Card::CQ)
+        .insert(Card::DQ)
+        .insert(Card::HQ)
+        .insert(Card::SQ);
+    /// Just the queens from this hand
+    pub const fn queens(self) -> Cards {
+        self.intersection(Cards::QUEENS)
+    }
+    /// The jacks
+    pub const JACKS: Cards = Cards::EMPTY
+        .insert(Card::CJ)
+        .insert(Card::DJ)
+        .insert(Card::HJ)
+        .insert(Card::SJ);
+    /// Just the jacks from this hand
+    pub const fn jacks(self) -> Cards {
+        self.intersection(Cards::JACKS)
+    }
+
+    /// High card points
+    pub const fn high_card_points(self) -> usize {
+        self.aces().len()
+            + self.intersection(Cards::ACES.union(Cards::KINGS)).len()
+            + self
+                .intersection(Cards::ACES.union(Cards::KINGS).union(Cards::QUEENS))
+                .len()
+            + self
+                .intersection(
+                    Cards::ACES
+                        .union(Cards::KINGS)
+                        .union(Cards::QUEENS)
+                        .union(Cards::JACKS),
+                )
+                .len()
+    }
+}
+
+#[test]
+fn test_hcp() {
+    assert_eq!(40, Cards::ALL.high_card_points());
+    assert_eq!(10, Cards::SPADES.high_card_points());
+    assert_eq!(10, Cards::HEARTS.high_card_points());
+    assert_eq!(10, Cards::DIAMONDS.high_card_points());
+    assert_eq!(10, Cards::CLUBS.high_card_points());
+    assert_eq!(16, Cards::ACES.high_card_points());
+    assert_eq!(12, Cards::KINGS.high_card_points());
+    assert_eq!(8, Cards::QUEENS.high_card_points());
+    assert_eq!(4, Cards::JACKS.high_card_points());
+
+    assert_eq!(4, Cards::JACKS.len());
+    assert_eq!(4, Cards::QUEENS.len());
+    assert_eq!(4, Cards::KINGS.len());
+    assert_eq!(4, Cards::ACES.len());
 }
 
 impl std::ops::Add for Cards {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        self.add_cards(rhs)
+        self.union(rhs)
     }
 }
 
 impl std::ops::AddAssign for Cards {
     fn add_assign(&mut self, rhs: Self) {
-        *self = self.add_cards(rhs)
+        *self = self.union(rhs)
     }
 }
 
@@ -346,9 +426,9 @@ fn iterate() {
     let mut cards = Cards::EMPTY;
     assert_eq!(cards.next(), None);
     assert_eq!(cards.len(), 0);
-    cards.insert(Card::C2);
+    cards = cards.insert(Card::C2);
     assert_eq!(cards.len(), 1);
-    cards.insert(Card::C4);
+    cards = cards.insert(Card::C4);
     assert_eq!(cards.len(), 2);
     assert!(cards.contains(Card::C4));
     assert!(!cards.contains(Card::C3));
@@ -358,9 +438,9 @@ fn iterate() {
     assert_eq!(cards.next(), None);
 
     assert_eq!(cards.len(), 0);
-    cards.insert(Card::C2);
+    cards = cards.insert(Card::C2);
     assert_eq!(cards.len(), 1);
-    cards.insert(Card::C4);
+    cards = cards.insert(Card::C4);
     assert_eq!(cards.len(), 2);
 
     let two_cards = cards;
