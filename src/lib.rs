@@ -409,14 +409,80 @@ impl Cards {
     /// Long suits
     pub const fn long_suits(self, at_least: usize) -> Cards {
         let spades = self.spades();
-        let spades = if spades.len() >= at_least { spades } else { Cards::EMPTY };
+        let spades = if spades.len() >= at_least {
+            spades
+        } else {
+            Cards::EMPTY
+        };
         let hearts = self.hearts();
-        let hearts = if hearts.len() >= at_least { hearts } else { Cards::EMPTY };
+        let hearts = if hearts.len() >= at_least {
+            hearts
+        } else {
+            Cards::EMPTY
+        };
         let diamonds = self.diamonds();
-        let diamonds = if diamonds.len() >= at_least { diamonds } else { Cards::EMPTY };
+        let diamonds = if diamonds.len() >= at_least {
+            diamonds
+        } else {
+            Cards::EMPTY
+        };
         let clubs = self.clubs();
-        let clubs = if clubs.len() >= at_least { clubs } else { Cards::EMPTY };
+        let clubs = if clubs.len() >= at_least {
+            clubs
+        } else {
+            Cards::EMPTY
+        };
         spades.union(hearts).union(diamonds).union(clubs)
+    }
+
+    /// Long card points
+    pub const fn long_card_points(self) -> usize {
+        let s = if self.spades().len() > 4 {
+            self.spades().len() - 4
+        } else {
+            0
+        };
+        let h = if self.hearts().len() > 4 {
+            self.hearts().len() - 4
+        } else {
+            0
+        };
+        let d = if self.diamonds().len() > 4 {
+            self.diamonds().len() - 4
+        } else {
+            0
+        };
+        let c = if self.clubs().len() > 4 {
+            self.clubs().len() - 4
+        } else {
+            0
+        };
+        s + h + d + c
+    }
+
+    /// Short card points 3 2 1
+    pub const fn short_card_points(self) -> usize {
+        let s = if self.spades().len() < 3 {
+            3 - self.spades().len()
+        } else {
+            0
+        };
+        let h = if self.hearts().len() < 3 {
+            3 - self.hearts().len()
+        } else {
+            0
+        };
+        let d = if self.diamonds().len() < 3 {
+            3 - self.diamonds().len()
+        } else {
+            0
+        };
+        let c = if self.clubs().len() < 3 {
+            3 - self.clubs().len()
+        } else {
+            0
+        };
+        s + h + d + c
     }
 }
 

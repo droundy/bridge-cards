@@ -46,6 +46,14 @@ fn main() {
         bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().high_card_points())
     );
     println!(
+        "count lcp in 13 card hands {}",
+        bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().long_card_points())
+    );
+    println!(
+        "count scp in 13 card hands {}",
+        bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().short_card_points())
+    );
+    println!(
         "count hcp in 4+ card suits of 13 card hands {}",
         bench(|| bridge_deck::Cards::ALL.pick(13).unwrap().long_suits(4).high_card_points())
     );
