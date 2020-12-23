@@ -2,6 +2,8 @@
 //! This crate defines a type [`Card`] for an individual card ([`Card`]) and
 //! another type [`Cards`] for a deck or hand of cards.
 
+// pub mod simd;
+
 /// A single card
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Card {
