@@ -406,6 +406,25 @@ impl Cards {
                 .len()
     }
 
+    /// Protected high card points
+    pub const fn protected_high_card_points(self) -> usize {
+        self.aces().len()
+            + self.intersection(Cards::ACES.union(Cards::KINGS)).len()
+            + self
+                .long_suits(2)
+                .intersection(Cards::ACES.union(Cards::KINGS).union(Cards::QUEENS))
+                .len()
+            + self
+            .long_suits(3)
+            .intersection(
+                    Cards::ACES
+                        .union(Cards::KINGS)
+                        .union(Cards::QUEENS)
+                        .union(Cards::JACKS),
+                )
+                .len()
+    }
+
     /// Long suits
     pub const fn long_suits(self, at_least: usize) -> Cards {
         let spades = self.spades();
