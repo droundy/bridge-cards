@@ -62,6 +62,25 @@ impl Card {
     pub const fn rank(self) -> u8 {
         self.offset % 16
     }
+    /// What is my rank called?
+    pub const fn rankname(self) -> &'static str {
+        match self.rank() {
+            2 => "2",
+            3 => "3",
+            4 => "4",
+            5 => "5",
+            6 => "6",
+            7 => "7",
+            8 => "8",
+            9 => "9",
+            10 => "T",
+            11 => "J",
+            12 => "Q",
+            13 => "K",
+            14 => "A",
+            _ => "?",
+        }
+    }
     /// 2 of Clubs
     pub const C2: Card = Card::new(Suit::Clubs, 2);
     /// 3 of Clubs
@@ -171,6 +190,40 @@ impl Card {
     pub const SA: Card = Card::new(Suit::Spades, 14);
 }
 
+impl Card {
+    fn unicode(self) -> char {
+        let start = 0x1F0D1 - (self.suit() as u32) * 16;
+        let shift = if self.rank() == 14 {
+            1
+        } else {
+            self.rank() as u32
+        };
+        use std::convert::TryFrom;
+        char::try_from(start + shift - 1).unwrap()
+    }
+}
+
+#[test]
+fn unicode_test() {
+    assert_eq!('🃑', Card::CA.unicode());
+    assert_eq!('🃒', Card::C2.unicode());
+
+    assert_eq!('🃁', Card::DA.unicode());
+    assert_eq!('🃂', Card::D2.unicode());
+
+    assert_eq!('🂱', Card::HA.unicode());
+    assert_eq!('🂲', Card::H2.unicode());
+
+    assert_eq!('🂡', Card::SA.unicode());
+    assert_eq!('🂢', Card::S2.unicode());
+}
+
+impl std::fmt::Display for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.unicode())
+    }
+}
+
 /// The four suits
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Suit {
@@ -182,6 +235,17 @@ pub enum Suit {
     Hearts = 2,
     /// Spades
     Spades = 3,
+}
+
+impl Suit {
+    fn name(self) -> &'static str {
+        match self {
+            Suit::Clubs => "clubs",
+            Suit::Diamonds => "diamons",
+            Suit::Hearts => "hearts",
+            Suit::Spades => "spades",
+        }
+    }
 }
 
 /// A deck or hand of cards
@@ -415,8 +479,8 @@ impl Cards {
                 .intersection(Cards::ACES.union(Cards::KINGS).union(Cards::QUEENS))
                 .len()
             + self
-            .long_suits(3)
-            .intersection(
+                .long_suits(3)
+                .intersection(
                     Cards::ACES
                         .union(Cards::KINGS)
                         .union(Cards::QUEENS)
@@ -557,6 +621,21 @@ impl Iterator for Cards {
     }
 }
 
+impl DoubleEndedIterator for Cards {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.bits == 0 {
+            None
+        } else {
+            let next = 63 - self.bits.leading_zeros();
+            self.bits = self.bits & !(1 << next);
+            Some(Card { offset: next as u8 })
+        }
+    }
+}
+
+#[cfg(feature = "display-as")]
+mod display;
+
 #[test]
 fn all_cards() {
     for c in Cards::ALL {
@@ -595,4 +674,7 @@ fn iterate() {
 
     let other = hand.pick(1).unwrap();
     assert_eq!(other.union(hand), two_cards);
+
+    cards = Cards::SPADES;
+    assert_eq!(Some(Card::SA), cards.next_back());
 }
