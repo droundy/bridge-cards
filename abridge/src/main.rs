@@ -20,14 +20,15 @@ async fn main() {
             .body(STYLE)
             .unwrap())
     });
-    let index = (warp::path::end().or(path!("index.html")))
-        .and(players.clone())
-        .and_then(|_, players: Arc<RwLock<Players>>| async move {
+    let index = path!("abridge").and(players.clone()).and_then(
+        |players: Arc<RwLock<Players>>| async move {
             println!("I am doing index.");
             let p = players.read().await;
-            let r: Result<warp::http::Response<warp::hyper::Body>,warp::Rejection> = Ok(display(HTML, &Index(&*p)).into_response());
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                Ok(display(HTML, &Index(&*p)).into_response());
             r
-        });
+        },
+    );
     let sock = path!("abridge" / "ws" / String)
         .and(warp::ws())
         .and(players)
@@ -35,7 +36,7 @@ async fn main() {
             ws.on_upgrade(move |socket| editor_connected(seat, socket, players))
         });
 
-    warp::serve(style_css.or(index))
+    warp::serve(style_css.or(index).or(sock))
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
@@ -65,7 +66,23 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
     {
         // Save the sender in our list of connected users.
         let mut e = players.write().await;
-        e.kibitzers.push(tx);
+        match seat.as_str() {
+            "north" => {
+                e.north = Some(tx);
+            }
+            "south" => {
+                e.south = Some(tx);
+            }
+            "east" => {
+                e.east = Some(tx);
+            }
+            "west" => {
+                e.west = Some(tx);
+            }
+            _ => {
+                e.kibitzers.push(tx);
+            }
+        }
         println!("got {} kibitzers now", e.kibitzers.len());
     }
 
