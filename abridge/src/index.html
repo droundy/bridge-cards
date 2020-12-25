@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title> self.name </title>
+    <link rel="stylesheet" href="style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <main>
+        <header>
+            <h1> Abridge Game </h1>
+        </header>
+        <p>
+            Please play.
+        </p>
+        <ul>
+            [% if self.0.north.is_none() { %]<li><a href="north">Sit North</a></li>[% } %]
+            [% if self.0.south.is_none() { %]<li><a href="south">Sit South</a></li>[% } %]
+            [% if self.0.east.is_none() { %]<li><a href="east">Sit East</a></li>[% } %]
+            [% if self.0.west.is_none() { %]<li><a href="west">Sit West</a></li>[% } %]
+            <li><a href="kibitz">Kibitz</a></li>
+        </ul>
+    </main>
+</body>
+
+</html>

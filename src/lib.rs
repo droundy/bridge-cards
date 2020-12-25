@@ -238,7 +238,8 @@ pub enum Suit {
 }
 
 impl Suit {
-    fn name(self) -> &'static str {
+    /// The name of the suit
+    pub fn name(self) -> &'static str {
         match self {
             Suit::Clubs => "clubs",
             Suit::Diamonds => "diamons",

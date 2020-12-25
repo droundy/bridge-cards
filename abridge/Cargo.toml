@@ -1,0 +1,17 @@
+[package]
+name = "abridge"
+version = "0.1.0"
+authors = ["David Roundy <daveroundy@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+bridge-deck = { version = "0.1.1", path = "..", features = ["display-as"] }
+
+warp = "0.2.5"
+tokio = { version = "0.2", features = ["full"] }
+futures = "0.3.8"
+
+display-as = { version = "0.5.2", features = ["usewarp"] }
