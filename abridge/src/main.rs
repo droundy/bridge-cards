@@ -22,10 +22,23 @@ async fn main() {
     });
     let index = path!("abridge").and(players.clone()).and_then(
         |players: Arc<RwLock<Players>>| async move {
-            println!("I am doing index.");
             let p = players.read().await;
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &Index(&*p)).into_response());
+                Ok(display(HTML, &Index { players: &*p }).into_response());
+            r
+        },
+    );
+    let north = path!("abridge" / "north").and(players.clone()).and_then(
+        |players: Arc<RwLock<Players>>| async move {
+            let p = players.read().await;
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> = Ok(display(
+                HTML,
+                &Player {
+                    seat: "north",
+                    players: &*p,
+                },
+            )
+            .into_response());
             r
         },
     );
@@ -36,7 +49,7 @@ async fn main() {
             ws.on_upgrade(move |socket| editor_connected(seat, socket, players))
         });
 
-    warp::serve(style_css.or(index).or(sock))
+    warp::serve(style_css.or(index).or(sock).or(north))
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
@@ -109,6 +122,15 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
     // connected. Once they disconnect, then...
     //ws_disconnected(&players2).await;
 }
-struct Index<'a>(&'a Players);
+struct Index<'a> {
+    players: &'a Players,
+}
 #[with_template("[%" "%]" "index.html")]
 impl<'a> DisplayAs<HTML> for Index<'a> {}
+
+struct Player<'a> {
+    seat: &'static str,
+    players: &'a Players,
+}
+#[with_template("[%" "%]" "index.html")]
+impl<'a> DisplayAs<HTML> for Player<'a> {}
