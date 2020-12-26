@@ -31,3 +31,7 @@ body {
 .clubs {
     color: green;
 }
+
+.bidboard {
+    border: 0.1em solid black;
+}

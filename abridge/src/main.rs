@@ -1,4 +1,4 @@
-use bridge_deck::{Card, Cards};
+use bridge_deck::{Card, Cards, Suit};
 use display_as::{display, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
 use std::sync::Arc;

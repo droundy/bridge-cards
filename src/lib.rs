@@ -242,9 +242,17 @@ impl Suit {
     pub fn name(self) -> &'static str {
         match self {
             Suit::Clubs => "clubs",
-            Suit::Diamonds => "diamons",
+            Suit::Diamonds => "diamonds",
             Suit::Hearts => "hearts",
             Suit::Spades => "spades",
+        }
+    }
+    fn unicode(self) -> char {
+        match self {
+            Suit::Clubs => '♣',
+            Suit::Diamonds => '♦',
+            Suit::Hearts => '♥',
+            Suit::Spades => '♠',
         }
     }
 }

@@ -1,5 +1,5 @@
 
-use crate::{Card, Cards};
+use crate::{Card, Cards, Suit};
 
 use display_as::{with_template, format_as, DisplayAs, HTML, UTF8};
 
@@ -7,6 +7,15 @@ use display_as::{with_template, format_as, DisplayAs, HTML, UTF8};
 impl DisplayAs<HTML> for Card {}
 
 impl DisplayAs<UTF8> for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.unicode())
+    }
+}
+
+#[with_template("[%" "%]" "suit.html")]
+impl DisplayAs<HTML> for Suit {}
+
+impl DisplayAs<UTF8> for Suit {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "{}", self.unicode())
     }
