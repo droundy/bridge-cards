@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
+use std::convert::TryFrom;
 
 #[tokio::main]
 async fn main() {
@@ -62,6 +63,14 @@ async fn main() {
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bid {
+    Pass,
+    Double,
+    Redouble,
+    Suit(usize, bridge_deck::Suit),
+    NT(usize),
+}
 
 struct GameState {
     north: Cards,
@@ -70,6 +79,8 @@ struct GameState {
     west: Cards,
 
     dummy: Option<Seat>,
+    dealer: Seat,
+    bids: Vec<Bid>,
 }
 
 impl GameState {
@@ -85,6 +96,19 @@ impl GameState {
             east,
             north,
             dummy: None,
+            dealer: Seat::South,
+            bids: Vec::new(),
+        }
+    }
+}
+
+impl GameState {
+    fn bidder(&self) -> Option<Seat> {
+        let n = self.bids.len();
+        if n >= 3 && &self.bids[n-3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+            None
+        } else {
+            Seat::try_from(((n + self.dealer as usize) % 4))
         }
     }
 }
@@ -170,16 +194,27 @@ struct Player<'a> {
 #[with_template("[%" "%]" "player.html")]
 impl<'a> DisplayAs<HTML> for Player<'a> {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seat {
-    South,
+    South=0,
     North,
     East,
     West,
 }
+impl Seat {
+    fn try_from(v: usize) -> Option<Self> {
+        match v {
+            x if x == Seat::North as usize => Some(Seat::North),
+            x if x == Seat::South as usize => Some(Seat::South),
+            x if x == Seat::East as usize => Some(Seat::East),
+            x if x == Seat::West as usize => Some(Seat::West),
+            _ => None,
+        }
+    }
+}
 
 impl std::str::FromStr for Seat {
-    type Err=String;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
