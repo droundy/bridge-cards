@@ -1,3 +1,4 @@
+use bridge_deck::{Card, Cards};
 use display_as::{display, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
 use std::sync::Arc;
@@ -8,10 +9,12 @@ use warp::{path, Filter};
 #[tokio::main]
 async fn main() {
     let players = Arc::new(RwLock::new(Players::default()));
+    let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
     let players = warp::any().map(move || players.clone());
+    let game = warp::any().map(move || game.clone());
 
-    let style_css = path!("style.css").map(|| {
+    let style_css = path!("abridge" / "style.css").map(|| {
         const STYLE: &'static str = include_str!("style.css");
         Ok(warp::http::Response::builder()
             .status(200)
@@ -28,20 +31,26 @@ async fn main() {
             r
         },
     );
-    let north = path!("abridge" / "north").and(players.clone()).and_then(
-        |players: Arc<RwLock<Players>>| async move {
-            let p = players.read().await;
-            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> = Ok(display(
-                HTML,
-                &Player {
-                    seat: "north",
-                    players: &*p,
-                },
-            )
-            .into_response());
-            r
-        },
-    );
+    let seat = path!("abridge" / Seat)
+        .and(players.clone())
+        .and(game.clone())
+        .and_then(
+            |seat: Seat, players: Arc<RwLock<Players>>, game: Arc<RwLock<GameState>>| async move {
+                let p = players.read().await;
+                let g = game.read().await;
+                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                    Ok(display(
+                        HTML,
+                        &Player {
+                            seat,
+                            players: &*p,
+                            game: &*g,
+                        },
+                    )
+                    .into_response());
+                r
+            },
+        );
     let sock = path!("abridge" / "ws" / String)
         .and(warp::ws())
         .and(players)
@@ -49,11 +58,36 @@ async fn main() {
             ws.on_upgrade(move |socket| editor_connected(seat, socket, players))
         });
 
-    warp::serve(style_css.or(index).or(sock).or(north))
+    warp::serve(style_css.or(index).or(sock).or(seat))
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
 
+struct GameState {
+    north: Cards,
+    south: Cards,
+    east: Cards,
+    west: Cards,
+
+    dummy: Option<Seat>,
+}
+
+impl GameState {
+    fn new() -> GameState {
+        let mut deck = Cards::ALL;
+        let north = deck.pick(13).unwrap();
+        let south = deck.pick(13).unwrap();
+        let east = deck.pick(13).unwrap();
+        let west = deck;
+        GameState {
+            west,
+            south,
+            east,
+            north,
+            dummy: None,
+        }
+    }
+}
 #[derive(Default)]
 struct Players {
     north: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
@@ -129,8 +163,31 @@ struct Index<'a> {
 impl<'a> DisplayAs<HTML> for Index<'a> {}
 
 struct Player<'a> {
-    seat: &'static str,
+    seat: Seat,
     players: &'a Players,
+    game: &'a GameState,
 }
-#[with_template("[%" "%]" "index.html")]
+#[with_template("[%" "%]" "player.html")]
 impl<'a> DisplayAs<HTML> for Player<'a> {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Seat {
+    South,
+    North,
+    East,
+    West,
+}
+
+impl std::str::FromStr for Seat {
+    type Err=String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "north" => Ok(Seat::North),
+            "south" => Ok(Seat::South),
+            "west" => Ok(Seat::West),
+            "east" => Ok(Seat::East),
+            _ => Err(format!("invalid seat: {}", s)),
+        }
+    }
+}

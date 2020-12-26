@@ -1,0 +1,33 @@
+body {
+    font-size: 24px;
+}
+
+#north, #south {
+    margin: auto;
+    clear: both;
+}
+
+#west {
+    float: left;
+}
+
+#east {
+    float: right;
+}
+
+.hand {
+    width: 8rem;
+}
+
+.spades {
+    color: black;
+}
+.hearts {
+    color: red;
+}
+.diamonds {
+    color: blue;
+}
+.clubs {
+    color: green;
+}
