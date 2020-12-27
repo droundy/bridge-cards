@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>[% use Seat::*; %]
+
+<head>
+    <title> self.name </title>
+    <link rel="stylesheet" href="/abridge/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <div class="hand" id="north">[% if self.seat == North || self.game.dummy == Some(North) { self.game.north } else { %]North[% } %]</div>
+    <div class="hand" id="west">[% if self.seat == West || self.game.dummy == Some(West) { self.game.west } else { %]West[% } %]</div>
+    <div class="hand" id="east">[% if self.seat == East || self.game.dummy == Some(East) { self.game.east } else { %]East[% } %]</div>
+    <div class="hand" id="south">[% if self.seat == South || self.game.dummy == Some(South) { self.game.south } else { %]South[% } %]</div>
+    [% if self.game.bidder() == Some(self.seat) {
+        %] <div class="bidboard">
+            [% for i in 1..8 {
+                for s in &[Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+                %] <button class="[% s.name() %]">[% i %][% s %]</button> [%
+                }
+                %] <br/> [%
+            } %]
+        </div> [%
+    } %]
+</body>
+
+</html>
