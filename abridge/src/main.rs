@@ -72,6 +72,9 @@ enum Bid {
     NT(usize),
 }
 
+#[with_template("[%" "%]" "bid.html")]
+impl<'a> DisplayAs<HTML> for Bid {}
+
 struct GameState {
     north: Cards,
     south: Cards,

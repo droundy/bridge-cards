@@ -1,0 +1,22 @@
+[%
+match self {
+    Bid::Pass => {
+        %] Pass %[
+    }
+    Bid::Double => {
+        %] X [%
+    }
+    Bid::Redouble => {
+        %] XX [%
+    }
+    Bid::Suit(_,_) => {
+        %] suit [%
+    }
+    Bid::NT(_) => {
+        %] NT? [%
+    }
+    _ => {
+        %] ??? [%
+    }
+}
+%]
