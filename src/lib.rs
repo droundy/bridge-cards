@@ -4,6 +4,8 @@
 
 // pub mod simd;
 
+use rand::Rng;
+
 /// A single card
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Card {
@@ -310,6 +312,12 @@ impl Cards {
     /// Randomly pick `num` cards to remove from the deck.
     /// Returns `None` only if there aren't enough cards.
     pub fn pick(&mut self, mut num: usize) -> Option<Cards> {
+        self.pick_rng(&mut rand::thread_rng(), num)
+    }
+
+    /// Randomly pick `num` cards to remove from the deck using specified RNG.
+    /// Returns `None` only if there aren't enough cards.
+    pub fn pick_rng<R: Rng>(&mut self, rng: &mut R, mut num: usize) -> Option<Cards> {
         let mut bits = self.bits;
         let mut n_left = self.len();
         if num > n_left {
@@ -317,7 +325,6 @@ impl Cards {
         }
         let mut kept = 0;
         let mut given = 0;
-        let mut rng = rand::thread_rng();
         while n_left > 0 {
             if num == 0 {
                 kept |= bits;
