@@ -319,45 +319,6 @@ impl Cards {
         let mut given = 0;
         let mut rng = rand::thread_rng();
         while n_left > 0 {
-            if n_left == num {
-                given |= bits;
-                break;
-            } else if num == 0 {
-                kept |= bits;
-                break;
-            }
-            use rand::Rng;
-            let chosen = rng.gen::<u64>() & bits;
-            if chosen != 0 {
-                let num_chosen = chosen.count_ones() as usize;
-                if num_chosen <= num {
-                    bits &= !chosen;
-                    given |= chosen;
-                    n_left -= num_chosen;
-                    num -= num_chosen;
-                } else if num_chosen + num < n_left {
-                    bits &= !chosen;
-                    kept |= chosen;
-                    n_left -= num_chosen;
-                }
-            }
-        }
-        self.bits = kept;
-        Some(Cards { bits: given })
-    }
-
-    /// Randomly pick `num` cards to remove from the deck.
-    /// Returns `None` only if there aren't enough cards.
-    pub fn pick2(&mut self, mut num: usize) -> Option<Cards> {
-        let mut bits = self.bits;
-        let mut n_left = self.len();
-        if num > n_left {
-            return None;
-        }
-        let mut kept = 0;
-        let mut given = 0;
-        let mut rng = rand::thread_rng();
-        while n_left > 0 {
             if num == 0 {
                 kept |= bits;
                 break;

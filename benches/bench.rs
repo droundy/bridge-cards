@@ -6,10 +6,6 @@ fn main() {
         bench(|| bridge_deck::Cards::ALL.pick(13))
     );
     println!(
-        "deal 13 cards 2 {}",
-        bench(|| bridge_deck::Cards::ALL.pick2(13))
-    );
-    println!(
         "deal 13 cards {}",
         bench(|| bridge_deck::Cards::ALL.pick(13))
     );
@@ -21,10 +17,6 @@ fn main() {
     println!(
         "deal 1 card {}",
         bench(|| bridge_deck::Cards::ALL.pick(1))
-    );
-    println!(
-        "deal 1 card 2 {}",
-        bench(|| bridge_deck::Cards::ALL.pick2(1))
     );
     println!(
         "deal 1 card {}",
