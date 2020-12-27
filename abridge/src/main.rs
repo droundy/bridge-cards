@@ -1,11 +1,10 @@
-use bridge_deck::{Card, Cards, Suit};
+use bridge_deck::{Cards, Suit};
 use display_as::{display, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
-use std::convert::TryFrom;
 
 #[tokio::main]
 async fn main() {
@@ -111,7 +110,7 @@ impl GameState {
         if n >= 3 && &self.bids[n-3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
             None
         } else {
-            Seat::try_from(((n + self.dealer as usize) % 4))
+            Seat::try_from((n + self.dealer as usize) % 4)
         }
     }
 }
@@ -160,12 +159,6 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
         println!("got {} kibitzers now", e.kibitzers.len());
     }
 
-    // Return a `Future` that is basically a state machine managing
-    // this specific user's connection.
-
-    // Make an extra clone to give to our disconnection handler...
-    let players2 = players.clone();
-
     // Every time the user sends a message, broadcast it to
     // all other users...
     while let Some(result) = user_ws_rx.next().await {
@@ -177,11 +170,8 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
             }
         };
         // process_message(&code, &character, msg, &editors).await;
+        println!("msg: {:?}", msg);
     }
-
-    // user_ws_rx stream will keep processing as long as the user stays
-    // connected. Once they disconnect, then...
-    //ws_disconnected(&players2).await;
 }
 struct Index<'a> {
     players: &'a Players,
