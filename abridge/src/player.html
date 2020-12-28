@@ -2,7 +2,7 @@
 <html>[% use Seat::*; %]
 
 <head>
-    <title> self.name </title>
+    <title> [% format!("{:?}", self.seat) %] </title>
     <link rel="stylesheet" href="/abridge/style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
@@ -15,7 +15,13 @@
     [% if self.game.bidder() == Some(self.seat) {
         %] <div class="bidboard">
             [% for &b in BIDS.iter() {
-                %]<button[% if b == Bid::Pass { %] class="pass"[% } %]>[% b %]</button>[%
+            %]<button[%
+               if b == Bid::Pass {
+                 %] class="pass"[%
+               } %][%
+               if !self.game.bid_is_legal(self.seat, b) {
+                %] disabled[%
+               } %]>[% b %]</button>[%
             } %]
         </div> [%
     } %]
