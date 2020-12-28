@@ -25,10 +25,14 @@
         console.log('disconnected');
         location.reload();
     };
+    function send_message(action) {
+        ws.send(action);
+    }
 </script>
 
 <body>
     [% self.0 %]
+    <button [% Action::Redeal %]>Redeal</button>
 </body>
 
 </html>

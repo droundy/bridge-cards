@@ -1,6 +1,7 @@
 use bridge_deck::{Cards, Suit};
 use display_as::{display, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -70,6 +71,12 @@ enum Bid {
     Suit(usize, bridge_deck::Suit),
     NT(usize),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum Action {
+    Redeal,
+}
+#[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
+impl DisplayAs<HTML> for Action {}
 
 impl PartialOrd for Bid {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -277,6 +284,15 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
                 break;
             }
         };
+        match msg.to_str().map(|s| serde_json::from_str::<Action>(s)) {
+            Err(e) => {
+                eprintln!("Bad UTF8: {:?} {:?}", e, msg);
+            }
+            Ok(Err(e)) => {
+                eprintln!("Bad JSON: {:?}", e);
+            }
+            Ok(Ok(action)) => println!("Weird action {:?}", action),
+        }
         // process_message(&code, &character, msg, &editors).await;
         println!("msg: {:?}", msg);
     }

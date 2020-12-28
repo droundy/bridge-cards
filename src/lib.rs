@@ -311,7 +311,7 @@ impl Cards {
 
     /// Randomly pick `num` cards to remove from the deck.
     /// Returns `None` only if there aren't enough cards.
-    pub fn pick(&mut self, mut num: usize) -> Option<Cards> {
+    pub fn pick(&mut self, num: usize) -> Option<Cards> {
         self.pick_rng(&mut rand::thread_rng(), num)
     }
 
