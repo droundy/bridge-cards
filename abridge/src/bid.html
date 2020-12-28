@@ -1,7 +1,7 @@
 [%
 match self {
     Bid::Pass => {
-        %] Pass %[
+        %] Pass [%
     }
     Bid::Double => {
         %] X [%
@@ -9,8 +9,8 @@ match self {
     Bid::Redouble => {
         %] XX [%
     }
-    Bid::Suit(_,_) => {
-        %] suit [%
+    Bid::Suit(level,suit) => {
+        %]<span class="[% suit.name() %]">[% level %]</span>[% suit
     }
     Bid::NT(_) => {
         %] NT? [%

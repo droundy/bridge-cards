@@ -32,7 +32,15 @@ body {
     color: green;
 }
 
+button {
+    width: 3em;
+    margin: 0.25em;
+}
+button.pass {
+    width: 6.5em;
+}
 .bidboard {
     border: 0.1em solid black;
     width: 8em;
+    margin: auto;
 }

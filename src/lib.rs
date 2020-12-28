@@ -330,7 +330,6 @@ impl Cards {
                 kept |= bits;
                 break;
             }
-            use rand::Rng;
             let chosen = rng.gen::<u64>() & bits;
             if chosen != 0 {
                 let num_chosen = chosen.count_ones() as usize;

@@ -14,10 +14,8 @@
     <div class="hand" id="south">[% if self.seat == South || self.game.dummy == Some(South) { self.game.south } else { %]South[% } %]</div>
     [% if self.game.bidder() == Some(self.seat) {
         %] <div class="bidboard">
-            [% for i in 1..8 {
-                for s in &[Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-                %] <button class="[% s.name() %]">[% i %][% s %]</button> [%
-                }
+            [% for &b in BIDS.iter() {
+                %]<button[% if b == Bid::Pass { %] class="pass"[% } %]>[% b %]</button>[%
             } %]
         </div> [%
     } %]

@@ -71,8 +71,85 @@ enum Bid {
     NT(usize),
 }
 
+impl PartialOrd for Bid {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use Bid::*;
+        if let Some(self_l) = self.level() {
+            if let Some(other_l) = other.level() {
+                if self_l != other_l {
+                    return self_l.partial_cmp(&other_l);
+                } else if let NT(_) = self {
+                    return Some(std::cmp::Ordering::Greater);
+                } else if let NT(_) = other {
+                    return Some(std::cmp::Ordering::Less);
+                } else if let (Suit(_, me), Suit(_, them)) = (*self, *other) {
+                    return me.partial_cmp(&them);
+                }
+            }
+        }
+        if self == other {
+            return Some(std::cmp::Ordering::Equal);
+        }
+        if *self == Pass || other.is_contract() || *self == Redouble {
+            return Some(std::cmp::Ordering::Greater);
+        }
+        if *other == Pass || self.is_contract() || *other == Redouble {
+            return Some(std::cmp::Ordering::Less);
+        }
+        None
+    }
+}
+
+static BIDS: &[Bid] = &[
+    Bid::Suit(1, Suit::Clubs),
+    Bid::Suit(1, Suit::Diamonds),
+    Bid::Suit(1, Suit::Hearts),
+    Bid::Suit(1, Suit::Spades),
+    Bid::Suit(2, Suit::Clubs),
+    Bid::Suit(2, Suit::Diamonds),
+    Bid::Suit(2, Suit::Hearts),
+    Bid::Suit(2, Suit::Spades),
+    Bid::Suit(3, Suit::Clubs),
+    Bid::Suit(3, Suit::Diamonds),
+    Bid::Suit(3, Suit::Hearts),
+    Bid::Suit(3, Suit::Spades),
+    Bid::Suit(4, Suit::Clubs),
+    Bid::Suit(4, Suit::Diamonds),
+    Bid::Suit(4, Suit::Hearts),
+    Bid::Suit(4, Suit::Spades),
+    Bid::Suit(5, Suit::Clubs),
+    Bid::Suit(5, Suit::Diamonds),
+    Bid::Suit(5, Suit::Hearts),
+    Bid::Suit(5, Suit::Spades),
+    Bid::Suit(6, Suit::Clubs),
+    Bid::Suit(6, Suit::Diamonds),
+    Bid::Suit(6, Suit::Hearts),
+    Bid::Suit(6, Suit::Spades),
+    Bid::Suit(7, Suit::Clubs),
+    Bid::Suit(7, Suit::Diamonds),
+    Bid::Suit(7, Suit::Hearts),
+    Bid::Suit(7, Suit::Spades),
+    Bid::Pass,
+    Bid::Double,
+    Bid::Redouble,
+];
+
 #[with_template("[%" "%]" "bid.html")]
 impl<'a> DisplayAs<HTML> for Bid {}
+
+impl Bid {
+    fn level(self) -> Option<usize> {
+        match self {
+            Bid::Suit(l, _) => Some(l),
+            Bid::NT(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    fn is_contract(self) -> bool {
+        self.level().is_some()
+    }
+}
 
 struct GameState {
     north: Cards,
@@ -102,15 +179,46 @@ impl GameState {
             bids: Vec::new(),
         }
     }
-}
 
-impl GameState {
     fn bidder(&self) -> Option<Seat> {
         let n = self.bids.len();
-        if n >= 3 && &self.bids[n-3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+        if n >= 3 && &self.bids[n - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
             None
         } else {
             Seat::try_from((n + self.dealer as usize) % 4)
+        }
+    }
+
+    fn highest_contract_bid(&self) -> Option<Bid> {
+        for &x in self.bids.iter().rev() {
+            if x.is_contract() {
+                return Some(x);
+            }
+        }
+        None
+    }
+
+    fn bid_is_legal(&self, seat: Seat, bid: Bid) -> bool {
+        if Some(seat) != self.bidder() {
+            return false;
+        }
+        let n = self.bids.len();
+        match bid {
+            Bid::Pass => true,
+            Bid::Double => {
+                (n >= 1 && self.bids[n - 1].is_contract())
+                    || (n >= 3
+                        && &self.bids[n - 2..] == &[Bid::Pass, Bid::Pass]
+                        && self.bids[n - 3].is_contract())
+            }
+            Bid::Redouble => false,
+            _ => {
+                if let Some(hb) = self.highest_contract_bid() {
+                    bid > hb
+                } else {
+                    true
+                }
+            }
         }
     }
 }
@@ -189,10 +297,10 @@ impl<'a> DisplayAs<HTML> for Player<'a> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seat {
-    South=0,
+    South = 0,
+    West,
     North,
     East,
-    West,
 }
 impl Seat {
     fn try_from(v: usize) -> Option<Self> {
@@ -202,6 +310,14 @@ impl Seat {
             x if x == Seat::East as usize => Some(Seat::East),
             x if x == Seat::West as usize => Some(Seat::West),
             _ => None,
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            Seat::South => Seat::West,
+            Seat::West => Seat::North,
+            Seat::North => Seat::East,
+            Seat::East => Seat::South,
         }
     }
 }
