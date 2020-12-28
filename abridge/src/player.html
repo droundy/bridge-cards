@@ -1,50 +1,18 @@
-<!DOCTYPE html>
-<html>[% use Seat::*; %]
-
-<head>
-    <title> [% format!("{:?}", self.seat) %] </title>
-    <link rel="stylesheet" href="/abridge/style.css">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<script type="text/javascript">
-    var ws_protocol = 'ws://';
-    if (location.protocol == 'https:') {
-        ws_protocol = 'wss://';
-    }
-    const ws = new WebSocket(ws_protocol + location.host + '/abridge/ws/[% format!("{:?}", self.seat).to_lowercase() %]');
-    console.log('did websocket');
-
-    ws.onopen = function () {
-        console.log('connected');
-    };
-    ws.onmessage = function (event) {
-        let msg = JSON.parse(event.data);
-        console.log(msg);
-    };
-    ws.onclose = function () {
-        console.log('disconnected');
-        location.reload();
-    };
-</script>
-
-<body>
-    <div class="hand" id="north">[% if self.seat == North || self.game.dummy == Some(North) { self.game.north } else { %]North[% } %]</div>
-    <div class="hand" id="west">[% if self.seat == West || self.game.dummy == Some(West) { self.game.west } else { %]West[% } %]</div>
-    <div class="hand" id="east">[% if self.seat == East || self.game.dummy == Some(East) { self.game.east } else { %]East[% } %]</div>
-    <div class="hand" id="south">[% if self.seat == South || self.game.dummy == Some(South) { self.game.south } else { %]South[% } %]</div>
-    [% if self.game.bidder() == Some(self.seat) {
-        %] <div class="bidboard">
-            [% for &b in BIDS.iter() {
-            %]<button[%
-               if b == Bid::Pass {
-                 %] class="pass"[%
-               } %][%
-               if !self.game.bid_is_legal(self.seat, b) {
-                %] disabled[%
-               } %]>[% b %]</button>[%
-            } %]
-        </div> [%
-    } %]
-</body>
-
-</html>
+[% use Seat::*; %]
+<div class="hand" id="north">[% if self.seat == North || self.game.dummy == Some(North) { self.game.north } else { %]North[% } %]</div>
+<div class="hand" id="west">[% if self.seat == West || self.game.dummy == Some(West) { self.game.west } else { %]West[% } %]</div>
+<div class="hand" id="east">[% if self.seat == East || self.game.dummy == Some(East) { self.game.east } else { %]East[% } %]</div>
+<div class="hand" id="south">[% if self.seat == South || self.game.dummy == Some(South) { self.game.south } else { %]South[% } %]</div>
+[% if self.game.bidder() == Some(self.seat) {
+    %] <div class="bidboard">
+        [% for &b in BIDS.iter() {
+        %]<button[%
+            if b == Bid::Pass {
+                %] class="pass"[%
+            } %][%
+            if !self.game.bid_is_legal(self.seat, b) {
+            %] disabled[%
+            } %]>[% b %]</button>[%
+        } %]
+    </div> [%
+} %]

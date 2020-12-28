@@ -41,11 +41,11 @@ async fn main() {
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                     Ok(display(
                         HTML,
-                        &Player {
+                        &PlayerPage(Player {
                             seat,
                             players: &*p,
                             game: &*g,
-                        },
+                        }),
                     )
                     .into_response());
                 r
@@ -294,6 +294,10 @@ struct Player<'a> {
 }
 #[with_template("[%" "%]" "player.html")]
 impl<'a> DisplayAs<HTML> for Player<'a> {}
+
+struct PlayerPage<'a>(Player<'a>);
+#[with_template("[%" "%]" "player-page.html")]
+impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seat {
