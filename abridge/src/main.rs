@@ -1,7 +1,7 @@
 use bridge_deck::{Cards, Suit};
-use display_as::{display, format_as, with_template, DisplayAs, HTML, UTF8};
+use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
-use serde::{private::ser::serialize_tagged_newtype, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -64,61 +64,13 @@ async fn main() {
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Bid {
     Pass,
     Double,
     Redouble,
     Suit(usize, bridge_deck::Suit),
     NT(usize),
-}
-impl serde::Serialize for Bid {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use Bid::*;
-        match self {
-            Pass => serializer.serialize_str("P"),
-            Double => serializer.serialize_str("X"),
-            Redouble => serializer.serialize_str("XX"),
-            Suit(n, s) => serializer.serialize_str(&format_as!(UTF8, "" n "" s)),
-            NT(n) => serializer.serialize_str(&format!("{}NT", n)),
-        }
-    }
-}
-/// A visitor that deserializes a string
-struct MyVisitor;
-
-impl<'de> serde::de::Visitor<'de> for MyVisitor {
-    type Value = String;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(formatter, "a string")
-    }
-
-    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        Ok(s.to_owned())
-    }
-}
-impl<'de> serde::Deserialize<'de> for Bid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let visitor = MyVisitor;
-        let s = deserializer.deserialize_str(visitor)?;
-        let b = match s.as_str() {
-            "P" => Bid::Pass,
-            "X" => Bid::Double,
-            "XX" => Bid::Redouble,
-            _ => Bid::Pass,
-        };
-        Ok(b)
-    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Action {
