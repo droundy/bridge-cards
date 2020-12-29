@@ -1,5 +1,5 @@
 use bridge_deck::{Cards, Suit};
-use display_as::{display, with_template, DisplayAs, HTML};
+use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -54,9 +54,10 @@ async fn main() {
         );
     let sock = path!("abridge" / "ws" / String)
         .and(warp::ws())
+        .and(game)
         .and(players)
-        .map(|seat: String, ws: warp::ws::Ws, players| {
-            ws.on_upgrade(move |socket| editor_connected(seat, socket, players))
+        .map(|seat: String, ws: warp::ws::Ws, game, players| {
+            ws.on_upgrade(move |socket| ws_connected(seat, socket, players, game))
         });
 
     warp::serve(style_css.or(index).or(sock).or(seat))
@@ -186,6 +187,16 @@ impl GameState {
             bids: Vec::new(),
         }
     }
+    fn redeal(&mut self) {
+        let mut deck = Cards::ALL;
+        self.north = deck.pick(13).unwrap();
+        self.south = deck.pick(13).unwrap();
+        self.east = deck.pick(13).unwrap();
+        self.west = deck;
+        self.dealer = self.dealer.next();
+        self.dummy = None;
+        self.bids = Vec::new();
+    }
 
     fn bidder(&self) -> Option<Seat> {
         let n = self.bids.len();
@@ -238,7 +249,12 @@ struct Players {
     kibitzers: Vec<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
 }
 
-async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<RwLock<Players>>) {
+async fn ws_connected(
+    seat: String,
+    ws: warp::ws::WebSocket,
+    players: Arc<RwLock<Players>>,
+    game: Arc<RwLock<GameState>>,
+) {
     // Split the socket into a sender and receive of messages.
     let (user_ws_tx, mut user_ws_rx) = ws.split();
 
@@ -291,10 +307,53 @@ async fn editor_connected(seat: String, ws: warp::ws::WebSocket, players: Arc<Rw
             Ok(Err(e)) => {
                 eprintln!("Bad JSON: {:?}", e);
             }
-            Ok(Ok(action)) => println!("Weird action {:?}", action),
+            Ok(Ok(action)) => {
+                println!("Doing {:?}", action);
+                let p = players.read().await;
+                let mut g = game.write().await;
+                match action {
+                    Action::Redeal => {
+                        g.redeal();
+                    }
+                }
+                if let Some(s) = &p.north {
+                    let pp = Player {
+                        seat: Seat::North,
+                        players: &*p,
+                        game: &*g,
+                    };
+                    let msg = format_as!(HTML, "" pp);
+                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                }
+                if let Some(s) = &p.south {
+                    let pp = Player {
+                        seat: Seat::South,
+                        players: &*p,
+                        game: &*g,
+                    };
+                    let msg = format_as!(HTML, "" pp);
+                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                }
+                if let Some(s) = &p.east {
+                    let pp = Player {
+                        seat: Seat::East,
+                        players: &*p,
+                        game: &*g,
+                    };
+                    let msg = format_as!(HTML, "" pp);
+                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                }
+                if let Some(s) = &p.west {
+                    let pp = Player {
+                        seat: Seat::West,
+                        players: &*p,
+                        game: &*g,
+                    };
+                    let msg = format_as!(HTML, "" pp);
+                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                }
+            }
         }
-        // process_message(&code, &character, msg, &editors).await;
-        println!("msg: {:?}", msg);
     }
 }
 struct Index<'a> {

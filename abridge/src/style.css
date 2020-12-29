@@ -4,6 +4,9 @@ body {
 
 #north, #south {
     margin: auto;
+}
+
+#south {
     clear: both;
 }
 
@@ -22,12 +25,15 @@ body {
 .spades {
     color: black;
 }
+
 .hearts {
     color: red;
 }
+
 .diamonds {
     color: blue;
 }
+
 .clubs {
     color: green;
 }
@@ -36,11 +42,18 @@ button {
     width: 3em;
     margin: 0.25em;
 }
+
 button.pass {
     width: 6.5em;
 }
+
 .bidboard {
     border: 0.1em solid black;
     width: 8em;
     margin: auto;
+}
+
+.redeal {
+    float: right;
+    width: 5em;
 }

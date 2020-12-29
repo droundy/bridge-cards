@@ -18,8 +18,7 @@
         console.log('connected');
     };
     ws.onmessage = function (event) {
-        let msg = JSON.parse(event.data);
-        console.log(msg);
+        document.getElementById('main').innerHTML = event.data;
     };
     ws.onclose = function () {
         console.log('disconnected');
@@ -31,8 +30,8 @@
 </script>
 
 <body>
-    [% self.0 %]
-    <button [% Action::Redeal %]>Redeal</button>
+    <button class="redeal" [% Action::Redeal %]>Redeal</button>
+    <main id="main">[% self.0 %]</main>
 </body>
 
 </html>
