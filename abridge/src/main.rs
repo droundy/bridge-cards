@@ -1,7 +1,7 @@
 use bridge_deck::{Cards, Suit};
-use display_as::{display, format_as, with_template, DisplayAs, HTML};
+use display_as::{display, format_as, with_template, DisplayAs, HTML, UTF8};
 use futures::{FutureExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::{private::ser::serialize_tagged_newtype, Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -72,9 +72,58 @@ enum Bid {
     Suit(usize, bridge_deck::Suit),
     NT(usize),
 }
+impl serde::Serialize for Bid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use Bid::*;
+        match self {
+            Pass => serializer.serialize_str("P"),
+            Double => serializer.serialize_str("X"),
+            Redouble => serializer.serialize_str("XX"),
+            Suit(n, s) => serializer.serialize_str(&format_as!(UTF8, "" n "" s)),
+            NT(n) => serializer.serialize_str(&format!("{}NT", n)),
+        }
+    }
+}
+/// A visitor that deserializes a string
+struct MyVisitor;
+
+impl<'de> serde::de::Visitor<'de> for MyVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "a string")
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(s.to_owned())
+    }
+}
+impl<'de> serde::Deserialize<'de> for Bid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let visitor = MyVisitor;
+        let s = deserializer.deserialize_str(visitor)?;
+        let b = match s.as_str() {
+            "P" => Bid::Pass,
+            "X" => Bid::Double,
+            "XX" => Bid::Redouble,
+            _ => Bid::Pass,
+        };
+        Ok(b)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Action {
     Redeal,
+    Bid(Bid),
 }
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
@@ -314,6 +363,9 @@ async fn ws_connected(
                 match action {
                     Action::Redeal => {
                         g.redeal();
+                    }
+                    Action::Bid(b) => {
+                        println!("git a bid! {:?}", b);
                     }
                 }
                 if let Some(s) = &p.north {
