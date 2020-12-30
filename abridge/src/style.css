@@ -11,10 +11,12 @@ body {
 }
 
 #west {
+    clear: left;
     float: left;
 }
 
 #east {
+    clear: right;
     float: right;
 }
 
@@ -65,4 +67,6 @@ button:disabled {
 .bidhistory {
     font-size: 14px;
     float: left;
+    border: 0.05em solid black;
+    margin-right: 0.1em;
 }
