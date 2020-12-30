@@ -161,9 +161,9 @@ impl Bid {
 
     fn same_suit(self, other: Bid) -> bool {
         match (self, other) {
-            (Bid::Suit(_,me), Bid::Suit(_,she)) => me == she,
+            (Bid::Suit(_, me), Bid::Suit(_, she)) => me == she,
             (Bid::NT(_), Bid::NT(_)) => true,
-            _ => false
+            _ => false,
         }
     }
 }
@@ -253,6 +253,14 @@ impl GameState {
             declarer = declarer.next().next();
         }
         None
+    }
+
+    fn hand_visible_to(&self, hand: Seat, who: Seat) -> bool {
+        hand == who
+            || (Some(hand) == self.dummy && Some(who.next().next()) == self.dummy)
+            || (Some(hand.next().next()) == self.dummy && Some(who) == self.dummy)
+            || (Some(hand) == self.dummy
+                && self.north.len() + self.south.len() + self.east.len() + self.west.len() < 52)
     }
 
     fn bid_is_legal(&self, seat: Seat, bid: Bid) -> bool {
@@ -376,7 +384,9 @@ async fn ws_connected(
                     }
                     Action::Bid(b) => {
                         g.bids.push(b);
-                        if g.bids.len() >= 3 && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+                        if g.bids.len() >= 3
+                            && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                        {
                             println!("Bidding is complete");
                             if g.bids.len() == 3 {
                                 g.redeal();
