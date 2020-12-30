@@ -253,7 +253,9 @@ impl GameState {
     }
 
     fn dummy(&self) -> Option<Seat> {
-        if self.bids.len() >= 3 && &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass] {
+        if self.bids.len() >= 3
+            && &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass]
+        {
             return None;
         }
         self.find_declarer().map(|s| s.next().next())
@@ -291,7 +293,32 @@ impl GameState {
             }
         }
     }
+
+    fn hand(&self, seat: Seat) -> Cards {
+        match seat {
+            Seat::North => self.north,
+            Seat::South => self.south,
+            Seat::East => self.east,
+            Seat::West => self.west,
+        }
+    }
+
+    fn playable_cards(&self, seat: Seat) -> PlayableHand {
+        PlayableHand {
+            hand: self.hand(seat),
+            playable: self.hand(seat),
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlayableHand {
+    hand: Cards,
+    playable: Cards,
+}
+
+#[with_template("[%" "%]" "hand.html")]
+impl DisplayAs<HTML> for PlayableHand {}
 #[derive(Default, Debug)]
 struct Players {
     north: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
