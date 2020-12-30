@@ -174,7 +174,6 @@ struct GameState {
     east: Cards,
     west: Cards,
 
-    dummy: Option<Seat>,
     dealer: Seat,
     bids: Vec<Bid>,
 
@@ -193,7 +192,6 @@ impl GameState {
             south,
             east,
             north,
-            dummy: None,
             dealer: Seat::South,
             bids: Vec::new(),
             lead: None,
@@ -206,7 +204,6 @@ impl GameState {
         self.east = deck.pick(13).unwrap();
         self.west = deck;
         self.dealer = self.dealer.next();
-        self.dummy = None;
         self.bids = Vec::new();
     }
 
@@ -255,11 +252,19 @@ impl GameState {
         None
     }
 
+    fn dummy(&self) -> Option<Seat> {
+        if self.bids.len() >= 3 && &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass] {
+            return None;
+        }
+        self.find_declarer().map(|s| s.next().next())
+    }
+
     fn hand_visible_to(&self, hand: Seat, who: Seat) -> bool {
+        let dummy = self.dummy();
         hand == who
-            || (Some(hand) == self.dummy && Some(who.next().next()) == self.dummy)
-            || (Some(hand.next().next()) == self.dummy && Some(who) == self.dummy)
-            || (Some(hand) == self.dummy
+            || (Some(hand) == dummy && Some(who.next().next()) == dummy)
+            || (Some(hand.next().next()) == dummy && Some(who) == dummy)
+            || (Some(hand) == dummy
                 && self.north.len() + self.south.len() + self.east.len() + self.west.len() < 52)
     }
 
@@ -392,7 +397,6 @@ async fn ws_connected(
                                 g.redeal();
                             } else {
                                 let declarer = g.find_declarer().unwrap();
-                                g.dummy = Some(declarer.next().next());
                                 g.lead = Some(declarer.next());
                             }
                         }
