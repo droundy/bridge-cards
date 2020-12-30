@@ -19,7 +19,7 @@ body {
 }
 
 .hand {
-    width: 8rem;
+    width: 7rem;
 }
 
 .spades {
@@ -47,6 +47,10 @@ button.pass {
     width: 6.5em;
 }
 
+button:disabled {
+   opacity: 0.3;
+}
+
 .bidboard {
     border: 0.1em solid black;
     width: 8em;
@@ -56,4 +60,9 @@ button.pass {
 .redeal {
     float: right;
     width: 5em;
+}
+
+.bidhistory {
+    font-size: 14px;
+    float: left;
 }

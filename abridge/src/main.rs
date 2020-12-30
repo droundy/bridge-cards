@@ -241,7 +241,7 @@ impl GameState {
         }
     }
 }
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Players {
     north: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
     south: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
@@ -301,6 +301,26 @@ async fn ws_connected(
                 break;
             }
         };
+        if msg.is_close() {
+            println!("got a close");
+            let mut e = players.write().await;
+            match seat.as_str() {
+                "north" => {
+                    e.north = None;
+                }
+                "south" => {
+                    e.south = None;
+                }
+                "east" => {
+                    e.east = None;
+                }
+                "west" => {
+                    e.west = None;
+                }
+                _ => (),
+            }
+            return;
+        }
         match msg.to_str().map(|s| serde_json::from_str::<Action>(s)) {
             Err(e) => {
                 eprintln!("Bad UTF8: {:?} {:?}", e, msg);
@@ -317,7 +337,7 @@ async fn ws_connected(
                         g.redeal();
                     }
                     Action::Bid(b) => {
-                        println!("git a bid! {:?}", b);
+                        g.bids.push(b);
                     }
                 }
                 if let Some(s) = &p.north {
@@ -401,6 +421,14 @@ impl Seat {
             Seat::West => Seat::North,
             Seat::North => Seat::East,
             Seat::East => Seat::South,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Seat::South => "S",
+            Seat::West => "W",
+            Seat::North => "N",
+            Seat::East => "E",
         }
     }
 }

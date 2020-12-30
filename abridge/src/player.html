@@ -1,4 +1,16 @@
 [% use Seat::*; %]
+<table class="bidhistory">
+    <tr>[% let who = self.game.dealer; %]
+        <th>[% who.name() %]</th>
+        <th>[% who.next().name() %]</th>
+        <th>[% who.next().next().name() %]</th>
+        <th>[% who.next().next().next().name() %]</th></tr>
+    [% for row in self.game.bids.chunks(4) {
+        %]<tr>[% for b in row.iter() {
+            %]<td>[% b %]</td>[%
+            } %]</tr>[%
+    } %]
+</table>
 <div class="hand" id="north">[% if self.seat == North || self.game.dummy == Some(North) { self.game.north } else { %]North[% } %]</div>
 <div class="hand" id="west">[% if self.seat == West || self.game.dummy == Some(West) { self.game.west } else { %]West[% } %]</div>
 <div class="hand" id="east">[% if self.seat == East || self.game.dummy == Some(East) { self.game.east } else { %]East[% } %]</div>
@@ -12,7 +24,9 @@
             } %][%
             if !self.game.bid_is_legal(self.seat, b) {
             %] disabled[%
+            } else {
+                Action::Bid(b)
             } %]>[% b %]</button>[%
         } %]
-    </div> [%
+    </div>[%
 } %]
