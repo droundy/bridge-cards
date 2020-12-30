@@ -158,6 +158,14 @@ impl Bid {
     fn is_contract(self) -> bool {
         self.level().is_some()
     }
+
+    fn same_suit(self, other: Bid) -> bool {
+        match (self, other) {
+            (Bid::Suit(_,me), Bid::Suit(_,she)) => me == she,
+            (Bid::NT(_), Bid::NT(_)) => true,
+            _ => false
+        }
+    }
 }
 
 struct GameState {
@@ -169,6 +177,8 @@ struct GameState {
     dummy: Option<Seat>,
     dealer: Seat,
     bids: Vec<Bid>,
+
+    lead: Option<Seat>,
 }
 
 impl GameState {
@@ -186,6 +196,7 @@ impl GameState {
             dummy: None,
             dealer: Seat::South,
             bids: Vec::new(),
+            lead: None,
         }
     }
     fn redeal(&mut self) {
@@ -207,12 +218,39 @@ impl GameState {
             Seat::try_from((n + self.dealer as usize) % 4)
         }
     }
+    fn player(&self) -> Option<Seat> {
+        None
+    }
 
     fn highest_contract_bid(&self) -> Option<Bid> {
         for &x in self.bids.iter().rev() {
             if x.is_contract() {
                 return Some(x);
             }
+        }
+        None
+    }
+
+    fn find_declarer(&self) -> Option<Seat> {
+        let contract = self.highest_contract_bid()?;
+        let mut winning_seat = self.dealer;
+        for &x in self.bids.iter() {
+            if x == contract {
+                break;
+            }
+            winning_seat = winning_seat.next();
+        }
+        let mut declarer = self.dealer;
+        let mut bids = self.bids.iter();
+        if winning_seat != self.dealer && winning_seat != self.dealer.next().next() {
+            bids.next();
+            declarer = declarer.next();
+        }
+        for &x in bids.step_by(2) {
+            if x.same_suit(contract) {
+                return Some(declarer);
+            }
+            declarer = declarer.next().next();
         }
         None
     }
@@ -338,6 +376,16 @@ async fn ws_connected(
                     }
                     Action::Bid(b) => {
                         g.bids.push(b);
+                        if g.bids.len() >= 3 && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+                            println!("Bidding is complete");
+                            if g.bids.len() == 3 {
+                                g.redeal();
+                            } else {
+                                let declarer = g.find_declarer().unwrap();
+                                g.dummy = Some(declarer.next().next());
+                                g.lead = Some(declarer.next());
+                            }
+                        }
                     }
                 }
                 if let Some(s) = &p.north {
