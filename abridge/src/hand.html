@@ -1,6 +1,6 @@
 <span class="spades">♠[% for c in self.hand.spades().rev() {
      if self.playable.contains(c) {
-        %]<b>[% c.rankname() %]</b>[%
+        %]<span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
      } else {
         c.rankname()
      }
@@ -8,7 +8,7 @@
 <br/>
 <span class="hearts">♥[% for c in self.hand.hearts().rev() {
     if self.playable.contains(c) {
-       %]<b>[% c.rankname() %]</b>[%
+       %]<span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
     } else {
        c.rankname()
     }
@@ -16,7 +16,7 @@
 <br/>
 <span class="diamonds">♦[% for c in self.hand.diamonds().rev() {
     if self.playable.contains(c) {
-       %]<b>[% c.rankname() %]</b>[%
+       %]<span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
     } else {
        c.rankname()
     }
@@ -24,7 +24,7 @@
 <br/>
 <span class="clubs">♣[% for c in self.hand.clubs().rev() {
     if self.playable.contains(c) {
-       %]<b>[% c.rankname() %]</b>[%
+       %]<span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
     } else {
        c.rankname()
     }

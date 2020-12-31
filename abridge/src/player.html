@@ -11,10 +11,15 @@
             } %]</tr>[%
     } %]
 </table>
-<div class="hand" id="north">[% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North) } else { %]North[% } %]</div>
-<div class="hand" id="west">[% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West) } else { %]West[% } %]</div>
-<div class="hand" id="east">[% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East) } else { %]East[% } %]</div>
-<div class="hand" id="south">[% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South) } else { %]South[% } %]</div>
+<div class="hand" id="north">[% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North, self.seat) } else { %]North[% } %]</div>
+<div class="hand" id="west">[% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West, self.seat) } else { %]West[% } %]</div>
+<div class="hand" id="east">[% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East, self.seat) } else { %]East[% } %]</div>
+<div class="table">
+    [% for c in self.game.played.iter().cloned() {
+        c
+    } %]
+</div>
+<div class="hand" id="south">[% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South, self.seat) } else { %]South[% } %]</div>
 [% if self.game.bidder() == Some(self.seat) {
     %] <div class="bidboard">
         [% for &b in BIDS.iter() {

@@ -1,4 +1,4 @@
-use bridge_deck::{Cards, Suit};
+use bridge_deck::{Card, Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,7 @@ enum Bid {
 enum Action {
     Redeal,
     Bid(Bid),
+    Play(Card),
 }
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
@@ -178,6 +179,7 @@ struct GameState {
     bids: Vec<Bid>,
 
     lead: Option<Seat>,
+    played: Vec<Card>,
 }
 
 impl GameState {
@@ -195,6 +197,7 @@ impl GameState {
             dealer: Seat::South,
             bids: Vec::new(),
             lead: None,
+            played: Vec::new(),
         }
     }
     fn redeal(&mut self) {
@@ -302,12 +305,51 @@ impl GameState {
             Seat::West => self.west,
         }
     }
-
-    fn playable_cards(&self, seat: Seat) -> PlayableHand {
-        PlayableHand {
-            hand: self.hand(seat),
-            playable: self.hand(seat),
+    fn hand_mut(&mut self, seat: Seat) -> &mut Cards {
+        match seat {
+            Seat::North => &mut self.north,
+            Seat::South => &mut self.south,
+            Seat::East => &mut self.east,
+            Seat::West => &mut self.west,
         }
+    }
+
+    fn playable_cards(&self, seat: Seat, player: Seat) -> PlayableHand {
+        let hand = self.hand(seat);
+        let playable = if let (Some(lead), Some(dummy)) = (self.lead, self.dummy()) {
+            let declarer = dummy.next().next();
+            if (player != seat && seat != dummy) || (seat == dummy && player != declarer) {
+                return PlayableHand {
+                    hand,
+                    playable: Cards::EMPTY,
+                };
+            }
+            match self.played.len() {
+                0 => {
+                    if seat == lead {
+                        hand
+                    } else {
+                        Cards::EMPTY
+                    }
+                }
+                n => {
+                    if seat == lead.nth(n) {
+                        let suit = self.played[0].suit();
+                        let mysuit = hand.in_suit(suit);
+                        if mysuit.len() == 0 {
+                            hand
+                        } else {
+                            mysuit
+                        }
+                    } else {
+                        Cards::EMPTY
+                    }
+                }
+            }
+        } else {
+            Cards::EMPTY
+        };
+        PlayableHand { hand, playable }
     }
 }
 
@@ -346,20 +388,25 @@ async fn ws_connected(
         }
     }));
 
+    let mut myseat: Option<Seat> = None;
     {
         // Save the sender in our list of connected users.
         let mut e = players.write().await;
         match seat.as_str() {
             "north" => {
+                myseat = Some(Seat::North);
                 e.north = Some(tx);
             }
             "south" => {
+                myseat = Some(Seat::South);
                 e.south = Some(tx);
             }
             "east" => {
+                myseat = Some(Seat::East);
                 e.east = Some(tx);
             }
             "west" => {
+                myseat = Some(Seat::West);
                 e.west = Some(tx);
             }
             _ => {
@@ -427,6 +474,12 @@ async fn ws_connected(
                                 g.lead = Some(declarer.next());
                             }
                         }
+                    }
+                    Action::Play(card) => {
+                        let seat = myseat.unwrap();
+                        // FIXME check for playable
+                        g.played.push(card);
+                        *g.hand_mut(seat) = g.hand(seat) - Cards::singleton(card); 
                     }
                 }
                 if let Some(s) = &p.north {
@@ -511,6 +564,13 @@ impl Seat {
             Seat::North => Seat::East,
             Seat::East => Seat::South,
         }
+    }
+    fn nth(self, n: usize) -> Self {
+        let mut next = self;
+        for _ in 0..n {
+            next = next.next();
+        }
+        next
     }
     fn name(self) -> &'static str {
         match self {

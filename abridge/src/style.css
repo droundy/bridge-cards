@@ -70,3 +70,19 @@ button:disabled {
     border: 0.05em solid black;
     margin-right: 0.1em;
 }
+
+.playable {
+    transition: all 0.25s ease-in-out;
+    text-shadow: 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+
+.playable:hover {
+    text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+}
+
+.table {
+    background-color: gray;
+    width: 5em;
+    margin: auto;
+    height: 5em;
+}

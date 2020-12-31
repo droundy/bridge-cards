@@ -5,7 +5,7 @@
 // pub mod simd;
 
 use rand::Rng;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// A single card
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +310,13 @@ impl Cards {
         }
     }
 
+    /// Remove some cards
+    pub const fn difference(&self, cards: Cards) -> Cards {
+        Cards {
+            bits: self.bits & !cards.bits,
+        }
+    }
+
     /// Randomly pick `num` cards to remove from the deck.
     /// Returns `None` only if there aren't enough cards.
     pub fn pick(&mut self, num: usize) -> Option<Cards> {
@@ -385,7 +392,12 @@ impl Cards {
     pub const fn spades(self) -> Cards {
         self.intersection(Cards::SPADES)
     }
-    ///
+
+    /// All the cards in specified suit
+    pub fn in_suit(self, suit: Suit) -> Cards {
+        let offset = suit as i32 * 16;
+        Cards { bits: ((self.bits >> offset) & 0xFFFF) << offset }
+    }
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
 
@@ -574,6 +586,19 @@ impl std::ops::Add for Cards {
 impl std::ops::AddAssign for Cards {
     fn add_assign(&mut self, rhs: Self) {
         *self = self.union(rhs)
+    }
+}
+
+impl std::ops::Sub for Cards {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        self.difference(rhs)
+    }
+}
+
+impl std::ops::SubAssign for Cards {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = self.difference(rhs)
     }
 }
 
