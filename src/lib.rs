@@ -196,10 +196,11 @@ impl Card {
 impl Card {
     fn unicode(self) -> char {
         let start = 0x1F0D1 - (self.suit() as u32) * 16;
-        let shift = if self.rank() == 14 {
-            1
-        } else {
-            self.rank() as u32
+        let shift = match self.rank() {
+            14 => 1,
+            13 => 14,
+            12 => 13,
+            n => n as u32,
         };
         use std::convert::TryFrom;
         char::try_from(start + shift - 1).unwrap()
@@ -219,6 +220,10 @@ fn unicode_test() {
 
     assert_eq!('🂡', Card::SA.unicode());
     assert_eq!('🂢', Card::S2.unicode());
+
+    assert_eq!('🂫', Card::SJ.unicode());
+    assert_eq!('🂭', Card::SQ.unicode());
+    assert_eq!('🂮', Card::SK.unicode());
 }
 
 impl std::fmt::Display for Card {
