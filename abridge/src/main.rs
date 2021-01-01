@@ -182,6 +182,13 @@ struct GameState {
     east: Cards,
     west: Cards,
 
+    original_north: Cards,
+    original_south: Cards,
+    original_east: Cards,
+    original_west: Cards,
+
+    hand_done: bool,
+
     dealer: Seat,
     bids: Vec<Bid>,
 
@@ -201,6 +208,11 @@ impl GameState {
             south,
             east,
             north,
+            original_north: north,
+            original_east: east,
+            original_south: south,
+            original_west: west,
+            hand_done: false,
             dealer: Seat::South,
             bids: Vec::new(),
             lead: None,
@@ -474,11 +486,10 @@ async fn ws_connected(
                             && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
                         {
                             println!("Bidding is complete");
-                            if g.bids.len() == 3 {
-                                g.redeal();
-                            } else {
-                                let declarer = g.find_declarer().unwrap();
+                            if let Some(declarer) = g.find_declarer() {
                                 g.lead = Some(declarer.next());
+                            } else {
+                                g.hand_done = true;
                             }
                         }
                     }

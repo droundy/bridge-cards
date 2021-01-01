@@ -11,6 +11,13 @@
             } %]</tr>[%
     } %]
 </table>
+[% if self.game.hand_done { %]
+<div class="hand" id="north">[% self.game.original_north %]</div>
+<div class="hand" id="west">[% self.game.original_west %]</div>
+<div class="hand" id="east">[% self.game.original_east %]</div>
+<div class="table"></div>
+<div class="hand" id="south">[% self.game.original_south %]</div>
+[% } else { %]
 <div class="hand" id="north">[% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North, self.seat) } else { %]North[% } %]</div>
 <div class="hand" id="west">[% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West, self.seat) } else { %]West[% } %]</div>
 <div class="hand" id="east">[% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East, self.seat) } else { %]East[% } %]</div>
@@ -27,6 +34,7 @@
      } %]
 </div>
 <div class="hand" id="south">[% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South, self.seat) } else { %]South[% } %]</div>
+[% } %]
 [% if self.game.bidder() == Some(self.seat) {
     %] <div class="bidboard">
         [% for &b in BIDS.iter() {
