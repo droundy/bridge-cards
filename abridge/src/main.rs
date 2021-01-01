@@ -225,6 +225,13 @@ impl GameState {
         self.south = deck.pick(13).unwrap();
         self.east = deck.pick(13).unwrap();
         self.west = deck;
+
+        self.original_west = self.west;
+        self.original_south = self.south;
+        self.original_north = self.north;
+        self.original_east = self.east;
+
+        self.hand_done = false;
         self.dealer = self.dealer.next();
         self.bids = Vec::new();
     }
