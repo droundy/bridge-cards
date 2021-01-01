@@ -82,7 +82,35 @@ button:disabled {
 
 .table {
     background-color: gray;
-    width: 5em;
+    width: 5rem;
     margin: auto;
-    height: 5em;
+    height: 5rem;
+    position: relative;
+}
+
+.played {
+    display: inline-block;
+    background-color: white;
+    font-size: 36px;
+}
+
+.table span:nth-child(0) {
+    position: absolute;
+    top: 0;
+    left: 2rem;
+}
+.table span:nth-child(1) {
+    position: absolute;
+    top: 2rem;
+    left: 0;
+}
+.table span:nth-child(2) {
+    position: absolute;
+    top: 2rem;
+    right: 0;
+}
+.table span:nth-child(3) {
+    position: absolute;
+    bottom: 0;
+    left: 2rem;
 }

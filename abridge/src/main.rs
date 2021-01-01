@@ -256,8 +256,8 @@ impl GameState {
     }
 
     fn dummy(&self) -> Option<Seat> {
-        if self.bids.len() >= 3
-            && &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass]
+        if self.bids.len() < 4
+            || &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass]
         {
             return None;
         }
