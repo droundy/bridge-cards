@@ -115,30 +115,37 @@ static BIDS: &[Bid] = &[
     Bid::Suit(1, Suit::Diamonds),
     Bid::Suit(1, Suit::Hearts),
     Bid::Suit(1, Suit::Spades),
+    Bid::NT(1),
     Bid::Suit(2, Suit::Clubs),
     Bid::Suit(2, Suit::Diamonds),
     Bid::Suit(2, Suit::Hearts),
     Bid::Suit(2, Suit::Spades),
+    Bid::NT(2),
     Bid::Suit(3, Suit::Clubs),
     Bid::Suit(3, Suit::Diamonds),
     Bid::Suit(3, Suit::Hearts),
     Bid::Suit(3, Suit::Spades),
+    Bid::NT(3),
     Bid::Suit(4, Suit::Clubs),
     Bid::Suit(4, Suit::Diamonds),
     Bid::Suit(4, Suit::Hearts),
     Bid::Suit(4, Suit::Spades),
+    Bid::NT(4),
     Bid::Suit(5, Suit::Clubs),
     Bid::Suit(5, Suit::Diamonds),
     Bid::Suit(5, Suit::Hearts),
     Bid::Suit(5, Suit::Spades),
+    Bid::NT(5),
     Bid::Suit(6, Suit::Clubs),
     Bid::Suit(6, Suit::Diamonds),
     Bid::Suit(6, Suit::Hearts),
     Bid::Suit(6, Suit::Spades),
+    Bid::NT(6),
     Bid::Suit(7, Suit::Clubs),
     Bid::Suit(7, Suit::Diamonds),
     Bid::Suit(7, Suit::Hearts),
     Bid::Suit(7, Suit::Spades),
+    Bid::NT(7),
     Bid::Pass,
     Bid::Double,
     Bid::Redouble,
@@ -212,7 +219,7 @@ impl GameState {
 
     fn bidder(&self) -> Option<Seat> {
         let n = self.bids.len();
-        if n >= 3 && &self.bids[n - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+        if n > 3 && &self.bids[n - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
             None
         } else {
             Seat::try_from((n + self.dealer as usize) % 4)
@@ -463,7 +470,7 @@ async fn ws_connected(
                     }
                     Action::Bid(b) => {
                         g.bids.push(b);
-                        if g.bids.len() >= 3
+                        if g.bids.len() > 3
                             && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
                         {
                             println!("Bidding is complete");
@@ -479,7 +486,12 @@ async fn ws_connected(
                         let seat = myseat.unwrap();
                         // FIXME check for playable
                         g.played.push(card);
-                        *g.hand_mut(seat) = g.hand(seat) - Cards::singleton(card); 
+                        // Be lazy and don't even bother checking whether we
+                        // were playing for dummy, just remove from our hand AND
+                        // partner's hand.
+                        *g.hand_mut(seat) = g.hand(seat) - Cards::singleton(card);
+                        *g.hand_mut(seat.next().next()) =
+                            g.hand(seat.next().next()) - Cards::singleton(card);
                     }
                 }
                 if let Some(s) = &p.north {

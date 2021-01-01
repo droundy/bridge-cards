@@ -22,6 +22,7 @@ body {
 
 .hand {
     width: 7rem;
+    height: 7rem;
 }
 
 .spades {
@@ -43,10 +44,12 @@ body {
 button {
     width: 3em;
     margin: 0.25em;
+    margin-bottom: 0;
+    margin-top: 0;
 }
 
 button.pass {
-    width: 6.5em;
+    width: 10em;
 }
 
 button:disabled {
@@ -54,8 +57,7 @@ button:disabled {
 }
 
 .bidboard {
-    border: 0.1em solid black;
-    width: 8em;
+    width: 10em;
     margin: auto;
 }
 
@@ -69,6 +71,7 @@ button:disabled {
     float: left;
     border: 0.05em solid black;
     margin-right: 0.1em;
+    line-height: 0.5rem;
 }
 
 .playable {
@@ -92,19 +95,27 @@ button:disabled {
     position: absolute;
     top: 0;
     left: 2rem;
+    text-align: center;
+    width: 4rem;
 }
 .table span:nth-of-type(2) {
     position: absolute;
     top: 2rem;
     left: 0;
+    line-height: 4rem;
+    height: 4rem;
 }
 .table span:nth-of-type(3) {
     position: absolute;
     top: 2rem;
     right: 0;
+    line-height: 4rem;
+    height: 4rem;
 }
 .table span:nth-of-type(4) {
     position: absolute;
     bottom: 0;
     left: 2rem;
+    text-align: center;
+    width: 4rem;
 }
