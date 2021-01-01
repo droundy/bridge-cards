@@ -81,6 +81,7 @@ button:disabled {
 
 .playable:hover {
     text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    cursor: pointer;
 }
 
 .table {

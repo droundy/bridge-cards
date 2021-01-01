@@ -86,7 +86,9 @@ impl PartialOrd for Bid {
         use Bid::*;
         if let Some(self_l) = self.level() {
             if let Some(other_l) = other.level() {
-                if self_l != other_l {
+                if self == other {
+                    return Some(std::cmp::Ordering::Equal);
+                } else if self_l != other_l {
                     return self_l.partial_cmp(&other_l);
                 } else if let NT(_) = self {
                     return Some(std::cmp::Ordering::Greater);
@@ -108,6 +110,15 @@ impl PartialOrd for Bid {
         }
         None
     }
+}
+
+#[test]
+fn bid_comparisons() {
+    assert!(Bid::NT(1) == Bid::NT(1));
+    assert!(!(Bid::NT(1) > Bid::NT(1)));
+    assert!(Bid::NT(1).is_contract());
+    assert_eq!(Some(1), Bid::NT(1).level());
+    assert_eq!(Some(3), Bid::NT(3).level());
 }
 
 static BIDS: &[Bid] = &[
@@ -194,6 +205,8 @@ struct GameState {
 
     lead: Option<Seat>,
     played: Vec<Card>,
+    ns_tricks: usize,
+    ew_tricks: usize,
 }
 
 impl GameState {
@@ -217,6 +230,8 @@ impl GameState {
             bids: Vec::new(),
             lead: None,
             played: Vec::new(),
+            ns_tricks: 0,
+            ew_tricks: 0,
         }
     }
     fn redeal(&mut self) {
@@ -340,7 +355,7 @@ impl GameState {
                 };
             }
             match self.played.len() {
-                0 => {
+                0 | 4 => {
                     if seat == lead {
                         hand
                     } else {
@@ -365,6 +380,44 @@ impl GameState {
             Cards::EMPTY
         };
         PlayableHand { hand, playable }
+    }
+
+    fn trick_finish(&mut self) {
+        if self.played.len() == 4 {
+            let led = self.played[0].suit();
+            let mut cards = Cards::EMPTY;
+            for c in self.played.iter().cloned() {
+                cards += Cards::singleton(c);
+            }
+            let mut winner = cards.in_suit(led).rev().next().unwrap();
+            if let Some(Bid::Suit(_, trump)) = self.highest_contract_bid() {
+                if let Some(trump_winner) = cards.in_suit(trump).rev().next() {
+                    winner = trump_winner;
+                }
+            }
+            let mut winning_seat = self.lead.unwrap();
+            for c in self.played.iter().cloned() {
+                if c == winner {
+                    break;
+                }
+                winning_seat = winning_seat.next();
+            }
+            // Shift is how far the lead has shifted from last time.
+            let shift = winning_seat as i32 - self.lead.unwrap() as i32;
+            let shift = (shift + 4) % 4;
+            self.lead = Some(winning_seat);
+            if winning_seat == Seat::North || winning_seat == Seat::South {
+                self.ns_tricks += 1;
+            } else {
+                self.ew_tricks += 1;
+            }
+            // Adjust the "played" cards so they will appear in front of the
+            // proper player.
+            for _ in 0..shift {
+                let x = self.played.remove(0);
+                self.played.push(x);
+            }
+        }
     }
 }
 
@@ -428,7 +481,6 @@ async fn ws_connected(
                 e.kibitzers.push(tx);
             }
         }
-        println!("got {} kibitzers now", e.kibitzers.len());
     }
 
     // Every time the user sends a message, broadcast it to
@@ -492,6 +544,9 @@ async fn ws_connected(
                     Action::Play(card) => {
                         let seat = myseat.unwrap();
                         // FIXME check for playable
+                        if g.played.len() == 4 {
+                            g.played.clear();
+                        }
                         g.played.push(card);
                         // Be lazy and don't even bother checking whether we
                         // were playing for dummy, just remove from our hand AND
@@ -499,6 +554,10 @@ async fn ws_connected(
                         *g.hand_mut(seat) = g.hand(seat) - Cards::singleton(card);
                         *g.hand_mut(seat.next().next()) =
                             g.hand(seat.next().next()) - Cards::singleton(card);
+                        g.trick_finish();
+                        if g.ns_tricks + g.ew_tricks == 13 {
+                            g.hand_done = true;
+                        }
                     }
                 }
                 if let Some(s) = &p.north {
@@ -562,9 +621,9 @@ impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seat {
     South = 0,
-    West,
-    North,
-    East,
+    West = 1,
+    North = 2,
+    East = 3,
 }
 impl Seat {
     fn try_from(v: usize) -> Option<Self> {

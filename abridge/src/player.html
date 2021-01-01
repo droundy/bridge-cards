@@ -49,4 +49,10 @@
             } %]>[% b %]</button>[%
         } %]
     </div>[%
-} %]
+} else if self.game.bidder().is_none() {
+    %] <div class="tricks">
+        NS: [% self.game.ns_tricks %]<br/>
+        EW: [% self.game.ew_tricks %]<br/>
+    </div> [%
+}
+%]
