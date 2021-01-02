@@ -11,6 +11,7 @@
             } %]</tr>[%
     } %]
 </table>
+[% if Some(self.seat) == self.game.turn() { %]<audio autoplay><source src="your-play.mp3" type="audio/mpeg"></audio>[% } %]
 [% if self.game.hand_done { %]
 <div class="hand" id="north">[% self.game.original_north %]</div>
 <div class="hand" id="west">[% self.game.original_west %]</div>

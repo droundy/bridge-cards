@@ -24,6 +24,15 @@ async fn main() {
             .body(STYLE)
             .unwrap())
     });
+    let audio = path!("abridge" / "your-play.mp3").map(|| {
+        const AUDIO: &'static [u8] = include_bytes!("your-play.mp3");
+        Ok(warp::http::Response::builder()
+            .status(200)
+            .header("content-length", AUDIO.len())
+            .header("content-type", "audio/mpeg")
+            .body(AUDIO)
+            .unwrap())
+    });
     let index = path!("abridge").and(players.clone()).and_then(
         |players: Arc<RwLock<Players>>| async move {
             let p = players.read().await;
@@ -60,7 +69,7 @@ async fn main() {
             ws.on_upgrade(move |socket| ws_connected(seat, socket, players, game))
         });
 
-    warp::serve(style_css.or(index).or(sock).or(seat))
+    warp::serve(style_css.or(audio).or(index).or(sock).or(seat))
         .run(([0, 0, 0, 0], 8087))
         .await;
 }
@@ -292,6 +301,25 @@ impl GameState {
             return None;
         }
         self.find_declarer().map(|s| s.next().next())
+    }
+
+    fn turn(&self) -> Option<Seat> {
+        if let Some(seat) = self.bidder() {
+            Some(seat)
+        } else if let (Some(lead), Some(dummy)) = (self.lead, self.dummy()) {
+            let declarer = dummy.next().next();
+            let play_seat = match self.played.len() {
+                0 | 4 =>  lead,
+                n => lead.nth(n),
+            };
+            if play_seat == dummy {
+                Some(declarer)
+            } else {
+                Some(play_seat)
+            }
+        } else {
+            None
+        }
     }
 
     fn hand_visible_to(&self, hand: Seat, who: Seat) -> bool {
