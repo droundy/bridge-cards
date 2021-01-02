@@ -1,5 +1,6 @@
 body {
     font-size: 24px;
+    font-family: 'Roboto', sans-serif;
 }
 
 #north, #south {
@@ -34,11 +35,15 @@ body {
 }
 
 .diamonds {
-    color: blue;
+    color: transparent;
+    text-shadow: 0 0 0 blue;
+    /* color: blue; */
 }
 
 .clubs {
-    color: green;
+    color: transparent;
+    text-shadow: 0 0 0 green;
+    /* color: green; */
 }
 
 button {
