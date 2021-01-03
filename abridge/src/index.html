@@ -16,10 +16,10 @@
             Please play.
         </p>
         <ul>
-            [% if self.players.north.is_none() { %]<li><a href="/abridge/north">Sit North</a></li>[% } %]
-            [% if self.players.south.is_none() { %]<li><a href="/abridge/south">Sit South</a></li>[% } %]
-            [% if self.players.east.is_none() { %]<li><a href="/abridge/east">Sit East</a></li>[% } %]
-            [% if self.players.west.is_none() { %]<li><a href="/abridge/west">Sit West</a></li>[% } %]
+            [% if self.players.0[Seat::North].is_none() { %]<li><a href="/abridge/north">Sit North</a></li>[% } %]
+            [% if self.players.0[Seat::South].is_none() { %]<li><a href="/abridge/south">Sit South</a></li>[% } %]
+            [% if self.players.0[Seat::East].is_none() { %]<li><a href="/abridge/east">Sit East</a></li>[% } %]
+            [% if self.players.0[Seat::West].is_none() { %]<li><a href="/abridge/west">Sit West</a></li>[% } %]
             <li><a href="kibitz">Kibitz</a></li>
         </ul>
     </main>

@@ -42,21 +42,12 @@ async fn main() {
         },
     );
     let seat = path!("abridge" / Seat)
-        .and(players.clone())
         .and(game.clone())
         .and_then(
-            |seat: Seat, players: Arc<RwLock<Players>>, game: Arc<RwLock<GameState>>| async move {
-                let p = players.read().await;
+            |seat: Seat, game: Arc<RwLock<GameState>>| async move {
                 let g = game.read().await;
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                    Ok(display(
-                        HTML,
-                        &PlayerPage(Player {
-                            seat,
-                            game: &*g,
-                        }),
-                    )
-                    .into_response());
+                    Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
                 r
             },
         );
@@ -243,9 +234,6 @@ impl GameState {
             Some(self.dealer + n)
         }
     }
-    fn player(&self) -> Option<Seat> {
-        None
-    }
 
     fn highest_contract_bid(&self) -> Option<Bid> {
         for &x in self.bids.iter().rev() {
@@ -426,12 +414,7 @@ struct PlayableHand {
 #[with_template("[%" "%]" "hand.html")]
 impl DisplayAs<HTML> for PlayableHand {}
 #[derive(Default, Debug)]
-struct Players { // ( Seated<Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>> );
-    south: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
-    east: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
-    west: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
-    kibitzers: Vec<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
-}
+struct Players(Seated<Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>>);
 
 async fn ws_connected(
     seat: String,
@@ -445,38 +428,24 @@ async fn ws_connected(
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the websocket...
     let (tx, rx) = mpsc::unbounded_channel();
+    let myseat;
+    {
+        // Save the sender in our list of connected users.
+        let mut e = players.write().await;
+        if let Ok(s) = std::str::FromStr::from_str(seat.as_str()) {
+            myseat = s;
+        } else {
+            println!("bad seat");
+            return;
+        }
+        e.0[myseat] = Some(tx);
+    }
     tokio::task::spawn(rx.forward(user_ws_tx).map(|result| {
         if let Err(e) = result {
             eprintln!("websocket send error: {}", e);
         }
     }));
 
-    let mut myseat: Option<Seat> = None;
-    {
-        // Save the sender in our list of connected users.
-        let mut e = players.write().await;
-        match seat.as_str() {
-            "north" => {
-                myseat = Some(Seat::North);
-                e.north = Some(tx);
-            }
-            "south" => {
-                myseat = Some(Seat::South);
-                e.south = Some(tx);
-            }
-            "east" => {
-                myseat = Some(Seat::East);
-                e.east = Some(tx);
-            }
-            "west" => {
-                myseat = Some(Seat::West);
-                e.west = Some(tx);
-            }
-            _ => {
-                e.kibitzers.push(tx);
-            }
-        }
-    }
 
     // Every time the user sends a message, broadcast it to
     // all other users...
@@ -491,21 +460,7 @@ async fn ws_connected(
         if msg.is_close() {
             println!("got a close");
             let mut e = players.write().await;
-            match seat.as_str() {
-                "north" => {
-                    e.north = None;
-                }
-                "south" => {
-                    e.south = None;
-                }
-                "east" => {
-                    e.east = None;
-                }
-                "west" => {
-                    e.west = None;
-                }
-                _ => (),
-            }
+            e.0[myseat] = None;
             return;
         }
         match msg.to_str().map(|s| serde_json::from_str::<Action>(s)) {
@@ -537,7 +492,7 @@ async fn ws_connected(
                         }
                     }
                     Action::Play(card) => {
-                        let seat = myseat.unwrap();
+                        let seat = myseat;
                         // FIXME check for playable
                         if g.played.len() == 4 {
                             g.played.clear();
@@ -554,7 +509,7 @@ async fn ws_connected(
                         }
                     }
                 }
-                if let Some(s) = &p.north {
+                if let Some(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
                         game: &*g,
@@ -562,7 +517,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.south {
+                if let Some(s) = &p.0[Seat::South] {
                     let pp = Player {
                         seat: Seat::South,
                         game: &*g,
@@ -570,7 +525,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.east {
+                if let Some(s) = &p.0[Seat::East] {
                     let pp = Player {
                         seat: Seat::East,
                         game: &*g,
@@ -578,7 +533,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.west {
+                if let Some(s) = &p.0[Seat::West] {
                     let pp = Player {
                         seat: Seat::West,
                         game: &*g,
@@ -656,7 +611,7 @@ impl std::str::FromStr for Seat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Seated<T> {
     internal: [T; 4],
 }
