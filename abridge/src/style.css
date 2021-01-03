@@ -35,15 +35,17 @@ body {
 }
 
 .diamonds {
-    color: transparent;
-    text-shadow: 0 0 0 blue;
+    /* color: transparent;
+    text-shadow: 0 0 0 blue; */
     /* color: blue; */
+    color: red;
 }
 
 .clubs {
-    color: transparent;
-    text-shadow: 0 0 0 green;
+    /* color: transparent;
+    text-shadow: 0 0 0 green; */
     /* color: green; */
+    color: black;
 }
 
 button {
