@@ -53,7 +53,6 @@ async fn main() {
                         HTML,
                         &PlayerPage(Player {
                             seat,
-                            players: &*p,
                             game: &*g,
                         }),
                     )
@@ -197,15 +196,8 @@ impl Bid {
 }
 
 struct GameState {
-    north: Cards,
-    south: Cards,
-    east: Cards,
-    west: Cards,
-
-    original_north: Cards,
-    original_south: Cards,
-    original_east: Cards,
-    original_west: Cards,
+    hands: Seated<Cards>,
+    original_hands: Seated<Cards>,
 
     hand_done: bool,
 
@@ -226,14 +218,8 @@ impl GameState {
         let east = deck.pick(13).unwrap();
         let west = deck;
         GameState {
-            west,
-            south,
-            east,
-            north,
-            original_north: north,
-            original_east: east,
-            original_south: south,
-            original_west: west,
+            hands: [south, west, north, east].into(),
+            original_hands: [south, west, north, east].into(),
             hand_done: false,
             dealer: Seat::South,
             bids: Vec::new(),
@@ -254,7 +240,7 @@ impl GameState {
         if n > 3 && &self.bids[n - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
             None
         } else {
-            Seat::try_from((n + self.dealer as usize) % 4)
+            Some(self.dealer + n)
         }
     }
     fn player(&self) -> Option<Seat> {
@@ -309,8 +295,8 @@ impl GameState {
         } else if let (Some(lead), Some(dummy)) = (self.lead, self.dummy()) {
             let declarer = dummy.next().next();
             let play_seat = match self.played.len() {
-                0 | 4 =>  lead,
-                n => lead.nth(n),
+                0 | 4 => lead,
+                n => lead + n,
             };
             if play_seat == dummy {
                 Some(declarer)
@@ -327,8 +313,7 @@ impl GameState {
         hand == who
             || (Some(hand) == dummy && Some(who.next().next()) == dummy)
             || (Some(hand.next().next()) == dummy && Some(who) == dummy)
-            || (Some(hand) == dummy
-                && self.north.len() + self.south.len() + self.east.len() + self.west.len() < 52)
+            || (Some(hand) == dummy && self.hands.iter().map(|h| h.len()).sum::<usize>() < 52)
     }
 
     fn bid_is_legal(&self, seat: Seat, bid: Bid) -> bool {
@@ -355,25 +340,8 @@ impl GameState {
         }
     }
 
-    fn hand(&self, seat: Seat) -> Cards {
-        match seat {
-            Seat::North => self.north,
-            Seat::South => self.south,
-            Seat::East => self.east,
-            Seat::West => self.west,
-        }
-    }
-    fn hand_mut(&mut self, seat: Seat) -> &mut Cards {
-        match seat {
-            Seat::North => &mut self.north,
-            Seat::South => &mut self.south,
-            Seat::East => &mut self.east,
-            Seat::West => &mut self.west,
-        }
-    }
-
     fn playable_cards(&self, seat: Seat, player: Seat) -> PlayableHand {
-        let hand = self.hand(seat);
+        let hand = self.hands[seat];
         let playable = if let (Some(lead), Some(dummy)) = (self.lead, self.dummy()) {
             let declarer = dummy.next().next();
             if (player != seat && seat != dummy) || (seat == dummy && player != declarer) {
@@ -391,7 +359,7 @@ impl GameState {
                     }
                 }
                 n => {
-                    if seat == lead.nth(n) {
+                    if seat == lead + n {
                         let suit = self.played[0].suit();
                         let mysuit = hand.in_suit(suit);
                         if mysuit.len() == 0 {
@@ -458,8 +426,7 @@ struct PlayableHand {
 #[with_template("[%" "%]" "hand.html")]
 impl DisplayAs<HTML> for PlayableHand {}
 #[derive(Default, Debug)]
-struct Players {
-    north: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
+struct Players { // ( Seated<Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>> );
     south: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
     east: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
     west: Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>,
@@ -579,9 +546,8 @@ async fn ws_connected(
                         // Be lazy and don't even bother checking whether we
                         // were playing for dummy, just remove from our hand AND
                         // partner's hand.
-                        *g.hand_mut(seat) = g.hand(seat) - Cards::singleton(card);
-                        *g.hand_mut(seat.next().next()) =
-                            g.hand(seat.next().next()) - Cards::singleton(card);
+                        g.hands[seat] = g.hands[seat] - Cards::singleton(card);
+                        g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
                         g.trick_finish();
                         if g.ns_tricks + g.ew_tricks == 13 {
                             g.hand_done = true;
@@ -591,7 +557,6 @@ async fn ws_connected(
                 if let Some(s) = &p.north {
                     let pp = Player {
                         seat: Seat::North,
-                        players: &*p,
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
@@ -600,7 +565,6 @@ async fn ws_connected(
                 if let Some(s) = &p.south {
                     let pp = Player {
                         seat: Seat::South,
-                        players: &*p,
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
@@ -609,7 +573,6 @@ async fn ws_connected(
                 if let Some(s) = &p.east {
                     let pp = Player {
                         seat: Seat::East,
-                        players: &*p,
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
@@ -618,7 +581,6 @@ async fn ws_connected(
                 if let Some(s) = &p.west {
                     let pp = Player {
                         seat: Seat::West,
-                        players: &*p,
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
@@ -636,7 +598,6 @@ impl<'a> DisplayAs<HTML> for Index<'a> {}
 
 struct Player<'a> {
     seat: Seat,
-    players: &'a Players,
     game: &'a GameState,
 }
 #[with_template("[%" "%]" "player.html")]
@@ -653,38 +614,31 @@ enum Seat {
     North = 2,
     East = 3,
 }
+impl From<usize> for Seat {
+    fn from(s: usize) -> Self {
+        match s % 4 {
+            x if x == Seat::South as usize => Seat::South,
+            x if x == Seat::West as usize => Seat::West,
+            x if x == Seat::North as usize => Seat::North,
+            x if x == Seat::East as usize => Seat::East,
+            _ => unreachable!(),
+        }
+    }
+}
+impl std::ops::Add<usize> for Seat {
+    type Output = Seat;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        (self as usize + rhs).into()
+    }
+}
 impl Seat {
-    fn try_from(v: usize) -> Option<Self> {
-        match v {
-            x if x == Seat::North as usize => Some(Seat::North),
-            x if x == Seat::South as usize => Some(Seat::South),
-            x if x == Seat::East as usize => Some(Seat::East),
-            x if x == Seat::West as usize => Some(Seat::West),
-            _ => None,
-        }
-    }
     fn next(self) -> Self {
-        match self {
-            Seat::South => Seat::West,
-            Seat::West => Seat::North,
-            Seat::North => Seat::East,
-            Seat::East => Seat::South,
-        }
-    }
-    fn nth(self, n: usize) -> Self {
-        let mut next = self;
-        for _ in 0..n {
-            next = next.next();
-        }
-        next
+        self + 1
     }
     fn name(self) -> &'static str {
-        match self {
-            Seat::South => "S",
-            Seat::West => "W",
-            Seat::North => "N",
-            Seat::East => "E",
-        }
+        const NAMES: Seated<&'static str> = Seated::new(["S", "W", "N", "E"]);
+        &*NAMES[self]
     }
 }
 
@@ -699,5 +653,38 @@ impl std::str::FromStr for Seat {
             "east" => Ok(Seat::East),
             _ => Err(format!("invalid seat: {}", s)),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Seated<T> {
+    internal: [T; 4],
+}
+
+impl<T> From<[T; 4]> for Seated<T> {
+    fn from(internal: [T; 4]) -> Self {
+        Seated { internal }
+    }
+}
+impl<T> Seated<T> {
+    const fn new(internal: [T; 4]) -> Self {
+        Seated { internal }
+    }
+    fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.internal.iter()
+    }
+}
+
+impl<T> std::ops::Index<Seat> for Seated<T> {
+    type Output = T;
+
+    fn index(&self, index: Seat) -> &T {
+        &self.internal[index as usize]
+    }
+}
+
+impl<T> std::ops::IndexMut<Seat> for Seated<T> {
+    fn index_mut(&mut self, index: Seat) -> &mut T {
+        &mut self.internal[index as usize]
     }
 }
