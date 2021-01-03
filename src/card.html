@@ -1,1 +1,2 @@
-<span class="[% self.suit().name() %]">[% self.unicode().to_string() as UTF8 %]</span>
+<!-- <span class="[% self.suit().name() %]">[% self.unicode().to_string() as UTF8 %]</span> -->
+<span class="[% self.suit().name() %]">[% self.suit() %][% self.rankname() %]</span>
