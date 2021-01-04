@@ -20,7 +20,10 @@
             [% if self.players.0[Seat::South].is_none() { %]<li><a href="/abridge/south">Sit South</a></li>[% } %]
             [% if self.players.0[Seat::East].is_none() { %]<li><a href="/abridge/east">Sit East</a></li>[% } %]
             [% if self.players.0[Seat::West].is_none() { %]<li><a href="/abridge/west">Sit West</a></li>[% } %]
-            <li><a href="kibitz">Kibitz</a></li>
+            [% if self.players.0[Seat::West].is_none() ||
+            self.players.0[Seat::East].is_none() ||
+            self.players.0[Seat::North].is_none() || self.players.0[Seat::South].is_none() { %]<li><a
+            href="/abridge/random">Sit randomly</a></li>[% } %]
         </ul>
     </main>
 </body>

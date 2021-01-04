@@ -41,13 +41,30 @@ async fn main() {
             r
         },
     );
-    let seat = path!("abridge" / Seat)
-        .and(game.clone())
+    let seat = path!("abridge" / Seat).and(game.clone()).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+            let g = game.read().await;
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
+            r
+        },
+    );
+
+    let randomseat = path!("abridge" / "random")
+        .and(players.clone())
         .and_then(
-            |seat: Seat, game: Arc<RwLock<GameState>>| async move {
-                let g = game.read().await;
-                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                    Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
+            |players: Arc<RwLock<Players>>| async move {
+                let p = players.read().await;
+                let uri = if let Some(seat) = p.randomseat() {
+                    format!("/abridge/{}", seat.long_name())
+                } else {
+                    format!("/abridge/")
+                };
+                let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> = Ok(warp::reply::with_header(
+                    warp::http::StatusCode::TEMPORARY_REDIRECT,
+                    warp::http::header::LOCATION,
+                    uri,
+                ));
                 r
             },
         );
@@ -59,9 +76,16 @@ async fn main() {
             ws.on_upgrade(move |socket| ws_connected(seat, socket, players, game))
         });
 
-    warp::serve(style_css.or(audio).or(index).or(sock).or(seat))
-        .run(([0, 0, 0, 0], 8087))
-        .await;
+    warp::serve(
+        style_css
+            .or(audio)
+            .or(index)
+            .or(sock)
+            .or(seat)
+            .or(randomseat),
+    )
+    .run(([0, 0, 0, 0], 8087))
+    .await;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum Bid {
@@ -416,6 +440,20 @@ impl DisplayAs<HTML> for PlayableHand {}
 #[derive(Default, Debug)]
 struct Players(Seated<Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>>);
 
+impl Players {
+    fn randomseat(&self) -> Option<Seat> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        for _ in 0..30 {
+            let seat: Seat = rng.gen::<usize>().into();
+            if self.0[seat].is_none() {
+                return Some(seat);
+            }
+        }
+        None
+    }
+}
+
 async fn ws_connected(
     seat: String,
     ws: warp::ws::WebSocket,
@@ -445,7 +483,6 @@ async fn ws_connected(
             eprintln!("websocket send error: {}", e);
         }
     }));
-
 
     // Every time the user sends a message, broadcast it to
     // all other users...
@@ -593,6 +630,10 @@ impl Seat {
     }
     fn name(self) -> &'static str {
         const NAMES: Seated<&'static str> = Seated::new(["S", "W", "N", "E"]);
+        &*NAMES[self]
+    }
+    fn long_name(self) -> &'static str {
+        const NAMES: Seated<&'static str> = Seated::new(["south", "west", "north", "east"]);
         &*NAMES[self]
     }
 }
