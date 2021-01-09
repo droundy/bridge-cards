@@ -24,13 +24,16 @@ body {
 
 .hand {
     width: max-content;
-    border-radius: 0.2rem;
+    border-radius: 0.4rem;
     padding: 0.2rem;
     min-height: 5rem;
 }
 .hand.dummy {
     background-color: lightgray;
     box-shadow: 0.1em 0.2em 0.5em black;
+}
+.hand.turn {
+    box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue,  0.1em 0.2em 0.75em yellow;
 }
 
 .spades {
