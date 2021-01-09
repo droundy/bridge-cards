@@ -22,8 +22,12 @@ body {
 }
 
 .hand {
-    width: 7rem;
+    width: max-content;
     min-height: 5rem;
+}
+.hand.dummy {
+    background-color: gray;
+    box-shadow: 0px 0px 1em gray, 0px 0px 0.5em black;
 }
 
 .spades {
@@ -98,6 +102,7 @@ button:disabled {
     margin-top: 1em;
     margin-bottom: 1em;
     position: relative;
+    z-index: -1;
     /* font-size: 36px; */
 }
 
