@@ -23,7 +23,7 @@ body {
 
 .hand {
     width: 7rem;
-    height: 7rem;
+    min-height: 5rem;
 }
 
 .spades {
