@@ -50,24 +50,23 @@ async fn main() {
         },
     );
 
-    let randomseat = path!("abridge" / "random")
-        .and(players.clone())
-        .and_then(
-            |players: Arc<RwLock<Players>>| async move {
-                let p = players.read().await;
-                let uri = if let Some(seat) = p.randomseat() {
-                    format!("/abridge/{}", seat.long_name())
-                } else {
-                    format!("/abridge/")
-                };
-                let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> = Ok(warp::reply::with_header(
+    let randomseat = path!("abridge" / "random").and(players.clone()).and_then(
+        |players: Arc<RwLock<Players>>| async move {
+            let p = players.read().await;
+            let uri = if let Some(seat) = p.randomseat() {
+                format!("/abridge/{}", seat.long_name())
+            } else {
+                format!("/abridge/")
+            };
+            let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
+                Ok(warp::reply::with_header(
                     warp::http::StatusCode::TEMPORARY_REDIRECT,
                     warp::http::header::LOCATION,
                     uri,
                 ));
-                r
-            },
-        );
+            r
+        },
+    );
     let sock = path!("abridge" / "ws" / String)
         .and(warp::ws())
         .and(game)
@@ -234,7 +233,13 @@ impl GameState {
         let east = deck.pick(13).unwrap();
         let west = deck;
         GameState {
-            names: Seated::default(),
+            names: [
+                memorable_wordlist::camel_case(18),
+                memorable_wordlist::camel_case(18),
+                memorable_wordlist::camel_case(18),
+                memorable_wordlist::camel_case(18),
+            ]
+            .into(),
             hands: [south, west, north, east].into(),
             original_hands: [south, west, north, east].into(),
             hand_done: false,

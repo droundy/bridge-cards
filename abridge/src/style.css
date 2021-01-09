@@ -22,6 +22,10 @@ body {
     float: right;
 }
 
+.name {
+    display: block;
+    font-size: small;
+}
 .hand {
     width: max-content;
     border-radius: 0.4rem;
