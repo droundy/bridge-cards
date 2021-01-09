@@ -19,9 +19,18 @@
 <div class="table"></div>
 <div class="hand" id="south">[% self.game.original_hands[South] %]</div>
 [% } else { %]
-<div class="hand" id="north">[% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North, self.seat) } else { %]North[% } %]</div>
-<div class="hand" id="west">[% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West, self.seat) } else { %]West[% } %]</div>
-<div class="hand" id="east">[% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East, self.seat) } else { %]East[% } %]</div>
+<div class="hand" id="north">
+    [% if self.game.names[North].len() > 0 { %]<span class="name">[% self.game.names[North] %]</span>[% } %]
+    [% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North, self.seat) } else { %]North[% } %]
+</div>
+<div class="hand" id="west">
+    [% if self.game.names[West].len() > 0 { %]<span class="name">[% self.game.names[West] %]</span>[% } %]
+    [% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West, self.seat) } else { %]West[% } %]
+</div>
+<div class="hand" id="east">
+    [% if self.game.names[East].len() > 0 { %]<span class="name">[% self.game.names[East] %]</span>[% } %]
+    [% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East, self.seat) } else { %]East[% } %]
+</div>
 <div class="table">
     [% if let Some(lead) = self.game.lead {
         let s = (4 + Seat::North as usize - self.game.lead.unwrap() as usize) % 4;
@@ -34,7 +43,10 @@
         if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
      } %]
 </div>
-<div class="hand" id="south">[% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South, self.seat) } else { %]South[% } %]</div>
+<div class="hand" id="south">
+    [% if self.game.names[South].len() > 0 { %]<span class="name">[% self.game.names[South] %]</span>[% } %]
+    [% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South, self.seat) } else { %]South[% } %]
+</div>
 [% } %]
 [% if self.game.bidder() == Some(self.seat) {
     %] <div class="bidboard">

@@ -211,6 +211,7 @@ impl Bid {
 }
 
 struct GameState {
+    names: Seated<String>,
     hands: Seated<Cards>,
     original_hands: Seated<Cards>,
 
@@ -233,6 +234,7 @@ impl GameState {
         let east = deck.pick(13).unwrap();
         let west = deck;
         GameState {
+            names: Seated::default(),
             hands: [south, west, north, east].into(),
             original_hands: [south, west, north, east].into(),
             hand_done: false,
