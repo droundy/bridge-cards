@@ -34,6 +34,7 @@
         window.clearTimeout(timer);
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
+            document.cookie = "name=" + name;
             ws.send(JSON.stringify({ "Name": name }));
         }, 5000);
     }

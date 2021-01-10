@@ -41,10 +41,13 @@ async fn main() {
             r
         },
     );
-    let seat = path!("abridge" / Seat).and(game.clone()).and_then(
-        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+    let seat = path!("abridge" / Seat).and(game.clone()).and(warp::filters::cookie::optional("name")).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>, name: Option<String>| async move {
             let mut g = game.write().await;
             g.check_timeout();
+            if let Some(name) = name {
+                g.names[seat] = name;
+            }
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                 Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
             r
