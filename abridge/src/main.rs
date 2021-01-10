@@ -94,11 +94,12 @@ enum Bid {
     Suit(usize, bridge_deck::Suit),
     NT(usize),
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Action {
     Redeal,
     Bid(Bid),
     Play(Card),
+    Name(String),
 }
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
@@ -551,6 +552,9 @@ async fn ws_connected(
                         if g.ns_tricks + g.ew_tricks == 13 {
                             g.hand_done = true;
                         }
+                    }
+                    Action::Name(name) => {
+                        g.names[myseat] = name;
                     }
                 }
                 if let Some(s) = &p.0[Seat::North] {
