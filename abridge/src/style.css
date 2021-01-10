@@ -30,7 +30,7 @@ body {
     width: max-content;
     border-radius: 0.4rem;
     padding: 0.2rem;
-    min-height: 5rem;
+    min-height: 3rem;
 }
 .hand.dummy {
     background-color: lightgray;
@@ -109,8 +109,8 @@ button:disabled {
     width: 6rem;
     margin: auto;
     height: 6rem;
-    margin-top: 1em;
-    margin-bottom: 1em;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
     position: relative;
     z-index: -1;
     /* font-size: 36px; */
