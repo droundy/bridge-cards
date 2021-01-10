@@ -7,6 +7,8 @@ use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
 
+mod ai;
+
 #[tokio::main]
 async fn main() {
     let players = Arc::new(RwLock::new(Players::default()));
