@@ -21,10 +21,6 @@
     };
     ws.onmessage = function (event) {
         document.getElementById('main').innerHTML = event.data;
-        setTimeout(function () {
-            var name = document.getElementById('myname');
-            name.focus();
-        }, 1);
     };
     ws.onclose = function () {
         console.log('disconnected');
@@ -33,9 +29,13 @@
     function send_message(action) {
         ws.send(action);
     }
+    var timer;
     function sendname() {
-        let name = document.getElementById('myname').innerText;
-        ws.send(JSON.stringify({ "Name": name }));
+        window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+            let name = document.getElementById('myname').innerText;
+            ws.send(JSON.stringify({ "Name": name }));
+        }, 5000);
     }
 </script>
 
