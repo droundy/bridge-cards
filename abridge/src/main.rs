@@ -43,18 +43,21 @@ async fn main() {
             r
         },
     );
-    let seat = path!("abridge" / Seat).and(game.clone()).and(warp::filters::cookie::optional("name")).and_then(
-        |seat: Seat, game: Arc<RwLock<GameState>>, name: Option<String>| async move {
-            let mut g = game.write().await;
-            g.check_timeout();
-            if let Some(name) = name {
-                g.names[seat] = name;
-            }
-            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
-            r
-        },
-    );
+    let seat = path!("abridge" / Seat)
+        .and(game.clone())
+        .and(warp::filters::cookie::optional("name"))
+        .and_then(
+            |seat: Seat, game: Arc<RwLock<GameState>>, name: Option<String>| async move {
+                let mut g = game.write().await;
+                g.check_timeout();
+                if let Some(name) = name {
+                    g.names[seat] = name;
+                }
+                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                    Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
+                r
+            },
+        );
 
     let randomseat = path!("abridge" / "random").and(players.clone()).and_then(
         |players: Arc<RwLock<Players>>| async move {
@@ -415,6 +418,26 @@ impl GameState {
             Cards::EMPTY
         };
         PlayableHand { hand, playable }
+    }
+
+    fn could_be_played(&self) -> Cards {
+        if let Some(lead) = self.lead {
+            match self.played.len() {
+                0 | 4 => self.hands[lead],
+                n => {
+                    let seat = lead + n;
+                    let suit = self.played[0].suit();
+                    let mysuit = self.hands[seat].in_suit(suit);
+                    if mysuit.len() == 0 {
+                        self.hands[seat]
+                    } else {
+                        mysuit
+                    }
+                }
+            }
+        } else {
+            Cards::EMPTY
+        }
     }
 
     fn trick_finish(&mut self) {
