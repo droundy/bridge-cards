@@ -254,7 +254,9 @@ impl GameState {
     }
     fn redeal(&mut self) {
         let dealer = self.dealer.next();
+        let oldnames = self.names.clone();
         *self = GameState::new();
+        self.names = oldnames;
         self.dealer = dealer;
     }
 
