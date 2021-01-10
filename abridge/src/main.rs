@@ -43,7 +43,8 @@ async fn main() {
     );
     let seat = path!("abridge" / Seat).and(game.clone()).and_then(
         |seat: Seat, game: Arc<RwLock<GameState>>| async move {
-            let g = game.read().await;
+            let mut g = game.write().await;
+            g.check_timeout();
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                 Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
             r
@@ -224,6 +225,8 @@ struct GameState {
     played: Vec<Card>,
     ns_tricks: usize,
     ew_tricks: usize,
+
+    last_action: std::time::Instant,
 }
 
 impl GameState {
@@ -250,6 +253,15 @@ impl GameState {
             played: Vec::new(),
             ns_tricks: 0,
             ew_tricks: 0,
+            last_action: std::time::Instant::now(),
+        }
+    }
+    fn check_timeout(&mut self) {
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_action) > std::time::Duration::from_secs(60 * 60) {
+            self.redeal();
+        } else {
+            self.last_action = now;
         }
     }
     fn redeal(&mut self) {
@@ -559,6 +571,7 @@ async fn ws_connected(
                         g.names[myseat] = name;
                     }
                 }
+                g.check_timeout();
                 if let Some(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
