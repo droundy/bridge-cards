@@ -96,7 +96,7 @@ async fn main() {
     .await;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Bid {
+pub enum Bid {
     Pass,
     Double,
     Redouble,
@@ -106,6 +106,7 @@ enum Bid {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Action {
     Redeal,
+    SitAI,
     Bid(Bid),
     Play(Card),
     Name(String),
@@ -219,7 +220,7 @@ impl Bid {
     }
 }
 
-struct GameState {
+pub struct GameState {
     names: Seated<String>,
     hands: Seated<Cards>,
     original_hands: Seated<Cards>,
@@ -487,8 +488,33 @@ struct PlayableHand {
 
 #[with_template("[%" "%]" "hand.html")]
 impl DisplayAs<HTML> for PlayableHand {}
+
+#[derive(Debug)]
+enum PlayerConnection {
+    Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
+    Ai {
+        bidder: Box<dyn ai::BidAI + Sync + Send>,
+        player: Box<dyn ai::PlayAI + Sync + Send>,
+    },
+    None,
+}
+impl Default for PlayerConnection {
+    fn default() -> Self {
+        PlayerConnection::None
+    }
+}
+impl PlayerConnection {
+    fn is_none(&self) -> bool {
+        if let PlayerConnection::None = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Default, Debug)]
-struct Players(Seated<Option<mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>>>);
+struct Players(Seated<PlayerConnection>);
 
 impl Players {
     fn randomseat(&self) -> Option<Seat> {
@@ -526,7 +552,7 @@ async fn ws_connected(
             println!("bad seat");
             return;
         }
-        e.0[myseat] = Some(tx);
+        e.0[myseat] = PlayerConnection::Human(tx);
     }
     tokio::task::spawn(rx.forward(user_ws_tx).map(|result| {
         if let Err(e) = result {
@@ -547,7 +573,7 @@ async fn ws_connected(
         if msg.is_close() {
             println!("got a close");
             let mut e = players.write().await;
-            e.0[myseat] = None;
+            e.0[myseat] = PlayerConnection::None;
             return;
         }
         match msg.to_str().map(|s| serde_json::from_str::<Action>(s)) {
@@ -559,11 +585,24 @@ async fn ws_connected(
             }
             Ok(Ok(action)) => {
                 println!("Doing {:?}", action);
-                let p = players.read().await;
+                let mut p = players.write().await;
                 let mut g = game.write().await;
                 match action {
                     Action::Redeal => {
                         g.redeal();
+                    }
+                    Action::SitAI => {
+                        for s in [Seat::North, Seat::East, Seat::South, Seat::West]
+                            .iter()
+                            .cloned()
+                        {
+                            if p.0[s].is_none() {
+                                p.0[s] = PlayerConnection::Ai {
+                                    bidder: Box::new(ai::AllPass),
+                                    player: Box::new(ai::RandomPlay),
+                                };
+                            }
+                        }
                     }
                     Action::Bid(b) => {
                         g.bids.push(b);
@@ -600,7 +639,82 @@ async fn ws_connected(
                     }
                 }
                 g.check_timeout();
-                if let Some(s) = &p.0[Seat::North] {
+                // Now we need to run any AI that is relevant.
+                while let Some(turn) = g.turn() {
+                    // Send out an update before we even start thinking.
+                    if let PlayerConnection::Human(s) = &p.0[Seat::North] {
+                        let pp = Player {
+                            seat: Seat::North,
+                            game: &*g,
+                        };
+                        let msg = format_as!(HTML, "" pp);
+                        s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    }
+                    if let PlayerConnection::Human(s) = &p.0[Seat::South] {
+                        let pp = Player {
+                            seat: Seat::South,
+                            game: &*g,
+                        };
+                        let msg = format_as!(HTML, "" pp);
+                        s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    }
+                    if let PlayerConnection::Human(s) = &p.0[Seat::East] {
+                        let pp = Player {
+                            seat: Seat::East,
+                            game: &*g,
+                        };
+                        let msg = format_as!(HTML, "" pp);
+                        s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    }
+                    if let PlayerConnection::Human(s) = &p.0[Seat::West] {
+                        let pp = Player {
+                            seat: Seat::West,
+                            game: &*g,
+                        };
+                        let msg = format_as!(HTML, "" pp);
+                        s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    }
+                    if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
+                        // It's an AI's move!
+                        //tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        if g.bidder().is_some() {
+                            let bid = bidder.bid(&g.bids);
+                            println!("AI bids {:?}", bid);
+                            g.bids.push(bid);
+                            if g.bids.len() > 3
+                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                            {
+                                println!("Bidding is complete");
+                                if let Some(declarer) = g.find_declarer() {
+                                    g.lead = Some(declarer.next());
+                                } else {
+                                    g.hand_done = true;
+                                }
+                            }
+                        } else {
+                            let seat = turn;
+                            let card = player.play(&g);
+                            println!("play would be {:?}", card);
+                            if g.played.len() == 4 {
+                                g.played.clear();
+                            }
+                            g.played.push(card);
+                            // Be lazy and don't even bother checking whether we
+                            // were playing for dummy, just remove from our hand AND
+                            // partner's hand.
+                            g.hands[seat] = g.hands[seat] - Cards::singleton(card);
+                            g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
+                            g.trick_finish();
+                            if g.ns_tricks + g.ew_tricks == 13 {
+                                g.hand_done = true;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if let PlayerConnection::Human(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
                         game: &*g,
@@ -608,7 +722,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.0[Seat::South] {
+                if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                     let pp = Player {
                         seat: Seat::South,
                         game: &*g,
@@ -616,7 +730,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.0[Seat::East] {
+                if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                     let pp = Player {
                         seat: Seat::East,
                         game: &*g,
@@ -624,7 +738,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg))).ok();
                 }
-                if let Some(s) = &p.0[Seat::West] {
+                if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                     let pp = Player {
                         seat: Seat::West,
                         game: &*g,

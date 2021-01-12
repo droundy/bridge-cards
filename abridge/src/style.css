@@ -87,6 +87,11 @@ button:disabled {
     width: 5em;
 }
 
+.robots {
+    float: right;
+    width: 5em;
+}
+
 .bidhistory {
     margin: 0.25rem;
     font-size: 14px;
