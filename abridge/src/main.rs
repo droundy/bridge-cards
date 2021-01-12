@@ -597,6 +597,7 @@ async fn ws_connected(
                             .cloned()
                         {
                             if p.0[s].is_none() {
+                                g.names[s] = "Robot".into();
                                 p.0[s] = PlayerConnection::Ai {
                                     bidder: Box::new(ai::AllPass),
                                     player: Box::new(ai::RandomPlay),
@@ -676,11 +677,10 @@ async fn ws_connected(
                     }
                     if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
                         // It's an AI's move!
-                        //tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
+                        //std::thread::sleep(std::time::Duration::from_secs(5));
                         if g.bidder().is_some() {
                             let bid = bidder.bid(&g.bids);
-                            println!("AI bids {:?}", bid);
                             g.bids.push(bid);
                             if g.bids.len() > 3
                                 && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
@@ -695,9 +695,10 @@ async fn ws_connected(
                         } else {
                             let seat = turn;
                             let card = player.play(&g);
-                            println!("play would be {:?}", card);
                             if g.played.len() == 4 {
                                 g.played.clear();
+                                // Give players some time to see the finished trick...
+                                tokio::time::delay_for(std::time::Duration::from_secs(10)).await;
                             }
                             g.played.push(card);
                             // Be lazy and don't even bother checking whether we

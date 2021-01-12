@@ -16,7 +16,7 @@ rand = "0.8.0"
 memorable-wordlist = "0.1.7"
 
 warp = "0.2.5"
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "0.2", features = ["full", "time"] }
 futures = "0.3.8"
 
 display-as = { version = "0.5.2", features = ["usewarp"] }

@@ -11,7 +11,7 @@
             } %]</tr>[%
     } %]
 </table>
-[% if Some(self.seat) == self.game.turn() { %]<audio auxtoplay><source src="your-play.mp3" type="audio/mpeg"></audio>[% } %]
+[% if Some(self.seat) == self.game.turn() { %]<audio autoplay><source src="your-play.mp3" type="audio/mpeg"></audio>[% } %]
 [% if self.game.hand_done { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %]" id="north">
     <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
