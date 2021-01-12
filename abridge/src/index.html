@@ -16,13 +16,13 @@
             Please play.
         </p>
         <ul>
-            [% if self.players.0[Seat::North].is_none() { %]<li><a href="/abridge/north">Sit North</a></li>[% } %]
-            [% if self.players.0[Seat::South].is_none() { %]<li><a href="/abridge/south">Sit South</a></li>[% } %]
-            [% if self.players.0[Seat::East].is_none() { %]<li><a href="/abridge/east">Sit East</a></li>[% } %]
-            [% if self.players.0[Seat::West].is_none() { %]<li><a href="/abridge/west">Sit West</a></li>[% } %]
-            [% if self.players.0[Seat::West].is_none() ||
-            self.players.0[Seat::East].is_none() ||
-            self.players.0[Seat::North].is_none() || self.players.0[Seat::South].is_none() { %]<li><a
+            [% if self.players.0[Seat::North].is_empty() { %]<li><a href="/abridge/north">Sit North</a></li>[% } %]
+            [% if self.players.0[Seat::South].is_empty() { %]<li><a href="/abridge/south">Sit South</a></li>[% } %]
+            [% if self.players.0[Seat::East].is_empty() { %]<li><a href="/abridge/east">Sit East</a></li>[% } %]
+            [% if self.players.0[Seat::West].is_empty() { %]<li><a href="/abridge/west">Sit West</a></li>[% } %]
+            [% if self.players.0[Seat::West].is_empty() ||
+            self.players.0[Seat::East].is_empty() ||
+            self.players.0[Seat::North].is_empty() || self.players.0[Seat::South].is_empty() { %]<li><a
             href="/abridge/random">Sit randomly</a></li>[% } %]
         </ul>
     </main>

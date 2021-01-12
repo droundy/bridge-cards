@@ -504,8 +504,17 @@ impl Default for PlayerConnection {
     }
 }
 impl PlayerConnection {
-    fn is_none(&self) -> bool {
-        if let PlayerConnection::None = self {
+    fn is_empty(&self) -> bool {
+        if self.is_ai() {
+            true
+        } else if let PlayerConnection::None = self {
+            true
+        } else {
+            false
+        }
+    }
+    fn is_ai(&self) -> bool {
+        if let PlayerConnection::Ai { .. } = self {
             true
         } else {
             false
@@ -522,7 +531,7 @@ impl Players {
         let mut rng = rand::thread_rng();
         for _ in 0..30 {
             let seat: Seat = rng.gen::<usize>().into();
-            if self.0[seat].is_none() {
+            if self.0[seat].is_empty() {
                 return Some(seat);
             }
         }
@@ -596,7 +605,7 @@ async fn ws_connected(
                             .iter()
                             .cloned()
                         {
-                            if p.0[s].is_none() {
+                            if p.0[s].is_empty() {
                                 g.names[s] = "Robot".into();
                                 p.0[s] = PlayerConnection::Ai {
                                     bidder: Box::new(ai::AllPass),
@@ -642,43 +651,44 @@ async fn ws_connected(
                 g.check_timeout();
                 // Now we need to run any AI that is relevant.
                 while let Some(turn) = g.turn() {
-                    // Send out an update before we even start thinking.
-                    if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                        let pp = Player {
-                            seat: Seat::North,
-                            game: &*g,
-                        };
-                        let msg = format_as!(HTML, "" pp);
-                        s.send(Ok(warp::ws::Message::text(msg))).ok();
-                    }
-                    if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                        let pp = Player {
-                            seat: Seat::South,
-                            game: &*g,
-                        };
-                        let msg = format_as!(HTML, "" pp);
-                        s.send(Ok(warp::ws::Message::text(msg))).ok();
-                    }
-                    if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                        let pp = Player {
-                            seat: Seat::East,
-                            game: &*g,
-                        };
-                        let msg = format_as!(HTML, "" pp);
-                        s.send(Ok(warp::ws::Message::text(msg))).ok();
-                    }
-                    if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                        let pp = Player {
-                            seat: Seat::West,
-                            game: &*g,
-                        };
-                        let msg = format_as!(HTML, "" pp);
-                        s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    if p.0[turn].is_ai() {
+                        // Send out an update before we even start thinking.
+                        if let PlayerConnection::Human(s) = &p.0[Seat::North] {
+                            let pp = Player {
+                                seat: Seat::North,
+                                game: &*g,
+                            };
+                            let msg = format_as!(HTML, "" pp);
+                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                        }
+                        if let PlayerConnection::Human(s) = &p.0[Seat::South] {
+                            let pp = Player {
+                                seat: Seat::South,
+                                game: &*g,
+                            };
+                            let msg = format_as!(HTML, "" pp);
+                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                        }
+                        if let PlayerConnection::Human(s) = &p.0[Seat::East] {
+                            let pp = Player {
+                                seat: Seat::East,
+                                game: &*g,
+                            };
+                            let msg = format_as!(HTML, "" pp);
+                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                        }
+                        if let PlayerConnection::Human(s) = &p.0[Seat::West] {
+                            let pp = Player {
+                                seat: Seat::West,
+                                game: &*g,
+                            };
+                            let msg = format_as!(HTML, "" pp);
+                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                        }
                     }
                     if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
                         // It's an AI's move!
                         tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
-                        //std::thread::sleep(std::time::Duration::from_secs(5));
                         if g.bidder().is_some() {
                             let bid = bidder.bid(&g.bids);
                             g.bids.push(bid);
