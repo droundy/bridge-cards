@@ -1,5 +1,5 @@
 use easybench::{bench};
-use rand::{SeedableRng};
+use rand::{SeedableRng, Rng};
 use rand::rngs::{StdRng, OsRng, SmallRng};
 
 fn main() {

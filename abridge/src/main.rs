@@ -59,35 +59,23 @@ async fn main() {
             },
         );
 
-    let randomseat =
-        path!("abridge" / "random")
-            .and(game.clone())
-            .and(players.clone())
-            .and(warp::filters::cookie::optional("name"))
-            .and_then(
-                |game: Arc<RwLock<GameState>>,
-                 players: Arc<RwLock<Players>>,
-                 name: Option<String>| async move {
-                    let p = players.read().await;
-                    if let Some(seat) = p.randomseat() {
-                        let mut g = game.write().await;
-                        g.check_timeout();
-                        if let Some(name) = name {
-                            g.names[seat] = name;
-                        }
-                        let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                            Ok(display(HTML, &PlayerPage(Player { seat, game: &*g }))
-                                .into_response());
-                        r
-                    // format!("/abridge/{}", seat.long_name())
-                    } else {
-                        let p = players.read().await;
-                        let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                            Ok(display(HTML, &Index { players: &*p }).into_response());
-                        r
-                    }
-                },
-            );
+    let randomseat = path!("abridge" / "random").and(players.clone()).and_then(
+        |players: Arc<RwLock<Players>>| async move {
+            let p = players.read().await;
+            let uri = if let Some(seat) = p.randomseat() {
+                format!("/abridge/{}", seat.long_name())
+            } else {
+                format!("/abridge/")
+            };
+            let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
+                Ok(warp::reply::with_header(
+                    warp::http::StatusCode::TEMPORARY_REDIRECT,
+                    warp::http::header::LOCATION,
+                    uri,
+                ));
+            r
+        },
+    );
     let sock = path!("abridge" / "ws" / String)
         .and(warp::ws())
         .and(game)
@@ -823,10 +811,10 @@ impl Seat {
         const NAMES: Seated<&'static str> = Seated::new(["S", "W", "N", "E"]);
         &*NAMES[self]
     }
-    // fn long_name(self) -> &'static str {
-    //     const NAMES: Seated<&'static str> = Seated::new(["south", "west", "north", "east"]);
-    //     &*NAMES[self]
-    // }
+    fn long_name(self) -> &'static str {
+        const NAMES: Seated<&'static str> = Seated::new(["south", "west", "north", "east"]);
+        &*NAMES[self]
+    }
 }
 
 impl std::str::FromStr for Seat {
