@@ -27,15 +27,15 @@
     <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
     [% self.game.original_hands[South] %]</div>
 [% } else { %]
-<div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %][% if Some(North) == self.game.turn() { %] turn[% } %]" id="north">
+<div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %][% if Some(North) == self.game.hand_playing() { %] turn[% } %]" id="north">
     <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
     [% if self.game.hand_visible_to(North, self.seat) { self.game.playable_cards(Seat::North, self.seat) } else { %]North[% } %]
 </div>
-<div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %][% if Some(West) == self.game.turn() { %] turn[% } %]" id="west">
+<div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %][% if Some(West) == self.game.hand_playing() { %] turn[% } %]" id="west">
     <span class="name"[% if West == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[West] %]</span>
     [% if self.game.hand_visible_to(West, self.seat) { self.game.playable_cards(Seat::West, self.seat) } else { %]West[% } %]
 </div>
-<div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %][% if Some(East) == self.game.turn() { %] turn[% } %]" id="east">
+<div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %][% if Some(East) == self.game.hand_playing() { %] turn[% } %]" id="east">
     <span class="name"[% if East == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[East] %]</span>
     [% if self.game.hand_visible_to(East, self.seat) { self.game.playable_cards(Seat::East, self.seat) } else { %]East[% } %]
 </div>
@@ -51,7 +51,7 @@
         if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
      } %]
 </div>
-<div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %][% if Some(South) == self.game.turn() { %] turn[% } %]" id="south">
+<div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %][% if Some(South) == self.game.hand_playing() { %] turn[% } %]" id="south">
     <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
     [% if self.game.hand_visible_to(South, self.seat) { self.game.playable_cards(Seat::South, self.seat) } else { %]South[% } %]
 </div>

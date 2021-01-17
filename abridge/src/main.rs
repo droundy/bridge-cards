@@ -351,6 +351,14 @@ impl GameState {
         }
     }
 
+    fn hand_playing(&self) -> Option<Seat> {
+        if let Some(seat) = self.bidder() {
+            Some(seat)
+        } else {
+            self.lead
+        }
+    }
+
     fn hand_visible_to(&self, hand: Seat, who: Seat) -> bool {
         let dummy = self.dummy();
         hand == who
