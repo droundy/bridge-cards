@@ -1,31 +1,32 @@
-<span class="spades">♠[% for c in self.hand.spades().rev() {
-     if self.playable.contains(c) {
-       %] <span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-     } else {
-      c.rankname()
-     }
+<span class="spades"><span class="cardinhand">♠</span>[% for c in
+self.hand.spades().rev() {
+  if self.playable.contains(c) {
+     %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  }
 } %]</span>
 <br/>
-<span class="hearts">♥[% for c in self.hand.hearts().rev() {
-    if self.playable.contains(c) {
-       %] <span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-    } else {
-      c.rankname()
-    }
+<span class="hearts"><span class="cardinhand">♥</span>[% for c in self.hand.hearts().rev() {
+  if self.playable.contains(c) {
+     %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  }
 } %]</span>
 <br/>
-<span class="diamonds">♦[% for c in self.hand.diamonds().rev() {
-    if self.playable.contains(c) {
-       %] <span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-    } else {
-      c.rankname()
-    }
+<span class="diamonds"><span class="cardinhand">♦</span>[% for c in self.hand.diamonds().rev() {
+  if self.playable.contains(c) {
+     %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  }
 } %]</span>
 <br/>
-<span class="clubs">♣[% for c in self.hand.clubs().rev() {
+<span class="clubs"><span class="cardinhand">♣</span>[% for c in self.hand.clubs().rev() {
     if self.playable.contains(c) {
-       %] <span class="playable"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
+       %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
     } else {
-      c.rankname()
+      %]<span class="cardinhand">[% c.rankname() %]</span>[%
     }
 } %]</span>

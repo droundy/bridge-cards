@@ -110,6 +110,13 @@ button:disabled {
     cursor: pointer;
 }
 
+.cardinhand {
+    display: inline-block;
+    width: 1.3em;
+    text-align: center;
+    font-size: 18px;
+}
+
 .table {
     width: 6rem;
     margin: auto;

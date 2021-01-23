@@ -1,15 +1,15 @@
-<span class="spades">♠[% for c in self.spades().rev() {
-      c.rankname()
+<span class="spades"><span class="cardinhand">♠</span>[% for c in self.spades().rev() {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
 } %]</span>
 <br/>
-<span class="hearts">♥[% for c in self.hearts().rev() {
-    c.rankname()
+<span class="hearts"><span class="cardinhand">♥</span>[% for c in self.hearts().rev() {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
 } %]</span>
 <br/>
-<span class="diamonds">♦[% for c in self.diamonds().rev() {
-    c.rankname()
+<span class="diamonds"><span class="cardinhand">♦</span>[% for c in self.diamonds().rev() {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
 } %]</span>
 <br/>
-<span class="clubs">♣[% for c in self.clubs().rev() {
-    c.rankname()
+<span class="clubs"><span class="cardinhand">♣</span>[% for c in self.clubs().rev() {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
 } %]</span>
