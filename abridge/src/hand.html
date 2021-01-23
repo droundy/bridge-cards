@@ -1,32 +1,41 @@
-<span class="spades"><span class="cardinhand">♠</span>[% for c in
-self.hand.spades().rev() {
+[% if (self.hand + self.played_already).len() > 0 { %]
+<span class="spades"><span class="cardinhand">♠</span>[% for c in (self.hand + self.played_already).spades().rev() {
   if self.playable.contains(c) {
      %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-  } else {
+  } else if self.hand.contains(c) {
     %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand playedalready">[% c.rankname() %]</span>[%
   }
 } %]</span>
 <br/>
-<span class="hearts"><span class="cardinhand">♥</span>[% for c in self.hand.hearts().rev() {
+<span class="hearts"><span class="cardinhand">♥</span>[% for c in (self.hand + self.played_already).hearts().rev() {
   if self.playable.contains(c) {
      %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-  } else {
+  } else if self.hand.contains(c) {
     %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand playedalready">[% c.rankname() %]</span>[%
   }
 } %]</span>
 <br/>
-<span class="diamonds"><span class="cardinhand">♦</span>[% for c in self.hand.diamonds().rev() {
+<span class="diamonds"><span class="cardinhand">♦</span>[% for c in (self.hand + self.played_already).diamonds().rev() {
   if self.playable.contains(c) {
      %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-  } else {
+  } else if self.hand.contains(c) {
     %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand playedalready">[% c.rankname() %]</span>[%
   }
 } %]</span>
 <br/>
-<span class="clubs"><span class="cardinhand">♣</span>[% for c in self.hand.clubs().rev() {
-    if self.playable.contains(c) {
-       %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
-    } else {
-      %]<span class="cardinhand">[% c.rankname() %]</span>[%
-    }
+<span class="clubs"><span class="cardinhand">♣</span>[% for c in (self.hand + self.played_already).clubs().rev() {
+  if self.playable.contains(c) {
+     %]<span class="playable cardinhand"[% Action::Play(c) %]>[% c.rankname() %]</span>[%
+  } else if self.hand.contains(c) {
+    %]<span class="cardinhand">[% c.rankname() %]</span>[%
+  } else {
+    %]<span class="cardinhand playedalready">[% c.rankname() %]</span>[%
+  }
 } %]</span>
+[% } %]

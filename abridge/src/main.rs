@@ -110,6 +110,7 @@ enum Action {
     Bid(Bid),
     Play(Card),
     Name(String),
+    ToggleCountForMe,
 }
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
@@ -225,6 +226,8 @@ pub struct GameState {
     hands: Seated<Cards>,
     original_hands: Seated<Cards>,
 
+    count_for_me: Seated<bool>,
+
     hand_done: bool,
 
     dealer: Seat,
@@ -255,6 +258,7 @@ impl GameState {
             .into(),
             hands: [south, west, north, east].into(),
             original_hands: [south, west, north, east].into(),
+            count_for_me: [false, false, false, false].into(),
             hand_done: false,
             dealer: Seat::South,
             bids: Vec::new(),
@@ -355,7 +359,7 @@ impl GameState {
         if let Some(seat) = self.bidder() {
             Some(seat)
         } else {
-            self.lead.map(|s| s+self.played.len())
+            self.lead.map(|s| s + self.played.len())
         }
     }
 
@@ -393,12 +397,25 @@ impl GameState {
 
     fn playable_cards(&self, seat: Seat, player: Seat) -> PlayableHand {
         let hand = self.hands[seat];
+        let played_already = if self.count_for_me[player] {
+            self.original_hands[seat] - hand
+        } else {
+            Cards::EMPTY
+        };
+        if !self.hand_visible_to(seat, player) {
+            return PlayableHand {
+                hand: Cards::EMPTY,
+                playable: Cards::EMPTY,
+                played_already,
+            };
+        }
         let playable = if let (Some(lead), Some(dummy)) = (self.lead, self.dummy()) {
             let declarer = dummy.next().next();
             if (player != seat && seat != dummy) || (seat == dummy && player != declarer) {
                 return PlayableHand {
                     hand,
                     playable: Cards::EMPTY,
+                    played_already,
                 };
             }
             match self.played.len() {
@@ -426,7 +443,11 @@ impl GameState {
         } else {
             Cards::EMPTY
         };
-        PlayableHand { hand, playable }
+        PlayableHand {
+            hand,
+            playable,
+            played_already,
+        }
     }
 
     fn could_be_played(&self) -> Cards {
@@ -492,6 +513,7 @@ impl GameState {
 struct PlayableHand {
     hand: Cards,
     playable: Cards,
+    played_already: Cards,
 }
 
 #[with_template("[%" "%]" "hand.html")]
@@ -605,6 +627,9 @@ async fn ws_connected(
                 let mut p = players.write().await;
                 let mut g = game.write().await;
                 match action {
+                    Action::ToggleCountForMe => {
+                        g.count_for_me[myseat] = !g.count_for_me[myseat];
+                    }
                     Action::Redeal => {
                         g.redeal();
                     }

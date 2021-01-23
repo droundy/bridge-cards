@@ -26,6 +26,11 @@ body {
     display: block;
     font-size: small;
 }
+.alert {
+    font-size: 9px;
+    display: block;
+    color:darkorange;
+}
 .hand {
     width: max-content;
     border-radius: 0.4rem;
@@ -115,6 +120,14 @@ button:disabled {
     width: 1.3em;
     text-align: center;
     font-size: 18px;
+}
+
+.playedalready {
+    opacity: 0.1;
+}
+
+label {
+    font-size: small;
 }
 
 .table {
