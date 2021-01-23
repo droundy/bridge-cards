@@ -12,7 +12,7 @@ body {
     clear: both;
 }
 
-#west {
+/* #west {
     clear: left;
     float: left;
 }
@@ -20,7 +20,7 @@ body {
 #east {
     clear: right;
     float: right;
-}
+} */
 
 .name {
     display: block;
@@ -117,9 +117,9 @@ button:disabled {
 
 .cardinhand {
     display: inline-block;
-    width: 1.3em;
+    width: 1.1em;
     text-align: center;
-    font-size: 18px;
+    font-size: 16px;
 }
 
 .playedalready {
@@ -131,14 +131,18 @@ label {
 }
 
 .table {
-    width: 6rem;
+    width: 5rem;
     margin: auto;
-    height: 6rem;
+    height: 5rem;
     margin-top: 0.5em;
     margin-bottom: 0.5em;
     position: relative;
+    font-size: 16px;
     z-index: -1;
     /* font-size: 36px; */
+    background-color: lightgreen;
+    border-radius: 1em;
+    box-shadow: 0 0 0.2em lightgreen;
 }
 
 /* North */
@@ -147,26 +151,26 @@ label {
     top: 0;
     left: 1rem;
     text-align: center;
-    width: 4rem;
+    width: 3rem;
 }
 .table > span:nth-of-type(2) {
     position: absolute;
     top: 1rem;
     left: 0;
-    line-height: 4rem;
-    height: 4rem;
+    line-height: 3rem;
+    height: 3rem;
 }
 .table > span:nth-of-type(3) {
     position: absolute;
     top: 1rem;
     right: 0;
-    line-height: 4rem;
-    height: 4rem;
+    line-height: 3rem;
+    height: 3rem;
 }
 .table > span:nth-of-type(4) {
     position: absolute;
     bottom: 0;
     left: 1rem;
     text-align: center;
-    width: 4rem;
+    width: 3rem;
 }
