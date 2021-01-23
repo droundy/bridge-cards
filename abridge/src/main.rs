@@ -272,7 +272,7 @@ impl GameState {
     fn check_timeout(&mut self) {
         let now = std::time::Instant::now();
         if now.duration_since(self.last_action) > std::time::Duration::from_secs(60 * 60) {
-            self.redeal();
+            *self = GameState::new();
         } else {
             self.last_action = now;
         }
