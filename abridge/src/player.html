@@ -16,13 +16,15 @@
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %]" id="north">
     <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
     [% self.game.original_hands[North] %]</div>
-<div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %]" id="west">
+<table><tr>
+<td><div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %]" id="west">
     <span class="name"[% if West == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[West] %]</span>
-    [% self.game.original_hands[West] %]</div>
-<div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %]" id="east">
+    [% self.game.original_hands[West] %]</div></td>
+    <td><div class="table"></div></td>
+    <td><div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %]" id="east">
     <span class="name"[% if East == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[East] %]</span>
-    [% self.game.original_hands[East] %]</div>
-<div class="table"></div>
+    [% self.game.original_hands[East] %]</div></td>
+</tr></table>
 <div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %]" id="south">
     <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
     [% self.game.original_hands[South] %]</div>

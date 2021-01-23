@@ -129,7 +129,9 @@ button:disabled {
 label {
     font-size: small;
 }
-
+table {
+    margin: auto;
+}
 .table {
     width: 5rem;
     margin: auto;
