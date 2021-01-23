@@ -355,7 +355,7 @@ impl GameState {
         if let Some(seat) = self.bidder() {
             Some(seat)
         } else {
-            self.lead
+            self.lead.map(|s| s+self.played.len())
         }
     }
 
