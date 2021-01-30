@@ -401,7 +401,9 @@ impl Cards {
     /// All the cards in specified suit
     pub fn in_suit(self, suit: Suit) -> Cards {
         let offset = suit as i32 * 16;
-        Cards { bits: ((self.bits >> offset) & 0xFFFF) << offset }
+        Cards {
+            bits: ((self.bits >> offset) & 0xFFFF) << offset,
+        }
     }
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
@@ -464,22 +466,17 @@ impl Cards {
                 .len()
     }
 
-    /// Protected high card points
+    /// Protected high card points, meant to be used sith scp
     pub const fn protected_high_card_points(self) -> usize {
-        self.aces().len()
-            + self.intersection(Cards::ACES.union(Cards::KINGS)).len()
+        self.aces().len() * 4
+            + self.intersection(Cards::KINGS).len()
             + self
                 .long_suits(2)
-                .intersection(Cards::ACES.union(Cards::KINGS).union(Cards::QUEENS))
+                .intersection(Cards::KINGS.union(Cards::QUEENS))
                 .len()
             + self
                 .long_suits(3)
-                .intersection(
-                    Cards::ACES
-                        .union(Cards::KINGS)
-                        .union(Cards::QUEENS)
-                        .union(Cards::JACKS),
-                )
+                .intersection(Cards::KINGS.union(Cards::QUEENS).union(Cards::JACKS))
                 .len()
     }
 

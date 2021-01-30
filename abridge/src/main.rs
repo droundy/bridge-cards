@@ -519,6 +519,20 @@ struct PlayableHand {
 #[with_template("[%" "%]" "hand.html")]
 impl DisplayAs<HTML> for PlayableHand {}
 
+impl PlayableHand {
+    fn hcp(&self) -> usize {
+        (self.hand + self.played_already).high_card_points()
+    }
+    fn shcp(&self) -> usize {
+        (self.hand + self.played_already).protected_high_card_points()
+            + (self.hand + self.played_already).short_card_points()
+    }
+    fn lhcp(&self) -> usize {
+        (self.hand + self.played_already).high_card_points()
+            + (self.hand + self.played_already).long_card_points()
+    }
+}
+
 #[derive(Debug)]
 enum PlayerConnection {
     Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
