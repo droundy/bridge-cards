@@ -263,6 +263,9 @@ impl Suit {
             Suit::Spades => '♠',
         }
     }
+    fn iter() -> impl Iterator<Item=Suit> {
+        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].into_iter().map(|&x| x)
+    }
 }
 
 /// A deck or hand of cards
@@ -557,6 +560,25 @@ impl Cards {
             0
         };
         s + h + d + c
+    }
+
+    /// NLTC
+    pub fn new_losing_trick_count(self) -> f64 {
+        let mut total = 0.0;
+        for s in Suit::iter() {
+            let x = self.in_suit(s);
+            let len = x.len();
+            if len >= 1 && x.intersection(Cards::ACES).bits == 0 {
+                total += 1.5;
+            }
+            if len >= 2 && x.intersection(Cards::KINGS).bits == 0 {
+                total += 1.0;
+            }
+            if len >= 3 && x.intersection(Cards::QUEENS).bits == 0 {
+                total += 0.5;
+            }
+        }
+        total
     }
 }
 

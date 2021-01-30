@@ -531,6 +531,9 @@ impl PlayableHand {
         (self.hand + self.played_already).high_card_points()
             + (self.hand + self.played_already).long_card_points()
     }
+    fn nltc(&self) -> f64 {
+        (self.hand + self.played_already).new_losing_trick_count()
+    }
 }
 
 #[derive(Debug)]
