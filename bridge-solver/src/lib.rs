@@ -1,4 +1,27 @@
-pub use bridge_deck::{Cards, Suit};
+pub use bridge_deck::{Cards, Card, Suit};
+
+pub fn normalize(all: Cards, hand: Cards) -> Cards {
+    let mut c = Cards::EMPTY;
+    for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
+        for (n, x) in all.in_suit(s).enumerate() {
+            if hand.contains(x) {
+                println!("adding {} as {}", x, Card::new(s, 2 + n as u8));
+                c = c.insert(Card::new(s, 2 + n as u8));
+            }
+        }
+    }
+    c
+}
+
+#[test]
+fn test_normalize() {
+    assert_eq!(Cards::SPADES, normalize(Cards::ALL, Cards::SPADES));
+    let twos = Cards::singleton(Card::S2)+Cards::singleton(Card::H2)+Cards::singleton(Card::D2)+Cards::singleton(Card::C2);
+    println!("\n\nTwos:\n\n");
+    assert_eq!(twos, normalize(Cards::ACES, Cards::ACES));
+    println!("\n\nWeird all aces:\n\n");
+    assert_eq!(Cards::ACES, normalize(Cards::ALL, Cards::ACES));
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Starting {
