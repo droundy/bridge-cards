@@ -47,6 +47,9 @@ impl std::ops::Add<usize> for Score {
     }
 }
 
+/// The Naive solver assumes no knowledge from the bidding.
+//  It's really only suitable for declarer play when opponents did not bid, and
+//  even then is suboptimal on weak partnerships.
 #[derive(Clone)]
 pub struct Naive {
     cache: std::collections::HashMap<Starting, Score>,
