@@ -2,26 +2,10 @@ pub use bridge_deck::{Cards, Suit};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Starting {
-    /// The cards that I have (known)
-    pub mine: Cards,
-    /// The cards that I know the player to my left has
-    pub left: Cards,
-    /// The cards that I know my partner has
-    pub pard: Cards,
-    /// The cards that I know the player to my right has
-    pub right: Cards,
+    /// The cards that we have, starting with the leader
+    pub hands: [Cards; 4],
     /// The cards that I don't know who has
     pub unknown: Cards,
-    /// Who is leading
-    pub leader: Leader,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum Leader {
-    Me,
-    Left,
-    Right,
-    Pard,
 }
 
 #[derive(Default, Clone, Copy, Hash)]
@@ -63,45 +47,8 @@ impl Naive {
         // Prepopulate cache with stopping point of no cards->no points.
         cache.insert(
             Starting {
-                mine: Cards::EMPTY,
-                left: Cards::EMPTY,
-                right: Cards::EMPTY,
-                pard: Cards::EMPTY,
+                hands: [Cards::EMPTY; 4],
                 unknown: Cards::EMPTY,
-                leader: Leader::Left,
-            },
-            Score::default(),
-        );
-        cache.insert(
-            Starting {
-                mine: Cards::EMPTY,
-                left: Cards::EMPTY,
-                right: Cards::EMPTY,
-                pard: Cards::EMPTY,
-                unknown: Cards::EMPTY,
-                leader: Leader::Right,
-            },
-            Score::default(),
-        );
-        cache.insert(
-            Starting {
-                mine: Cards::EMPTY,
-                left: Cards::EMPTY,
-                right: Cards::EMPTY,
-                pard: Cards::EMPTY,
-                unknown: Cards::EMPTY,
-                leader: Leader::Me,
-            },
-            Score::default(),
-        );
-        cache.insert(
-            Starting {
-                mine: Cards::EMPTY,
-                left: Cards::EMPTY,
-                right: Cards::EMPTY,
-                pard: Cards::EMPTY,
-                unknown: Cards::EMPTY,
-                leader: Leader::Pard,
             },
             Score::default(),
         );
@@ -114,7 +61,6 @@ impl Naive {
         if let Some(score) = self.cache.get(&starting) {
             return *score;
         }
-        if starting.mine.len() == 0 {}
         unimplemented!()
     }
 }
