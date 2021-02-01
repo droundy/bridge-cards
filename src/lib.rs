@@ -8,7 +8,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 /// A single card
-#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Card {
     offset: u8,
 }
@@ -233,7 +233,7 @@ impl std::fmt::Display for Card {
 }
 
 /// The four suits
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub enum Suit {
     /// Clubs
     Clubs = 0,
@@ -274,7 +274,7 @@ impl Suit {
 /// game bridge.  If you want to allow more than one deck mixed together you
 /// want a different crate.  Because each card can only appear once, `Cards` is
 /// `Copy` and only takes 64 bits.  This makes it fast and memory efficient.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 pub struct Cards {
     bits: u64,
 }

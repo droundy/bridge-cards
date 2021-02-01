@@ -36,4 +36,5 @@ harness = false
 
 members = [
     "abridge",
+    "bridge-solver",
 ]
