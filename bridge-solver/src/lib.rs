@@ -1,4 +1,4 @@
-pub use bridge_deck::{Cards, Card, Suit};
+pub use bridge_deck::{Card, Cards, Suit};
 
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
     let mut c = Cards::EMPTY;
@@ -16,7 +16,10 @@ pub fn normalize(all: Cards, hand: Cards) -> Cards {
 #[test]
 fn test_normalize() {
     assert_eq!(Cards::SPADES, normalize(Cards::ALL, Cards::SPADES));
-    let twos = Cards::singleton(Card::S2)+Cards::singleton(Card::H2)+Cards::singleton(Card::D2)+Cards::singleton(Card::C2);
+    let twos = Cards::singleton(Card::S2)
+        + Cards::singleton(Card::H2)
+        + Cards::singleton(Card::D2)
+        + Cards::singleton(Card::C2);
     println!("\n\nTwos:\n\n");
     assert_eq!(twos, normalize(Cards::ACES, Cards::ACES));
     println!("\n\nWeird all aces:\n\n");
@@ -29,6 +32,84 @@ pub struct Starting {
     pub hands: [Cards; 4],
     /// The cards that I don't know who has
     pub unknown: Cards,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum TrickTaken {
+    Us(Starting),
+    Them(Starting),
+}
+
+impl Starting {
+    pub fn after(self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
+        let played = Cards::singleton(plays[0])
+            + Cards::singleton(plays[1])
+            + Cards::singleton(plays[2])
+            + Cards::singleton(plays[3]);
+        let mut winning_suit = plays[0].suit();
+        if let Some(t) = trump {
+            if played.in_suit(t).len() > 0 {
+                winning_suit = t;
+            }
+        }
+        println!("Winning suit is {:?}", winning_suit);
+        let mut winner = 0;
+        let mut best_rank = 0;
+        for i in plays
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.suit() == winning_suit)
+            .map(|(i, _)| i)
+        {
+            if plays[i].rank() > best_rank {
+                best_rank = plays[i].rank();
+                winner = i;
+            }
+        }
+        let cards_left =
+            (self.unknown + self.hands[0] + self.hands[1] + self.hands[2] + self.hands[3]) - played;
+        let unknown = normalize(cards_left, self.unknown - played);
+        let hands = [
+            normalize(cards_left, self.hands[winner] - played),
+            normalize(cards_left, self.hands[(winner + 1) % 4] - played),
+            normalize(cards_left, self.hands[(winner + 2) % 4] - played),
+            normalize(cards_left, self.hands[(winner + 3) % 4] - played),
+        ];
+        let next = Starting { hands, unknown };
+        if winner & 1 == 1 {
+            // They won!
+            TrickTaken::Them(next)
+        } else {
+            TrickTaken::Us(next)
+        }
+    }
+}
+
+#[test]
+fn test_after() {
+    let start = Starting {
+        hands: [
+            Cards::singleton(Card::S2),
+            Cards::singleton(Card::D3),
+            Cards::singleton(Card::D4),
+            Cards::singleton(Card::S5),
+        ],
+        unknown: Cards::EMPTY,
+    };
+    let after = Starting {
+        hands: [Cards::EMPTY, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY],
+        unknown: Cards::EMPTY,
+    };
+    let plays = [Card::S2, Card::D3, Card::D4, Card::S5];
+    assert_eq!(TrickTaken::Them(after), start.after(plays, None));
+    assert_eq!(
+        TrickTaken::Them(after),
+        start.after(plays, Some(Suit::Clubs))
+    );
+    assert_eq!(
+        TrickTaken::Us(after),
+        start.after(plays, Some(Suit::Diamonds))
+    );
 }
 
 #[derive(Default, Clone, Copy, Hash)]
@@ -65,7 +146,7 @@ pub struct Naive {
 }
 
 impl Naive {
-    fn new(trump: Option<Suit>) -> Self {
+    pub fn new(trump: Option<Suit>) -> Self {
         let mut cache = std::collections::HashMap::new();
         // Prepopulate cache with stopping point of no cards->no points.
         cache.insert(
