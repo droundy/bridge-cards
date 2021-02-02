@@ -40,6 +40,14 @@ pub enum TrickTaken {
     Us(Starting),
     Them(Starting),
 }
+impl TrickTaken {
+    pub const fn starting(self) -> Starting {
+        match self {
+            TrickTaken::Us(s) => s,
+            TrickTaken::Them(s) => s,
+        }
+    }
+}
 
 impl Starting {
     pub fn random_hands(&self) -> [Cards; 4] {
@@ -52,7 +60,6 @@ impl Starting {
                     .pick(n - self.hands[seat].len())
                     .expect("bad number of cardss");
                 hands[seat] += extra;
-                unknown -= extra;
             }
         }
         hands
@@ -280,7 +287,21 @@ impl Naive {
         if let Some(score) = self.cache.get(&starting) {
             return *score;
         }
-        unimplemented!()
+        let mut hands = starting.random_hands();
+        let mut plays = [Card::C2, Card::C2, Card::C2, Card::C2];
+        plays[0] = hands[0].pick(1).unwrap().next().unwrap();
+        for i in 1..4 {
+            plays[i] = if hands[i].in_suit(plays[0].suit()).is_empty() {
+                hands[i].pick(1).unwrap().next().unwrap()
+            } else {
+                hands[i].in_suit(plays[0].suit()).pick(1).unwrap().next().unwrap()
+            };
+        }
+        let trick_taken = starting.after(plays, self.trump);
+        let sc = self.score(trick_taken.starting());
+        let mysc = sc + trick_taken;
+        self.cache.insert(starting, mysc);
+        mysc
     }
 }
 

@@ -284,6 +284,10 @@ impl Cards {
     pub const fn len(&self) -> usize {
         self.bits.count_ones() as usize
     }
+    /// Is it empty?
+    pub const fn is_empty(&self) -> bool {
+        self.bits == 0
+    }
 
     /// insert a card to the deck or hand
     pub const fn insert(self, card: Card) -> Cards {
