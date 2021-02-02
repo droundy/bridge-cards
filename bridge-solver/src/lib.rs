@@ -4,6 +4,7 @@ pub fn normalize(all: Cards, hand: Cards) -> Cards {
     let mut c = Cards::EMPTY;
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
         for (n, x) in all.in_suit(s).enumerate() {
+            println!("  {} would be {}", x, Card::new(s, 2 + n as u8));
             if hand.contains(x) {
                 println!("adding {} as {}", x, Card::new(s, 2 + n as u8));
                 c = c.insert(Card::new(s, 2 + n as u8));
@@ -41,7 +42,7 @@ pub enum TrickTaken {
 }
 
 impl Starting {
-    pub fn after(self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
+    pub fn after(mut self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
         let played = Cards::singleton(plays[0])
             + Cards::singleton(plays[1])
             + Cards::singleton(plays[2])
@@ -66,15 +67,40 @@ impl Starting {
                 winner = i;
             }
         }
+        let unknown_in_suit = self.unknown.in_suit(plays[0].suit());
+        if unknown_in_suit.len() > 0 {
+            for i in 1..4 {
+                if plays[i].suit() != plays[0].suit() {
+                    // i showed void
+                    self.hands[(i + 2) % 4] += unknown_in_suit;
+                    self.unknown -= unknown_in_suit;
+                    break;
+                }
+            }
+        }
         let cards_left =
             (self.unknown + self.hands[0] + self.hands[1] + self.hands[2] + self.hands[3]) - played;
-        let unknown = normalize(cards_left, self.unknown - played);
-        let hands = [
+        let mut unknown = normalize(cards_left, self.unknown - played);
+        let mut hands = [
             normalize(cards_left, self.hands[winner] - played),
             normalize(cards_left, self.hands[(winner + 1) % 4] - played),
             normalize(cards_left, self.hands[(winner + 2) % 4] - played),
             normalize(cards_left, self.hands[(winner + 3) % 4] - played),
         ];
+        if unknown.len() > 0 {
+            let total =
+                unknown.len() + hands[0].len() + hands[1].len() + hands[2].len() + hands[3].len();
+            let per_hand = total / 4;
+            println!("per-hand = {}", per_hand);
+            for i in 0..4 {
+                println!("  hand[{}] = {}", i, hands[i].len());
+                if hands[i].len() + unknown.len() == per_hand {
+                    hands[i] += unknown;
+                    unknown = Cards::EMPTY;
+                    break;
+                }
+            }
+        }
         let next = Starting { hands, unknown };
         if winner & 1 == 1 {
             // They won!
@@ -110,6 +136,57 @@ fn test_after() {
         TrickTaken::Us(after),
         start.after(plays, Some(Suit::Diamonds))
     );
+}
+
+#[test]
+fn test_after_void() {
+    let start = Starting {
+        hands: [
+            Cards::singleton(Card::S2) + Cards::singleton(Card::S3),
+            Cards::EMPTY,
+            Cards::singleton(Card::S4) + Cards::singleton(Card::S7),
+            Cards::EMPTY,
+        ],
+        unknown: Cards::singleton(Card::SK)
+            + Cards::singleton(Card::SA)
+            + Cards::singleton(Card::S5)
+            + Cards::singleton(Card::S6),
+    };
+    let plays = [Card::S2, Card::SA, Card::S7, Card::S5];
+    let after = Starting {
+        hands: [
+            Cards::EMPTY,
+            Cards::singleton(Card::S3),
+            Cards::EMPTY,
+            Cards::singleton(Card::S2),
+        ],
+        unknown: Cards::singleton(Card::S4) + Cards::singleton(Card::S5),
+    };
+    assert_eq!(TrickTaken::Them(after), start.after(plays, None));
+
+    let start = Starting {
+        hands: [
+            Cards::singleton(Card::S2) + Cards::singleton(Card::S3),
+            Cards::EMPTY,
+            Cards::singleton(Card::D4) + Cards::singleton(Card::S7),
+            Cards::EMPTY,
+        ],
+        unknown: Cards::singleton(Card::D3)
+            + Cards::singleton(Card::D5)
+            + Cards::singleton(Card::S5)
+            + Cards::singleton(Card::S6),
+    };
+    let plays = [Card::S2, Card::D3, Card::S7, Card::S5];
+    let after = Starting {
+        hands: [
+            Cards::singleton(Card::D2),
+            Cards::singleton(Card::S3),
+            Cards::singleton(Card::S2),
+            Cards::singleton(Card::D3),
+        ],
+        unknown: Cards::EMPTY,
+    };
+    assert_eq!(TrickTaken::Us(after), start.after(plays, None));
 }
 
 #[derive(Default, Clone, Copy, Hash)]
