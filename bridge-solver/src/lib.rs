@@ -80,34 +80,34 @@ impl Starting {
         }
         let cards_left =
             (self.unknown + self.hands[0] + self.hands[1] + self.hands[2] + self.hands[3]) - played;
-        let mut unknown = normalize(cards_left, self.unknown - played);
-        let mut hands = [
+        let unknown = normalize(cards_left, self.unknown - played);
+        let hands = [
             normalize(cards_left, self.hands[winner] - played),
             normalize(cards_left, self.hands[(winner + 1) % 4] - played),
             normalize(cards_left, self.hands[(winner + 2) % 4] - played),
             normalize(cards_left, self.hands[(winner + 3) % 4] - played),
         ];
-        if unknown.len() > 0 {
-            let total =
-                unknown.len() + hands[0].len() + hands[1].len() + hands[2].len() + hands[3].len();
-            let per_hand = total / 4;
+        let mut next = Starting { hands, unknown };
+        if next.unknown.len() > 0 {
+            let per_hand = next.tricks_remaining();
             println!("per-hand = {}", per_hand);
             for i in 0..4 {
-                println!("  hand[{}] = {}", i, hands[i].len());
-                if hands[i].len() + unknown.len() == per_hand {
-                    hands[i] += unknown;
-                    unknown = Cards::EMPTY;
+                if next.hands[i].len() + next.unknown.len() == per_hand {
+                    next.hands[i] += next.unknown;
+                    next.unknown = Cards::EMPTY;
                     break;
                 }
             }
         }
-        let next = Starting { hands, unknown };
         if winner & 1 == 1 {
             // They won!
             TrickTaken::Them(next)
         } else {
             TrickTaken::Us(next)
         }
+    }
+    pub const fn tricks_remaining(self) -> usize {
+        (self.unknown.len() + self.hands[0].len() + self.hands[1].len() + self.hands[2].len() + self.hands[3].len()) / 4
     }
 }
 
@@ -208,6 +208,24 @@ impl std::ops::Add<usize> for Score {
         Score {
             tot_score: self.tot_score + rhs as u32,
             num: self.num + 1,
+        }
+    }
+}
+
+impl std::ops::Add<TrickTaken> for Score {
+    type Output = Score;
+
+    fn add(self, rhs: TrickTaken) -> Self::Output {
+        if let TrickTaken::Them(s) = rhs {
+            Score {
+                tot_score: self.num*s.tricks_remaining() as u32 - self.tot_score,
+                num: self.num,
+            }
+        } else {
+            Score {
+                tot_score: self.tot_score + self.num,
+                num: self.num,
+            }
         }
     }
 }
