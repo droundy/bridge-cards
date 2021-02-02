@@ -42,6 +42,21 @@ pub enum TrickTaken {
 }
 
 impl Starting {
+    pub fn random_hands(&self) -> [Cards; 4] {
+        let n = self.tricks_remaining();
+        let mut unknown = self.unknown;
+        let mut hands = self.hands;
+        for seat in 0..4 {
+            if hands[seat].len() < n {
+                let extra = unknown
+                    .pick(n - self.hands[seat].len())
+                    .expect("bad number of cardss");
+                hands[seat] += extra;
+                unknown -= extra;
+            }
+        }
+        hands
+    }
     pub fn after(mut self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
         let played = Cards::singleton(plays[0])
             + Cards::singleton(plays[1])
@@ -107,7 +122,12 @@ impl Starting {
         }
     }
     pub const fn tricks_remaining(self) -> usize {
-        (self.unknown.len() + self.hands[0].len() + self.hands[1].len() + self.hands[2].len() + self.hands[3].len()) / 4
+        (self.unknown.len()
+            + self.hands[0].len()
+            + self.hands[1].len()
+            + self.hands[2].len()
+            + self.hands[3].len())
+            / 4
     }
 }
 
@@ -218,7 +238,7 @@ impl std::ops::Add<TrickTaken> for Score {
     fn add(self, rhs: TrickTaken) -> Self::Output {
         if let TrickTaken::Them(s) = rhs {
             Score {
-                tot_score: self.num*s.tricks_remaining() as u32 - self.tot_score,
+                tot_score: self.num * s.tricks_remaining() as u32 - self.tot_score,
                 num: self.num,
             }
         } else {
