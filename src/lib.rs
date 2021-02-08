@@ -412,6 +412,15 @@ impl Cards {
             bits: ((self.bits >> offset) & 0xFFFF) << offset,
         }
     }
+    /// All the cards in specified suit, or all the cards if the suit is void
+    pub fn following_suit(self, suit: Suit) -> Cards {
+        let insuit = self.in_suit(suit);
+        if insuit.bits == 0 {
+            self
+        } else {
+            insuit
+        }
+    }
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
 
