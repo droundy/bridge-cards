@@ -76,4 +76,24 @@ fn main() {
             })
             .mean())
     );
+
+    let mut cards = Cards::ALL;
+    for _ in 0..4 {
+        println!("   \"{}\".parse().unwrap(),", cards.pick(13).unwrap());
+    }
+
+    println!(
+        "random deal, hearts trump {}",
+        bench(|| Naive::new(Some(Suit::Hearts))
+            .score(Starting {
+                hands: [
+                    "♠65♥A7♦Q9765♣J765".parse().unwrap(),
+                    "♠9♥KT92♦JT832♣A84".parse().unwrap(),
+                    "♠KQT843♥J653♦4♣K3".parse().unwrap(),
+                    "♠AJ72♥Q84♦AK♣QT92".parse().unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            })
+            .mean())
+    );
 }
