@@ -786,6 +786,10 @@ fn card_display() {
         "sAKQJT98765432 hAKQJT98765432 dAKQJT98765432 cAKQJT98765432".parse(),
         Ok(Cards::ALL)
     );
+    assert_eq!(
+        "s: AKQJT98765432 h: AKQJT98765432 d: AKQJT98765432 c: AKQJT98765432".parse(),
+        Ok(Cards::ALL)
+    );
 }
 
 impl DoubleEndedIterator for Cards {
