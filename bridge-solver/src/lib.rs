@@ -1,4 +1,6 @@
 pub use bridge_deck::{Card, Cards, Suit};
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
     let mut c = Cards::EMPTY;
@@ -50,14 +52,14 @@ impl TrickTaken {
 }
 
 impl Starting {
-    pub fn random_hands(&self) -> [Cards; 4] {
+    pub fn random_hands(&self, rng: &mut SmallRng) -> [Cards; 4] {
         let n = self.tricks_remaining();
         let mut unknown = self.unknown;
         let mut hands = self.hands;
         for seat in 0..4 {
             if hands[seat].len() < n {
                 let extra = unknown
-                    .pick(n - self.hands[seat].len())
+                    .pick_rng(rng, n - self.hands[seat].len())
                     .expect("bad number of cardss");
                 hands[seat] += extra;
             }
@@ -292,6 +294,7 @@ pub struct Naive {
     cache: std::collections::HashMap<Starting, Score>,
     /// What is trump?
     trump: Option<Suit>,
+    rng: SmallRng,
 }
 
 impl Naive {
@@ -308,7 +311,11 @@ impl Naive {
                 num: 1,
             },
         );
-        Naive { cache, trump }
+        Naive {
+            cache,
+            trump,
+            rng: SmallRng::from_entropy(),
+        }
     }
 
     pub fn score(&mut self, starting: Starting) -> Score {
@@ -316,7 +323,7 @@ impl Naive {
             // println!("found score {:?}", score);
             return *score;
         }
-        let hands = starting.random_hands();
+        let hands = starting.random_hands(&mut self.rng);
         let mut best = Score::MIN;
         for c0 in hands[0] {
             let mut worst = Score::MAX;
@@ -340,7 +347,7 @@ impl Naive {
                         // );
                         if mysc < worst {
                             worst = mysc;
-                            // println!("worst = {}", worst.mean());
+                        // println!("worst = {}", worst.mean());
                         } else {
                             // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
                         }
@@ -384,10 +391,10 @@ fn naive_score() {
         2.0,
         nt.score(Starting {
             hands: [
-                Cards::singleton(Card::S2)+Cards::singleton(Card::SA),
-                Cards::singleton(Card::D3)+Cards::singleton(Card::D5),
-                Cards::singleton(Card::D4)+Cards::singleton(Card::C3),
-                Cards::singleton(Card::S5)+Cards::singleton(Card::D8),
+                Cards::singleton(Card::S2) + Cards::singleton(Card::SA),
+                Cards::singleton(Card::D3) + Cards::singleton(Card::D5),
+                Cards::singleton(Card::D4) + Cards::singleton(Card::C3),
+                Cards::singleton(Card::S5) + Cards::singleton(Card::D8),
             ],
             unknown: Cards::EMPTY,
         })
@@ -396,12 +403,7 @@ fn naive_score() {
     assert_eq!(
         13.0,
         nt.score(Starting {
-            hands: [
-                Cards::SPADES,
-                Cards::HEARTS,
-                Cards::DIAMONDS,
-                Cards::CLUBS,
-            ],
+            hands: [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS,],
             unknown: Cards::EMPTY,
         })
         .mean()
@@ -409,12 +411,7 @@ fn naive_score() {
     assert_eq!(
         13.0,
         sp.score(Starting {
-            hands: [
-                Cards::SPADES,
-                Cards::HEARTS,
-                Cards::DIAMONDS,
-                Cards::CLUBS,
-            ],
+            hands: [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS,],
             unknown: Cards::EMPTY,
         })
         .mean()
@@ -422,12 +419,7 @@ fn naive_score() {
     assert_eq!(
         0.0,
         sp.score(Starting {
-            hands: [
-                Cards::HEARTS,
-                Cards::SPADES,
-                Cards::DIAMONDS,
-                Cards::CLUBS,
-            ],
+            hands: [Cards::HEARTS, Cards::SPADES, Cards::DIAMONDS, Cards::CLUBS,],
             unknown: Cards::EMPTY,
         })
         .mean()
