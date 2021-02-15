@@ -700,10 +700,92 @@ impl std::fmt::Display for Cards {
     }
 }
 
+impl std::str::FromStr for Cards {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut cards = Cards::EMPTY;
+        let mut suit = Suit::Spades;
+        for c in s.chars() {
+            match c {
+                '♣' | 'C' | 'c' => {
+                    suit = Suit::Clubs;
+                }
+                '♦' | 'D' | 'd' => {
+                    suit = Suit::Diamonds;
+                }
+                '♥' | 'H' | 'h' => {
+                    suit = Suit::Hearts;
+                }
+                '♠' | 'S' | 's' => {
+                    suit = Suit::Spades;
+                }
+                '2' => {
+                    cards = cards.insert(Card::new(suit, 2));
+                }
+                '3' => {
+                    cards = cards.insert(Card::new(suit, 3));
+                }
+                '4' => {
+                    cards = cards.insert(Card::new(suit, 4));
+                }
+                '5' => {
+                    cards = cards.insert(Card::new(suit, 5));
+                }
+                '6' => {
+                    cards = cards.insert(Card::new(suit, 6));
+                }
+                '7' => {
+                    cards = cards.insert(Card::new(suit, 7));
+                }
+                '8' => {
+                    cards = cards.insert(Card::new(suit, 8));
+                }
+                '9' => {
+                    cards = cards.insert(Card::new(suit, 9));
+                }
+                'T' => {
+                    cards = cards.insert(Card::new(suit, 10));
+                }
+                'J' => {
+                    cards = cards.insert(Card::new(suit, 11));
+                }
+                'Q' => {
+                    cards = cards.insert(Card::new(suit, 12));
+                }
+                'K' => {
+                    cards = cards.insert(Card::new(suit, 13));
+                }
+                'A' => {
+                    cards = cards.insert(Card::new(suit, 14));
+                }
+                _ => (),
+            }
+        }
+        Ok(cards)
+    }
+}
+
 #[test]
 fn card_display() {
     assert_eq!("", &format!("{}", Cards::EMPTY));
+    assert_eq!("".parse(), Ok(Cards::EMPTY));
+
     assert_eq!("♠AKQJT98765432", &format!("{}", Cards::SPADES));
+    assert_eq!("♠AKQJT98765432".parse(), Ok(Cards::SPADES));
+
+    assert_eq!(
+        "♠AKQJT98765432♥AKQJT98765432♦AKQJT98765432♣AKQJT98765432",
+        &format!("{}", Cards::ALL)
+    );
+    assert_eq!(
+        "♠AKQJT98765432♥AKQJT98765432♦AKQJT98765432♣AKQJT98765432".parse(),
+        Ok(Cards::ALL)
+    );
+    assert_eq!(
+        "sAKQJT98765432 hAKQJT98765432 dAKQJT98765432 cAKQJT98765432".parse(),
+        Ok(Cards::ALL)
+    );
 }
 
 impl DoubleEndedIterator for Cards {
