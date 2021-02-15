@@ -15,19 +15,27 @@
 [% if self.game.hand_done { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %]" id="north">
     <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
-    [% self.game.original_hands[North] %]</div>
+    [% let h = self.game.original_hands[North]; h %]
+    <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span><span class="alert">[% h.new_losing_trick_count() %] NLTC</span>
+</div>
 <table><tr>
 <td><div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %]" id="west">
     <span class="name"[% if West == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[West] %]</span>
-    [% self.game.original_hands[West] %]</div></td>
+    [% let h = self.game.original_hands[West]; h %]
+    <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span><span class="alert">[% h.new_losing_trick_count() %] NLTC</span>
+</div></td>
     <td><div class="table"></div></td>
     <td><div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %]" id="east">
     <span class="name"[% if East == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[East] %]</span>
-    [% self.game.original_hands[East] %]</div></td>
+    [% let h = self.game.original_hands[East]; h %]
+    <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span><span class="alert">[% h.new_losing_trick_count() %] NLTC</span>
+</div></td>
 </tr></table>
 <div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %]" id="south">
     <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
-    [% self.game.original_hands[South] %]</div>
+    [% let h = self.game.original_hands[South]; h %]
+    <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span><span class="alert">[% h.new_losing_trick_count() %] NLTC</span>
+</div>
 [% } else { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %][% if Some(North) == self.game.hand_playing() { %] turn[% } %]" id="north">
     <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
