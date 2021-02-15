@@ -84,6 +84,25 @@ impl Card {
             _ => "?",
         }
     }
+    /// What is my rank called?
+    pub const fn rankchar(self) -> char {
+        match self.rank() {
+            2 => '2',
+            3 => '3',
+            4 => '4',
+            5 => '5',
+            6 => '6',
+            7 => '7',
+            8 => '8',
+            9 => '9',
+            10 => 'T',
+            11 => 'J',
+            12 => 'Q',
+            13 => 'K',
+            14 => 'A',
+            _ => '?',
+        }
+    }
     /// 2 of Clubs
     pub const C2: Card = Card::new(Suit::Clubs, 2);
     /// 3 of Clubs
@@ -264,8 +283,10 @@ impl Suit {
             Suit::Spades => '♠',
         }
     }
-    fn iter() -> impl Iterator<Item=Suit> {
-        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter().map(|&x| x)
+    fn iter() -> impl Iterator<Item = Suit> {
+        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
+            .iter()
+            .map(|&x| x)
     }
 }
 
@@ -659,6 +680,30 @@ impl Iterator for Cards {
             Some(Card { offset: next as u8 })
         }
     }
+}
+
+impl std::fmt::Display for Cards {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for suit in [Suit::Spades, Suit::Hearts, Suit::Diamonds, Suit::Clubs]
+            .iter()
+            .cloned()
+        {
+            let cards = self.in_suit(suit);
+            if cards.len() > 0 {
+                write!(f, "{}", suit.unicode())?;
+                for c in cards.rev() {
+                    write!(f, "{}", c.rankchar())?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn card_display() {
+    assert_eq!("", &format!("{}", Cards::EMPTY));
+    assert_eq!("♠AKQJT98765432", &format!("{}", Cards::SPADES));
 }
 
 impl DoubleEndedIterator for Cards {
