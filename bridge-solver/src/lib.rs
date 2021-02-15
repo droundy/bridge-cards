@@ -4,9 +4,9 @@ pub fn normalize(all: Cards, hand: Cards) -> Cards {
     let mut c = Cards::EMPTY;
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
         for (n, x) in all.in_suit(s).enumerate() {
-            println!("  {} would be {}", x, Card::new(s, 2 + n as u8));
+            // println!("  {} would be {}", x, Card::new(s, 2 + n as u8));
             if hand.contains(x) {
-                println!("adding {} as {}", x, Card::new(s, 2 + n as u8));
+                // println!("adding {} as {}", x, Card::new(s, 2 + n as u8));
                 c = c.insert(Card::new(s, 2 + n as u8));
             }
         }
@@ -75,7 +75,7 @@ impl Starting {
                 winning_suit = t;
             }
         }
-        println!("Winning suit is {:?}", winning_suit);
+        // println!("Winning suit is {:?}", winning_suit);
         let mut winner = 0;
         let mut best_rank = 0;
         for i in plays
@@ -112,7 +112,7 @@ impl Starting {
         let mut next = Starting { hands, unknown };
         if next.unknown.len() > 0 {
             let per_hand = next.tricks_remaining();
-            println!("per-hand = {}", per_hand);
+            // println!("per-hand = {}", per_hand);
             for i in 0..4 {
                 if next.hands[i].len() + next.unknown.len() == per_hand {
                     next.hands[i] += next.unknown;
@@ -313,7 +313,7 @@ impl Naive {
 
     pub fn score(&mut self, starting: Starting) -> Score {
         if let Some(score) = self.cache.get(&starting) {
-            println!("found score {:?}", score);
+            // println!("found score {:?}", score);
             return *score;
         }
         let hands = starting.random_hands();
@@ -328,21 +328,21 @@ impl Naive {
                         let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
                         let sc = self.score(trick_taken.starting());
                         let mysc = sc + trick_taken;
-                        println!(
-                            " {} {} {} {} -> {} from {:?} and {:?}",
-                            c0,
-                            c1,
-                            c2,
-                            c3,
-                            mysc.mean(),
-                            sc,
-                            trick_taken
-                        );
+                        // println!(
+                        //     " {} {} {} {} -> {} from {:?} and {:?}",
+                        //     c0,
+                        //     c1,
+                        //     c2,
+                        //     c3,
+                        //     mysc.mean(),
+                        //     sc,
+                        //     trick_taken
+                        // );
                         if mysc < worst {
                             worst = mysc;
-                            println!("worst = {}", worst.mean());
+                            // println!("worst = {}", worst.mean());
                         } else {
-                            println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+                            // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
                         }
                     }
                     if worst > best {
@@ -355,7 +355,7 @@ impl Naive {
             }
             if worst > best {
                 best = worst;
-                println!("Move {} gives {}", c0, best.mean());
+                // println!("Move {} gives {}", c0, best.mean());
             }
         }
         self.cache.insert(starting, best);

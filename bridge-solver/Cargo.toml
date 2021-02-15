@@ -18,3 +18,11 @@ license = "MIT/Apache-2.0"
 bridge-deck = { version = "0.1.1", path = ".." }
 
 rand = "0.8.0"
+
+[dev-dependencies]
+
+easybench = "1.1.0"
+
+[[bench]]
+name = "bench"
+harness = false

@@ -255,6 +255,15 @@ impl Suit {
             Suit::Spades => "spades",
         }
     }
+    /// The unicode character for this suit
+    pub fn unicode(self) -> char {
+        match self {
+            Suit::Clubs => '♣',
+            Suit::Diamonds => '♦',
+            Suit::Hearts => '♥',
+            Suit::Spades => '♠',
+        }
+    }
     fn iter() -> impl Iterator<Item=Suit> {
         [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter().map(|&x| x)
     }
