@@ -744,7 +744,7 @@ impl std::str::FromStr for Cards {
                 '9' => {
                     cards = cards.insert(Card::new(suit, 9));
                 }
-                'T' => {
+                'T' | '1' => {
                     cards = cards.insert(Card::new(suit, 10));
                 }
                 'J' => {
