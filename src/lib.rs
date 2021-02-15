@@ -264,7 +264,7 @@ impl Suit {
         }
     }
     fn iter() -> impl Iterator<Item=Suit> {
-        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].into_iter().map(|&x| x)
+        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter().map(|&x| x)
     }
 }
 
