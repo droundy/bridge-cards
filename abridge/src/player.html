@@ -7,7 +7,7 @@
         <th>[% who.next().next().next().name() %]</th></tr>
     [% for row in self.game.bids.chunks(4) {
         %]<tr>[% for b in row.iter() {
-            %]<td>[% b %]</td>[%
+            %]<td><span  class="hastooltip">[% b %]<span class="tooltip">[% b %]: ???</span></span></td>[%
             } %]</tr>[%
     } %]
 </table>
