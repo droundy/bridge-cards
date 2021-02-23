@@ -5,9 +5,9 @@
         <th>[% who.next().name() %]</th>
         <th>[% who.next().next().name() %]</th>
         <th>[% who.next().next().next().name() %]</th></tr>
-    [% for row in self.game.bids.chunks(4) {
-        %]<tr>[% for b in row.iter() {
-            %]<td><span  class="hastooltip">[% b %]<span class="tooltip">[% b %]: ???</span></span></td>[%
+    [% for row in (0..self.game.bids.len()).collect::<Vec<_>>().chunks(4) {
+        %]<tr>[% for &i in row.iter() {
+            %]<td><span  class="hastooltip">[% self.game.bids[i] %]<span class="tooltip">[% self.game.bids[i] %]: [% self.game.bid_description(&self.game.bids[0..i+1]) %]</span></span></td>[%
             } %]</tr>[%
     } %]
 </table>
