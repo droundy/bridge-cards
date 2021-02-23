@@ -88,7 +88,7 @@ impl BiddingConvention for OrderedConventions {
         if let Some(c) = self.conventions.iter().filter(|c| c.applies(bids)).next() {
             c.description(bids)
         } else {
-            "Does not apply".to_string()
+            "?".to_string()
         }
     }
 
