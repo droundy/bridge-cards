@@ -255,16 +255,48 @@ impl GameState {
         let mut sheets = ai::OrderedConventions::new("Sheets");
         use bridge_deck::Suit::*;
         use Bid::*;
-        sheets.add(ai::SimpleConvention { bids: &[Suit(1, Hearts)], the_description: "13+ lhcp, 5+♥", the_name: "Opening bid" });
-        sheets.add(ai::SimpleConvention { bids: &[Suit(1, Spades)], the_description: "13+ lhcp, 5+♠", the_name: "Opening bid" });
-        sheets.add(ai::SimpleConvention { bids: &[Suit(1, Clubs)], the_description: "13+ lhcp, 3+♣", the_name: "Opening bid" });
-        sheets.add(ai::SimpleConvention { bids: &[Suit(1, Diamonds)], the_description: "13+ lhcp, 3+♦", the_name: "Opening bid" });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(1, Hearts)]],
+            the_description: "13+ lhcp, ♥≥5, ♥≥♠",
+            the_name: "Opening bid",
+        });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(1, Spades)]],
+            the_description: "13+ lhcp, ♠≥5, ♠>♥",
+            the_name: "Opening bid",
+        });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(1, Clubs)]],
+            the_description: "13+ lhcp, ♣≥3, ♣≥♦ ♥<5, ♠≥5",
+            the_name: "Opening bid",
+        });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(1, Diamonds)]],
+            the_description: "13+ lhcp, ♦≥3, ♦>♣, ♥<5, ♠≥5",
+            the_name: "Opening bid",
+        });
 
-        sheets.add(ai::SimpleConvention { bids: &[Suit(2, Hearts)], the_description: "5-10 hcp, 6♥", the_name: "Weak two" });
-        sheets.add(ai::SimpleConvention { bids: &[Suit(2, Spades)], the_description: "5-10 hcp, 6♠", the_name: "Weak two" });
-        sheets.add(ai::SimpleConvention { bids: &[Suit(2, Diamonds)], the_description: "5-10 hcp, 6♦", the_name: "Weak two" });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(2, Hearts)]],
+            the_description: "5-10 hcp, 6♥",
+            the_name: "Weak two",
+        });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(2, Spades)]],
+            the_description: "5-10 hcp, 6♠",
+            the_name: "Weak two",
+        });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Suit(2, Diamonds)], &[Pass, Suit(2, Diamonds)]],
+            the_description: "5-10 hcp, 6♦",
+            the_name: "Weak two",
+        });
 
-        sheets.add(ai::SimpleConvention { bids: &[Pass], the_description: "Less than 13 lhcp", the_name: "Opening pass" });
+        sheets.add(ai::SimpleConvention {
+            bids: &[&[Pass], &[Pass, Pass], &[Pass, Pass, Pass]],
+            the_description: "Less than 13 lhcp",
+            the_name: "Opening pass",
+        });
         conventions.push(sheets);
         GameState {
             names: [
@@ -290,6 +322,9 @@ impl GameState {
     }
     fn bid_description(&self, bids: &[Bid]) -> String {
         self.conventions[0].description(bids)
+    }
+    fn bid_description2(&self, bid: Bid, oldbids: &[Bid]) -> String {
+        self.conventions[0].bid_description(bid, oldbids)
     }
     fn check_timeout(&mut self) {
         let now = std::time::Instant::now();

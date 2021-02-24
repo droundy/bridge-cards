@@ -8,7 +8,7 @@
     [% for row in (0..self.game.bids.len()).collect::<Vec<_>>().chunks(4) {
         %]<tr>[% for &i in row.iter() {
             let d = self.game.bid_description(&self.game.bids[0..i+1]);
-            %]<td><span [% if d.len() >1 { %] class="hastooltip"[% } %]>[% self.game.bids[i] %][% if d.len() >1 { %]<span class="tooltip">[% self.game.bids[i] %]: [% self.game.bid_description(&self.game.bids[0..i+1]) %]</span>[% } %]</span></td>[%
+            %]<td>[% if d.len() >1 { %]<span class="hastooltip">[% } %][% self.game.bids[i] %][% if d.len() >1 { %]<span class="tooltip">[% self.game.bids[i] %]: [% d %]</span></span>[% } %]</td>[%
             } %]</tr>[%
     } %]
 </table>
@@ -100,7 +100,15 @@
             %] disabled[%
             } else {
                 Action::Bid(b)
-            } %]>[% b %]</button>[%
+                %][%
+                    if self.game.bid_description2(b, &self.game.bids).len() > 1 {
+                %] class="hastooltip"[%
+              }
+            } %]>[% b %][%
+              if self.game.bid_description2(b, &self.game.bids).len() > 1 {
+                %]<span class="tooltip">[% b %]: [% self.game.bid_description2(b, &self.game.bids) %]</span>[%
+              }
+              %]</button>[%
         } %]
     </div>[%
 } else if self.game.bidder().is_none() {

@@ -32,18 +32,25 @@ pub trait BiddingConvention: Send + Sync {
     fn name(&self) -> String;
     /// Does this bid work for this hand?
     fn is_appropriate(&self, bids: &[Bid], hand: Cards) -> bool;
+
+    /// A convenient version of description
+    fn bid_description(&self, bid: Bid, old_bids: &[Bid]) -> String {
+        let mut bids = old_bids.iter().cloned().collect::<Vec<_>>();
+        bids.push(bid);
+        self.description(&bids)
+    }
 }
 
 #[derive(Clone)]
 pub struct SimpleConvention {
-    pub bids: &'static [Bid],
+    pub bids: &'static [&'static [Bid]],
     pub the_description: &'static str,
     pub the_name: &'static str,
 }
 
 impl BiddingConvention for SimpleConvention {
     fn applies(&self, bids: &[Bid]) -> bool {
-        self.bids == bids
+        self.bids.contains(&bids)
     }
 
     fn description(&self, _bids: &[Bid]) -> String {

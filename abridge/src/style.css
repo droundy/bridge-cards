@@ -180,26 +180,30 @@ table {
 .hastooltip {
     position: relative;
     display: inline-block;
-    border-bottom: 1px dotted black; /* If you want dots under the hoverable text */
   }
   
   /* Tooltip text */
   .hastooltip .tooltip {
-    visibility: hidden;
+    /* visibility: hidden; */
     width: 120px;
     background-color: white;
     color: black;
     box-shadow: 0.05em 0.1em 0.2em black;
     text-align: center;
+    line-height: 1.1em;
     padding: 5px 0;
     border-radius: 6px;
    
     /* Position the tooltip text - see examples below! */
     position: absolute;
     z-index: 1;
+    top: 1.1em;
+    left: 100vw;
+    transition: left 2s;
   }
   
   /* Show the tooltip text when you mouse over the tooltip container */
   .hastooltip:hover .tooltip {
-    visibility: visible;
+    /* visibility: visible; */
+    left: 3em;
   }
