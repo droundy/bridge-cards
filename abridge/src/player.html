@@ -93,17 +93,20 @@
     %] <div class="bidboard">
         [% for &b in BIDS.iter() {
         %]<button[%
-            if b == Bid::Pass {
-                %] class="pass"[%
-            } %][%
             if !self.game.bid_is_legal(self.seat, b) {
             %] disabled[%
+              if b == Bid::Pass {
+                  %] class="pass"[%
+              } %][%
             } else {
                 Action::Bid(b)
-                %][%
-                    if self.game.bid_description2(b, &self.game.bids).len() > 1 {
-                %] class="hastooltip"[%
-              }
+                %]class="[%
+                if self.game.bid_description2(b, &self.game.bids).len() > 1 {
+                  %]hastooltip[%
+                }
+                if b == Bid::Pass {
+                    %] pass[%
+                } %]"[%
             } %]>[% b %][%
               if self.game.bid_description2(b, &self.game.bids).len() > 1 {
                 %]<span class="tooltip">[% b %]: [% self.game.bid_description2(b, &self.game.bids) %]</span>[%
