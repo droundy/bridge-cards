@@ -273,11 +273,19 @@ impl GameState {
             conventions: vec![ai::OrderedConventions::sheets()],
         }
     }
-    fn bid_description(&self, bids: &[Bid]) -> String {
-        self.conventions[0].description(bids)
+    fn bid_convention(&self, bids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
+        self.conventions[0].convention(bids).map(|c| c.clone())
     }
-    fn bid_description2(&self, bid: Bid, oldbids: &[Bid]) -> String {
-        self.conventions[0].bid_description(bid, oldbids)
+    fn bid_convention2(&self, bid: Bid, oldbids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
+        self.conventions[0].convention2(bid, oldbids).map(|c| c.clone())
+    }
+    fn bid_understood(&self, bids: &[Bid]) -> bool {
+        self.conventions[0].applies(bids)
+    }
+    fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
+        let mut bids = otherbids.iter().cloned().collect::<Vec<_>>();
+        bids.push(bid);
+        self.conventions[0].applies(&bids)
     }
     fn check_timeout(&mut self) {
         let now = std::time::Instant::now();

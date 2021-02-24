@@ -184,7 +184,7 @@ table {
   
   /* Tooltip text */
   .hastooltip .tooltip {
-    /* visibility: hidden; */
+    visibility: hidden;
     width: 120px;
     background-color: white;
     color: black;
@@ -198,12 +198,12 @@ table {
     position: absolute;
     z-index: 1;
     top: 1.1em;
-    left: 100vw;
-    transition: left 2s;
+    /* left: 100vw; */
+    /* transition: left 2s; */
   }
   
   /* Show the tooltip text when you mouse over the tooltip container */
   .hastooltip:hover .tooltip {
-    /* visibility: visible; */
+    visibility: visible;
     left: 3em;
   }

@@ -7,9 +7,12 @@
         <th>[% who.next().next().next().name() %]</th></tr>
     [% for row in (0..self.game.bids.len()).collect::<Vec<_>>().chunks(4) {
         %]<tr>[% for &i in row.iter() {
-            let d = self.game.bid_description(&self.game.bids[0..i+1]);
-            %]<td>[% if d.len() >1 { %]<span class="hastooltip">[% } %][% self.game.bids[i] %][% if d.len() >1 { %]<span class="tooltip">[% self.game.bids[i] %]: [% d %]</span></span>[% } %]</td>[%
-            } %]</tr>[%
+            if let Some(c) = self.game.bid_convention(&self.game.bids[0..i+1]) {
+              %]<td><span class="hastooltip">[% self.game.bids[i] %]<span class="tooltip">[% c %]</span></span></td>[%
+            } else {
+              %]<td>[% self.game.bids[i] %]</td>[%
+            }
+        } %]</tr>[%
     } %]
 </table>
 [% if Some(self.seat) == self.game.turn() { %]<audio autoplay><source src="your-play.mp3" type="audio/mpeg"></audio>[% } %]
@@ -101,15 +104,15 @@
             } else {
                 Action::Bid(b)
                 %]class="[%
-                if self.game.bid_description2(b, &self.game.bids).len() > 1 {
+                if self.game.bid_understood2(b, &self.game.bids) {
                   %]hastooltip[%
                 }
                 if b == Bid::Pass {
                     %] pass[%
                 } %]"[%
             } %]>[% b %][%
-              if self.game.bid_description2(b, &self.game.bids).len() > 1 {
-                %]<span class="tooltip">[% b %]: [% self.game.bid_description2(b, &self.game.bids) %]</span>[%
+              if let Some(c) = self.game.bid_convention2(b, &self.game.bids) {
+                %]<span class="tooltip">[% c %]</span>[%
               }
               %]</button>[%
         } %]

@@ -23,7 +23,7 @@ impl PlayAI for RandomPlay {
     }
 }
 
-pub trait BiddingConvention: Send + Sync {
+pub trait BiddingConvention: Send + Sync + DisplayAs<HTML> {
     /// Does this convention apply to the last bid in this sequence?
     fn applies(&self, bids: &[Bid]) -> bool;
     /// A short description of the meaning of this bid.
@@ -41,12 +41,16 @@ pub trait BiddingConvention: Send + Sync {
     }
 }
 
+use display_as::{with_template, format_as, DisplayAs, HTML, UTF8};
 #[derive(Clone)]
 pub struct SimpleConvention {
     pub bids: &'static [&'static [Bid]],
-    pub the_description: &'static str,
+    pub the_description: String,
     pub the_name: &'static str,
 }
+
+#[with_template(self.the_description as UTF8)]
+impl DisplayAs<HTML> for SimpleConvention {}
 
 impl BiddingConvention for SimpleConvention {
     fn applies(&self, bids: &[Bid]) -> bool {
@@ -69,8 +73,11 @@ impl BiddingConvention for SimpleConvention {
 #[derive(Default)]
 pub struct OrderedConventions {
     the_name: &'static str,
-    conventions: Vec<std::sync::Arc<dyn BiddingConvention>>,
+    conventions: Vec<SimpleConvention>,
 }
+
+#[with_template(self.the_name as UTF8)]
+impl DisplayAs<HTML> for OrderedConventions {}
 
 impl OrderedConventions {
     /// A new convention
@@ -81,8 +88,8 @@ impl OrderedConventions {
         }
     }
     /// Add another possibility to the OrderedConvention
-    pub fn add<T: BiddingConvention + 'static>(&mut self, convention: T) {
-        self.conventions.push(std::sync::Arc::new(convention));
+    pub fn add(&mut self, convention: SimpleConvention) {
+        self.conventions.push(convention);
     }
 }
 
@@ -113,6 +120,18 @@ impl BiddingConvention for OrderedConventions {
 }
 
 impl OrderedConventions {
+    pub fn convention(&self, bids: &[Bid]) -> Option<&SimpleConvention> {
+        self.conventions
+            .iter()
+            .filter(|c| c.applies(bids))
+            .next()
+    }
+    pub fn convention2(&self, bid: Bid, otherbids: &[Bid]) -> Option<&SimpleConvention> {
+        let mut bids = otherbids.iter().cloned().collect::<Vec<_>>();
+        bids.push(bid);
+        self.convention(&bids)
+    }
+
     pub fn sheets() -> Self {
         let mut sheets = OrderedConventions::new("Sheets");
         use bridge_deck::Suit::*;
@@ -125,7 +144,7 @@ impl OrderedConventions {
                 &[Pass, Pass, Suit(1, Hearts)],
                 &[Pass, Pass, Pass, Suit(1, Hearts)],
             ],
-            the_description: "13+ lhcp, ♥≥5, ♥≥♠",
+            the_description: format_as!(HTML, "13+ lhcp, " Hearts "≥5, " Hearts "≥" Spades),
         });
         sheets.add(SimpleConvention {
             bids: &[
@@ -134,7 +153,7 @@ impl OrderedConventions {
                 &[Pass, Pass, Suit(1, Spades)],
                 &[Pass, Pass, Pass, Suit(1, Spades)],
             ],
-            the_description: "13+ lhcp, ♠≥5, ♠>♥",
+            the_description: format_as!(HTML, "13+ lhcp, " Spades "≥5, " Spades ">" Hearts),
             the_name: "Opening bid",
         });
         sheets.add(SimpleConvention {
@@ -144,7 +163,7 @@ impl OrderedConventions {
                 &[Pass, Pass, Suit(1, Clubs)],
                 &[Pass, Pass, Pass, Suit(1, Clubs)],
             ],
-            the_description: "13+ lhcp, ♣≥3, ♣≥♦ ♥<5, ♠≥5",
+            the_description: format_as!(HTML, "13+ lhcp, ♣≥3, ♣≥" Diamonds " " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
         sheets.add(SimpleConvention {
@@ -154,7 +173,7 @@ impl OrderedConventions {
                 &[Pass, Pass, Suit(1, Diamonds)],
                 &[Pass, Pass, Pass, Suit(1, Diamonds)],
             ],
-            the_description: "13+ lhcp, ♦≥3, ♦>♣, ♥<5, ♠≥5",
+            the_description: format_as!(HTML, "13+ lhcp, " Diamonds "≥3, " Diamonds ">♣, " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
 
@@ -164,7 +183,7 @@ impl OrderedConventions {
                 &[Pass, Suit(2, Hearts)],
                 &[Pass, Pass, Suit(2, Hearts)],
             ],
-            the_description: "5-10 hcp, 6♥",
+            the_description: format_as!(HTML, "5-10 hcp, 6" Hearts),
             the_name: "Weak two",
         });
         sheets.add(SimpleConvention {
@@ -173,7 +192,7 @@ impl OrderedConventions {
                 &[Pass, Suit(2, Spades)],
                 &[Pass, Pass, Suit(2, Spades)],
             ],
-            the_description: "5-10 hcp, 6♠",
+            the_description: format_as!(HTML, "5-10 hcp, 6♠"),
             the_name: "Weak two",
         });
         sheets.add(SimpleConvention {
@@ -182,7 +201,7 @@ impl OrderedConventions {
                 &[Pass, Suit(2, Diamonds)],
                 &[Pass, Pass, Suit(2, Diamonds)],
             ],
-            the_description: "5-10 hcp, 6♦",
+            the_description: format_as!(HTML, "5-10 hcp, 6" Diamonds),
             the_name: "Weak two",
         });
 
@@ -193,7 +212,7 @@ impl OrderedConventions {
                 &[Pass, Pass, Pass],
                 &[Pass, Pass, Pass, Pass],
             ],
-            the_description: "Less than 13 lhcp",
+            the_description: "Less than 13 lhcp".to_string(),
             the_name: "Opening pass",
         });
         sheets
