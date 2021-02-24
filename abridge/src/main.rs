@@ -270,7 +270,7 @@ impl GameState {
             ns_tricks: 0,
             ew_tricks: 0,
             last_action: std::time::Instant::now(),
-            conventions: vec![ai::sheets()],
+            conventions: vec![ai::OrderedConventions::sheets()],
         }
     }
     fn bid_description(&self, bids: &[Bid]) -> String {

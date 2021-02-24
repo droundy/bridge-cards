@@ -113,7 +113,7 @@ impl BiddingConvention for OrderedConventions {
 }
 
 impl OrderedConventions {
-    fn sheets() -> Self {
+    pub fn sheets() -> Self {
         let mut sheets = OrderedConventions::new("Sheets");
         use bridge_deck::Suit::*;
         use Bid::*;
