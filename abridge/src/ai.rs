@@ -111,3 +111,91 @@ impl BiddingConvention for OrderedConventions {
         }
     }
 }
+
+impl OrderedConventions {
+    fn sheets() -> Self {
+        let mut sheets = OrderedConventions::new("Sheets");
+        use bridge_deck::Suit::*;
+        use Bid::*;
+        sheets.add(SimpleConvention {
+            the_name: "Opening bid",
+            bids: &[
+                &[Suit(1, Hearts)],
+                &[Pass, Suit(1, Hearts)],
+                &[Pass, Pass, Suit(1, Hearts)],
+                &[Pass, Pass, Pass, Suit(1, Hearts)],
+            ],
+            the_description: "13+ lhcp, ♥≥5, ♥≥♠",
+        });
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(1, Spades)],
+                &[Pass, Suit(1, Spades)],
+                &[Pass, Pass, Suit(1, Spades)],
+                &[Pass, Pass, Pass, Suit(1, Spades)],
+            ],
+            the_description: "13+ lhcp, ♠≥5, ♠>♥",
+            the_name: "Opening bid",
+        });
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(1, Clubs)],
+                &[Pass, Suit(1, Clubs)],
+                &[Pass, Pass, Suit(1, Clubs)],
+                &[Pass, Pass, Pass, Suit(1, Clubs)],
+            ],
+            the_description: "13+ lhcp, ♣≥3, ♣≥♦ ♥<5, ♠≥5",
+            the_name: "Opening bid",
+        });
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(1, Diamonds)],
+                &[Pass, Suit(1, Diamonds)],
+                &[Pass, Pass, Suit(1, Diamonds)],
+                &[Pass, Pass, Pass, Suit(1, Diamonds)],
+            ],
+            the_description: "13+ lhcp, ♦≥3, ♦>♣, ♥<5, ♠≥5",
+            the_name: "Opening bid",
+        });
+
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(2, Hearts)],
+                &[Pass, Suit(2, Hearts)],
+                &[Pass, Pass, Suit(2, Hearts)],
+            ],
+            the_description: "5-10 hcp, 6♥",
+            the_name: "Weak two",
+        });
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(2, Spades)],
+                &[Pass, Suit(2, Spades)],
+                &[Pass, Pass, Suit(2, Spades)],
+            ],
+            the_description: "5-10 hcp, 6♠",
+            the_name: "Weak two",
+        });
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Suit(2, Diamonds)],
+                &[Pass, Suit(2, Diamonds)],
+                &[Pass, Pass, Suit(2, Diamonds)],
+            ],
+            the_description: "5-10 hcp, 6♦",
+            the_name: "Weak two",
+        });
+
+        sheets.add(SimpleConvention {
+            bids: &[
+                &[Pass],
+                &[Pass, Pass],
+                &[Pass, Pass, Pass],
+                &[Pass, Pass, Pass, Pass],
+            ],
+            the_description: "Less than 13 lhcp",
+            the_name: "Opening pass",
+        });
+        sheets
+    }
+}

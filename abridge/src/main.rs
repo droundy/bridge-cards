@@ -251,53 +251,6 @@ impl GameState {
         let south = deck.pick(13).unwrap();
         let east = deck.pick(13).unwrap();
         let west = deck;
-        let mut conventions = Vec::new();
-        let mut sheets = ai::OrderedConventions::new("Sheets");
-        use bridge_deck::Suit::*;
-        use Bid::*;
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(1, Hearts)]],
-            the_description: "13+ lhcp, ♥≥5, ♥≥♠",
-            the_name: "Opening bid",
-        });
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(1, Spades)]],
-            the_description: "13+ lhcp, ♠≥5, ♠>♥",
-            the_name: "Opening bid",
-        });
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(1, Clubs)]],
-            the_description: "13+ lhcp, ♣≥3, ♣≥♦ ♥<5, ♠≥5",
-            the_name: "Opening bid",
-        });
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(1, Diamonds)]],
-            the_description: "13+ lhcp, ♦≥3, ♦>♣, ♥<5, ♠≥5",
-            the_name: "Opening bid",
-        });
-
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(2, Hearts)]],
-            the_description: "5-10 hcp, 6♥",
-            the_name: "Weak two",
-        });
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(2, Spades)]],
-            the_description: "5-10 hcp, 6♠",
-            the_name: "Weak two",
-        });
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Suit(2, Diamonds)], &[Pass, Suit(2, Diamonds)]],
-            the_description: "5-10 hcp, 6♦",
-            the_name: "Weak two",
-        });
-
-        sheets.add(ai::SimpleConvention {
-            bids: &[&[Pass], &[Pass, Pass], &[Pass, Pass, Pass]],
-            the_description: "Less than 13 lhcp",
-            the_name: "Opening pass",
-        });
-        conventions.push(sheets);
         GameState {
             names: [
                 memorable_wordlist::camel_case(18),
@@ -317,7 +270,7 @@ impl GameState {
             ns_tricks: 0,
             ew_tricks: 0,
             last_action: std::time::Instant::now(),
-            conventions,
+            conventions: vec![ai::sheets()],
         }
     }
     fn bid_description(&self, bids: &[Bid]) -> String {
