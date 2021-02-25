@@ -169,7 +169,29 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Response",
             regex: RegexSet::new(&[r"(P )*1. P 1♦"]).unwrap(),
-            the_description: format_as!(HTML, "6+ hcp, " Diamonds "≥4, " Hearts "<4, " Spades "<4"),
+            the_description: format_as!(HTML, "6+ hcp, " Diamonds "≥4, "
+                                        Diamonds ">" Hearts ", " Hearts "<4, " Spades "<4"),
+        });
+
+        sheets.add(Convention::Simple {
+            the_name: "Weak response",
+            regex: RegexSet::new(&[r"(P )*1♣ P 1NT"]).unwrap(),
+            the_description: format_as!(HTML, "?? this is weird?"),
+        });
+        sheets.add(Convention::Simple {
+            the_name: "Weak response",
+            regex: RegexSet::new(&[r"(P )*1♦ P 1NT"]).unwrap(),
+            the_description: format_as!(HTML, "6-8 hcp, " Diamonds "<5, " Hearts "<4, " Spades "<4"),
+        });
+        sheets.add(Convention::Simple {
+            the_name: "Weak response",
+            regex: RegexSet::new(&[r"(P )*1♥ P 1NT"]).unwrap(),
+            the_description: format_as!(HTML, "6-8 hcp, " Hearts "<3, " Spades "<4"),
+        });
+        sheets.add(Convention::Simple {
+            the_name: "Weak response",
+            regex: RegexSet::new(&[r"(P )*1♠ P 1NT"]).unwrap(),
+            the_description: format_as!(HTML, "6-8 hcp, " Spades "<3"),
         });
 
         sheets.add(Convention::Simple {
