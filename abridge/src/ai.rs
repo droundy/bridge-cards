@@ -48,7 +48,7 @@ fn bids_string(bids: &[Bid]) -> String {
             Bid::Redouble => s.push_str("XX "),
             Bid::Pass => s.push_str("P "),
             Bid::Suit(n, suit) => {
-                write!(&mut s, "{}{} ", n, suit.unicode()).unwrap();
+                write!(&mut s, "{}{} ", n, suit.latin()).unwrap();
             }
             Bid::NT(n) => {
                 write!(&mut s, "{}N ", n).unwrap();
@@ -137,84 +137,106 @@ impl Convention {
         use bridge_deck::Suit::*;
         sheets.add(Convention::Simple {
             the_name: "Opening bid",
-            regex: RegexSet::new(&[r"(P )*1♥"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1H$"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Hearts "≥5, " Hearts "≥" Spades),
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )*1♠"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1S$"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Spades "≥5, " Spades ">" Hearts),
             the_name: "Opening bid",
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )*1♣"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1C$"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, ♣≥3, ♣≥" Diamonds " " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )*1♦"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1D$"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Diamonds "≥3, " Diamonds ">♣, " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
 
         sheets.add(Convention::Simple {
             the_name: "Response",
-            regex: RegexSet::new(&[r"(P )*1. P 1♠"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1. P 1S$"]).unwrap(),
             the_description: format_as!(HTML, "6+ hcp, " Spades "≥4, " Spades ">" Hearts),
         });
         sheets.add(Convention::Simple {
             the_name: "Response",
-            regex: RegexSet::new(&[r"(P )*1. P 1♥"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1. P 1H$"]).unwrap(),
             the_description: format_as!(HTML, "6+ hcp, " Hearts "≥4, " Hearts "≥" Spades),
         });
         sheets.add(Convention::Simple {
             the_name: "Response",
-            regex: RegexSet::new(&[r"(P )*1. P 1♦"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1. P 1D$"]).unwrap(),
             the_description: format_as!(HTML, "6+ hcp, " Diamonds "≥4, "
                                         Diamonds ">" Hearts ", " Hearts "<4, " Spades "<4"),
         });
 
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"(P )*1♣ P 1NT"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1C P 1NT$"]).unwrap(),
             the_description: format_as!(HTML, "?? this is weird?"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"(P )*1♦ P 1NT"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1D P 1NT$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp, " Diamonds "<5, " Hearts "<4, " Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"(P )*1♥ P 1NT"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1H P 1NT$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp, " Hearts "<3, " Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"(P )*1♠ P 1NT"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1S P 1NT$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp, " Spades "<3"),
         });
 
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )?(P )?2H$"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6" Hearts),
             the_name: "Weak two",
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )?(P )?2S$"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6♠"),
             the_name: "Weak two",
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )?(P )?2D$"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6" Diamonds),
             the_name: "Weak two",
         });
 
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"(P )*P"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*P$"]).unwrap(),
             the_description: "Less than 13 lhcp".to_string(),
             the_name: "Opening pass",
         });
         sheets
     }
+}
+
+#[test]
+fn test_sheets() {
+    use crate::Suit::*;
+    use Bid::*;
+    let sheets = Convention::sheets();
+    assert_eq!(None, sheets.refine(&[]).map(|c| c.name()));
+    assert_eq!(
+        Some("Opening pass".to_string()),
+        sheets.refine(&[Pass]).map(|c| c.name())
+    );
+    assert_eq!(
+        Some("Opening bid".to_string()),
+        sheets.refine(&[Suit(1, Clubs)]).map(|c| c.name())
+    );
+    assert_eq!(
+        None,
+        sheets
+            .refine(&[Suit(1, Clubs), Suit(1, Clubs)])
+            .map(|c| c.name())
+    );
 }

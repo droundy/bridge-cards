@@ -283,6 +283,15 @@ impl Suit {
             Suit::Spades => '♠',
         }
     }
+    /// The latin character for this suit
+    pub fn latin(self) -> char {
+        match self {
+            Suit::Clubs => 'C',
+            Suit::Diamonds => 'D',
+            Suit::Hearts => 'H',
+            Suit::Spades => 'S',
+        }
+    }
     fn iter() -> impl Iterator<Item = Suit> {
         [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
             .iter()
