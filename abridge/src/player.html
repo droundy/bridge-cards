@@ -100,7 +100,7 @@
             %] disabled[%
               if b == Bid::Pass {
                   %] class="pass"[%
-              } %][%
+              } %]>[% b %]</button>[%
             } else {
                 Action::Bid(b)
                 %]class="[%
@@ -110,11 +110,12 @@
                 if b == Bid::Pass {
                     %] pass[%
                 } %]"[%
-            } %]>[% b %][%
+              %]>[% b %][%
               if let Some(c) = self.game.bid_convention2(b, &self.game.bids) {
                 %]<span class="tooltip">[% c %]</span>[%
               }
               %]</button>[%
+            }
         } %]
     </div>[%
 } else if self.game.bidder().is_none() {
