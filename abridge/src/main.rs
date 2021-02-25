@@ -1,4 +1,4 @@
-use ai::{BiddingConvention, OrderedConventions};
+use ai::{Convention};
 use bridge_deck::{Card, Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
@@ -241,7 +241,7 @@ pub struct GameState {
 
     last_action: std::time::Instant,
 
-    conventions: Vec<OrderedConventions>,
+    conventions: Vec<Convention>,
 }
 
 impl GameState {
@@ -270,22 +270,17 @@ impl GameState {
             ns_tricks: 0,
             ew_tricks: 0,
             last_action: std::time::Instant::now(),
-            conventions: vec![ai::OrderedConventions::sheets()],
+            conventions: vec![ai::Convention::sheets()],
         }
     }
     fn bid_convention(&self, bids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        self.conventions[0].convention(bids).map(|c| c.clone())
+        self.conventions[0].refine(bids).map(|c| c.clone())
     }
     fn bid_convention2(&self, bid: Bid, oldbids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        self.conventions[0].convention2(bid, oldbids).map(|c| c.clone())
-    }
-    fn bid_understood(&self, bids: &[Bid]) -> bool {
-        self.conventions[0].applies(bids)
+        self.conventions[0].refine2(bid, oldbids).map(|c| c.clone())
     }
     fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
-        let mut bids = otherbids.iter().cloned().collect::<Vec<_>>();
-        bids.push(bid);
-        self.conventions[0].applies(&bids)
+        self.conventions[0].refine2(bid, otherbids).is_some()
     }
     fn check_timeout(&mut self) {
         let now = std::time::Instant::now();
