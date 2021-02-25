@@ -1,5 +1,6 @@
 use crate::{Bid, GameState};
 use bridge_deck::{Card, Cards};
+use regex::RegexSet;
 pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid]) -> Bid;
 }
@@ -28,7 +29,7 @@ use display_as::{format_as, with_template, DisplayAs, HTML, UTF8};
 #[derive(Clone)]
 pub enum Convention {
     Simple {
-        bids: &'static [&'static [Bid]],
+        regex: RegexSet,
         the_description: String,
         the_name: &'static str,
     },
@@ -38,11 +39,35 @@ pub enum Convention {
     },
 }
 
+fn bids_string(bids: &[Bid]) -> String {
+    let mut s = String::with_capacity(3 * bids.len());
+    use std::fmt::Write;
+    for b in bids.iter() {
+        match b {
+            Bid::Double => s.push_str("X "),
+            Bid::Redouble => s.push_str("XX "),
+            Bid::Pass => s.push_str("P "),
+            Bid::Suit(n, suit) => {
+                write!(&mut s, "{}{} ", n, suit.unicode()).unwrap();
+            }
+            Bid::NT(n) => {
+                write!(&mut s, "{}N ", n).unwrap();
+            }
+        }
+    }
+    s.pop();
+    s
+}
+
 impl Convention {
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<&Convention> {
         match self {
-            Convention::Simple { bids, .. } => {
-                if bids.contains(&actual_bids) { Some(self) } else { None }
+            Convention::Simple { regex, .. } => {
+                if regex.is_match(&bids_string(actual_bids)) {
+                    Some(self)
+                } else {
+                    None
+                }
             }
             Convention::Ordered { conventions, .. } => {
                 conventions.iter().filter(|c| c.applies(actual_bids)).next()
@@ -61,7 +86,9 @@ impl Convention {
     /// A short description of the meaning of this bid.
     fn description(&self) -> String {
         match self {
-            Convention::Simple { the_description, .. } => the_description.clone(),
+            Convention::Simple {
+                the_description, ..
+            } => the_description.clone(),
             Convention::Ordered { the_name, .. } => the_name.to_string(),
         }
     }
@@ -76,7 +103,6 @@ impl Convention {
     fn _is_appropriate(&self, _bids: &[Bid], _hand: Cards) -> bool {
         todo!()
     }
-
 
     /// A new convention
     fn new(name: &'static str) -> Self {
@@ -95,7 +121,7 @@ impl Convention {
                 let s = self.clone();
                 *self = Convention::Ordered {
                     conventions: vec![s, convention],
-                    the_name: "", 
+                    the_name: "",
                 }
             }
         }
@@ -109,83 +135,45 @@ impl Convention {
     pub fn sheets() -> Self {
         let mut sheets = Convention::new("Sheets");
         use bridge_deck::Suit::*;
-        use Bid::*;
         sheets.add(Convention::Simple {
             the_name: "Opening bid",
-            bids: &[
-                &[Suit(1, Hearts)],
-                &[Pass, Suit(1, Hearts)],
-                &[Pass, Pass, Suit(1, Hearts)],
-                &[Pass, Pass, Pass, Suit(1, Hearts)],
-            ],
+            regex: RegexSet::new(&[r"(P )*1♥"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Hearts "≥5, " Hearts "≥" Spades),
         });
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(1, Spades)],
-                &[Pass, Suit(1, Spades)],
-                &[Pass, Pass, Suit(1, Spades)],
-                &[Pass, Pass, Pass, Suit(1, Spades)],
-            ],
+            regex: RegexSet::new(&[r"(P )*1♠"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Spades "≥5, " Spades ">" Hearts),
             the_name: "Opening bid",
         });
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(1, Clubs)],
-                &[Pass, Suit(1, Clubs)],
-                &[Pass, Pass, Suit(1, Clubs)],
-                &[Pass, Pass, Pass, Suit(1, Clubs)],
-            ],
+            regex: RegexSet::new(&[r"(P )*1♣"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, ♣≥3, ♣≥" Diamonds " " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(1, Diamonds)],
-                &[Pass, Suit(1, Diamonds)],
-                &[Pass, Pass, Suit(1, Diamonds)],
-                &[Pass, Pass, Pass, Suit(1, Diamonds)],
-            ],
+            regex: RegexSet::new(&[r"(P )*1♦"]).unwrap(),
             the_description: format_as!(HTML, "13+ lhcp, " Diamonds "≥3, " Diamonds ">♣, " Hearts "<5, ♠≥5"),
             the_name: "Opening bid",
         });
 
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(2, Hearts)],
-                &[Pass, Suit(2, Hearts)],
-                &[Pass, Pass, Suit(2, Hearts)],
-            ],
+            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6" Hearts),
             the_name: "Weak two",
         });
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(2, Spades)],
-                &[Pass, Suit(2, Spades)],
-                &[Pass, Pass, Suit(2, Spades)],
-            ],
+            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6♠"),
             the_name: "Weak two",
         });
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Suit(2, Diamonds)],
-                &[Pass, Suit(2, Diamonds)],
-                &[Pass, Pass, Suit(2, Diamonds)],
-            ],
+            regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6" Diamonds),
             the_name: "Weak two",
         });
 
         sheets.add(Convention::Simple {
-            bids: &[
-                &[Pass],
-                &[Pass, Pass],
-                &[Pass, Pass, Pass],
-                &[Pass, Pass, Pass, Pass],
-            ],
+            regex: RegexSet::new(&[r"(P )*P"]).unwrap(),
             the_description: "Less than 13 lhcp".to_string(),
             the_name: "Opening pass",
         });
