@@ -157,6 +157,22 @@ impl Convention {
         });
 
         sheets.add(Convention::Simple {
+            the_name: "Response",
+            regex: RegexSet::new(&[r"(P )*1. P 1♠"]).unwrap(),
+            the_description: format_as!(HTML, "6+ hcp, " Spades "≥4, " Spades ">" Hearts),
+        });
+        sheets.add(Convention::Simple {
+            the_name: "Response",
+            regex: RegexSet::new(&[r"(P )*1. P 1♥"]).unwrap(),
+            the_description: format_as!(HTML, "6+ hcp, " Hearts "≥4, " Hearts "≥" Spades),
+        });
+        sheets.add(Convention::Simple {
+            the_name: "Response",
+            regex: RegexSet::new(&[r"(P )*1. P 1♦"]).unwrap(),
+            the_description: format_as!(HTML, "6+ hcp, " Diamonds "≥4, " Hearts "<4, " Spades "<4"),
+        });
+
+        sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"(P )?(P )?2♠"]).unwrap(),
             the_description: format_as!(HTML, "5-10 hcp, 6" Hearts),
             the_name: "Weak two",
