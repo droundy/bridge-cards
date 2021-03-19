@@ -54,17 +54,17 @@ body {
 }
 
 .diamonds {
-    /* color: transparent;
-    text-shadow: 0 0 0 blue; */
-    /* color: blue; */
-    color: red;
+    color: transparent;
+    text-shadow: 0 0 0 blue;
+    color: blue;
+    /* color: red; */
 }
 
 .clubs {
-    /* color: transparent;
-    text-shadow: 0 0 0 green; */
-    /* color: green; */
-    color: black;
+    color: transparent;
+    text-shadow: 0 0 0 green;
+    color: green;
+    /* color: black; */
 }
 
 button {
