@@ -211,6 +211,27 @@ impl Convention {
         });
 
         sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )?(P )?eH$"]).unwrap(),
+            the_description: format_as!(HTML, "5-9 hcp<br/>7" Hearts),
+            the_name: "Weak three",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )?(P )?3S$"]).unwrap(),
+            the_description: format_as!(HTML, "5-9 hcp<br/>7" Spades),
+            the_name: "Weak three",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )?(P )?3D$"]).unwrap(),
+            the_description: format_as!(HTML, "5-9 hcp<br/>7" Diamonds),
+            the_name: "Weak three",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )?(P )?3C$"]).unwrap(),
+            the_description: format_as!(HTML, "5-9 hcp<br/>7" Clubs),
+            the_name: "Weak three",
+        });
+
+        sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*P$"]).unwrap(),
             the_description: "lhcp<13".to_string(),
             the_name: "Opening pass",
