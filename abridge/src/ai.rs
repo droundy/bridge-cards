@@ -147,7 +147,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1C$"]).unwrap(),
-            the_description: format_as!(HTML, "lhcp≥13<br/>♣≥3<br/>♣≥" Diamonds "<br/>" Hearts "<5<br/>♠<5"),
+            the_description: format_as!(HTML, "lhcp≥13<br/>" Clubs "≥3<br/>" Clubs "≥" Diamonds "<br/>" Hearts "<5<br/>" Spades "<5"),
             the_name: "Opening bid",
         });
         sheets.add(Convention::Simple {
@@ -211,7 +211,7 @@ impl Convention {
         });
 
         sheets.add(Convention::Simple {
-            regex: RegexSet::new(&[r"^(P )?(P )?eH$"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )?(P )?3H$"]).unwrap(),
             the_description: format_as!(HTML, "5-9 hcp<br/>7" Hearts),
             the_name: "Weak three",
         });

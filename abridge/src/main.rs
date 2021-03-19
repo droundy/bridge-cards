@@ -85,6 +85,7 @@ async fn main() {
             ws.on_upgrade(move |socket| ws_connected(seat, socket, players, game))
         });
 
+    println!("listening on 8087");
     warp::serve(
         style_css
             .or(audio)

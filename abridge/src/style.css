@@ -55,8 +55,8 @@ body {
 
 .diamonds {
     color: transparent;
-    text-shadow: 0 0 0 blue;
-    color: blue;
+    text-shadow: 0 0 0 #dd8800;
+    color: #dd8800;
     /* color: red; */
 }
 
