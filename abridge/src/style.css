@@ -39,7 +39,7 @@ body {
 }
 .hand.dummy {
     background-color: lightgray;
-    box-shadow: 0.1em 0.2em 0.5em black;
+    box-shadow: 0.1em 0.2em 0.25em lightgray;
 }
 .hand.turn {
     box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue,  0.1em 0.2em 0.75em yellow;
@@ -56,15 +56,39 @@ body {
 .diamonds {
     color: transparent;
     text-shadow: 0 0 0 #dd8800;
-    color: #dd8800;
+    /* color: #dd8800; */
     /* color: red; */
 }
 
 .clubs {
     color: transparent;
     text-shadow: 0 0 0 green;
-    color: green;
+    /* color: green; */
     /* color: black; */
+}
+
+.playable {
+    transition: all 0.25s ease-in-out;
+    text-shadow: 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+
+.playable:hover {
+    text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    cursor: pointer;
+}
+
+.diamonds .playable {
+    text-shadow: 0 0 0 #dd8800, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+.diamonds .playable:hover {
+    text-shadow: 0 0 0 #dd8800, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+}
+
+.clubs .playable {
+    text-shadow: 0 0 0 green, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+.clubs .playable:hover {
+    text-shadow: 0 0 0 green, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
 }
 
 button {
@@ -103,16 +127,6 @@ button:disabled {
     float: left;
     border: 0.05em solid black;
     line-height: 0.5rem;
-}
-
-.playable {
-    transition: all 0.25s ease-in-out;
-    text-shadow: 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
-}
-
-.playable:hover {
-    text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
-    cursor: pointer;
 }
 
 .cardinhand {
