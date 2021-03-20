@@ -87,8 +87,10 @@ impl Convention {
     fn description(&self) -> String {
         match self {
             Convention::Simple {
-                the_description, ..
-            } => the_description.clone(),
+                the_name,
+                the_description,
+                ..
+            } => format!("<strong>{}</strong><br/>{}", the_name, the_description),
             Convention::Ordered { the_name, .. } => the_name.to_string(),
         }
     }
@@ -172,6 +174,79 @@ impl Convention {
             the_description: format_as!(HTML, "hcp≥6<br/>" Diamonds "≥4<br/>"
                                         Diamonds ">" Hearts "<br/>" Hearts "<4<br/>" Spades "<4"),
         });
+        for response in [Clubs, Diamonds].iter() {
+            sheets.add(Convention::Simple {
+                the_name: "2/1 response",
+                regex: RegexSet::new(&[&format!("^(P )*1H P 2{:?}", response)]).unwrap(),
+                the_description: format_as!(HTML, "hcp≥13<br/>" response "≥4<br/>" Spades "<4"),
+            });
+        }
+
+        for opening in [Hearts, Spades].iter() {
+            sheets.add(Convention::Simple {
+                the_name: "Single raise",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, opening)]).unwrap(),
+                the_description: format_as!(HTML, "6-10 hcp<br/>" opening "≥3"),
+            });
+            sheets.add(Convention::Simple {
+                the_name: "Limit raise",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 3{:?}", opening, opening)]).unwrap(),
+                the_description: format_as!(HTML, "11-12 hcp<br/>" opening "≥3"),
+            });
+        }
+        for opening in [Clubs, Diamonds].iter() {
+            sheets.add(Convention::Simple {
+                the_name: "Inverted minor weak raise",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 3{:?}", opening, opening)]).unwrap(),
+                the_description: format_as!(HTML, "6-10 hcp<br/>" opening "≥4<br/>" Hearts "<4<br/>" Spades "<4"),
+            });
+            sheets.add(Convention::Simple {
+                the_name: "Inverted minor strong raise",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, opening)]).unwrap(),
+                the_description: format_as!(HTML, "11+ hcp<br/>" opening "≥4<br/>" Hearts "<4<br/>" Spades "<4"),
+            });
+        }
+        for opening in [Hearts, Spades].iter() {
+            for response in [Clubs, Diamonds, Hearts, Spades]
+                .iter()
+                .filter(|s| *s != opening)
+            {
+                let splinterbid = if response > opening { 3 } else { 4 };
+                sheets.add(Convention::Simple {
+                    the_name: "Splinter",
+                    regex: RegexSet::new(&[&format!(
+                        "^(P )*1{:?} P {}{:?}",
+                        opening, splinterbid, response
+                    )])
+                    .unwrap(),
+                    the_description: format_as!(HTML, "10-12 hcp<br/>" response "≤1<br/>"
+                                                opening "≥4"),
+                });
+                if response < opening {
+                    sheets.add(Convention::Simple {
+                        the_name: "2/1 response",
+                        regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, response)])
+                            .unwrap(),
+                        the_description: format_as!(HTML, "hcp≥13<br/>" response "≥4"),
+                    });
+                }
+            }
+        }
+        for opening in [Clubs, Diamonds].iter() {
+            for response in [Diamonds, Hearts, Spades].iter().filter(|s| *s != opening) {
+                let splinterbid = if response > opening { 3 } else { 4 };
+                sheets.add(Convention::Simple {
+                    the_name: "Splinter",
+                    regex: RegexSet::new(&[&format!(
+                        "^(P )*1{:?} P {}{:?}",
+                        opening, splinterbid, response
+                    )])
+                    .unwrap(),
+                    the_description: format_as!(HTML, "10-12 hcp<br/>" response "≤1<br/>"
+                                                opening "≥5<br/>" Hearts "<4<br/>" Spades "<4"),
+                });
+            }
+        }
 
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -181,17 +256,17 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Weak response",
             regex: RegexSet::new(&[r"^(P )*1D P 1N$"]).unwrap(),
-            the_description: format_as!(HTML, "6-8 hcp<br/>" Diamonds "<5<br/>" Hearts "<4<br/>" Spades "<4"),
+            the_description: format_as!(HTML, "6-10 hcp<br/>" Diamonds "<5<br/>" Hearts "<4<br/>" Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
             regex: RegexSet::new(&[r"^(P )*1H P 1N$"]).unwrap(),
-            the_description: format_as!(HTML, "6-8 hcp<br/>" Hearts "<3<br/>" Spades "<4"),
+            the_description: format_as!(HTML, "6-10 hcp<br/>" Hearts "<3<br/>" Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
             regex: RegexSet::new(&[r"^(P )*1S P 1N$"]).unwrap(),
-            the_description: format_as!(HTML, "6-8 hcp<br/>" Spades "<3"),
+            the_description: format_as!(HTML, "6-10 hcp<br/>" Spades "<3"),
         });
 
         sheets.add(Convention::Simple {
