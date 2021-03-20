@@ -175,23 +175,140 @@ impl Convention {
 
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"^(P )*1C P 1NT$"]).unwrap(),
-            the_description: format_as!(HTML, "?? this is weird?"),
+            regex: RegexSet::new(&[r"^(P )*1C P 1N$"]).unwrap(),
+            the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"^(P )*1D P 1NT$"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1D P 1N$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp<br/>" Diamonds "<5<br/>" Hearts "<4<br/>" Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"^(P )*1H P 1NT$"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1H P 1N$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp<br/>" Hearts "<3<br/>" Spades "<4"),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new(&[r"^(P )*1S P 1NT$"]).unwrap(),
+            regex: RegexSet::new(&[r"^(P )*1S P 1N$"]).unwrap(),
             the_description: format_as!(HTML, "6-8 hcp<br/>" Spades "<3"),
+        });
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*1N$"]).unwrap(),
+            the_description: format_as!(HTML, "15-17 hcp<br/>15-18 shcp<br/>15-18 lhcp"),
+            the_name: "Opening 1NT",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2N$"]).unwrap(),
+            the_description: format_as!(HTML, "20-22 hcp<br/>20-23 shcp<br/>20-23 lhcp"),
+            the_name: "Opening 2NT",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*1N P 2N$"]).unwrap(),
+            the_description: format_as!(HTML, "8-10 hcp"),
+            the_name: "Game invite",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*1N P 4N$"]).unwrap(),
+            the_description: format_as!(HTML, "16-17 hcp"),
+            the_name: "Slam invite",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2|2N P 3)C$"]).unwrap(),
+            the_description: format_as!(HTML, "4-card major?"),
+            the_name: "Stayman",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2C P 2|2N P 3C P 3)D$"]).unwrap(),
+            the_description: format_as!(HTML, Hearts "<4<br/>" Spades "<4"),
+            the_name: "Stayman response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2C P 2|2N P 3C P 3)H$"]).unwrap(),
+            the_description: format_as!(HTML, Hearts "≥4<br/>"),
+            the_name: "Stayman response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2C P 2|2N P 3C P 3)S$"]).unwrap(),
+            the_description: format_as!(HTML, Spades "≥4<br/>" Spades ">" Hearts),
+            the_name: "Stayman response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2|2N P 3)D$"]).unwrap(),
+            the_description: format_as!(HTML, "" Hearts "≥5"),
+            the_name: "Jacobi transfer",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*(1N P 2|2N P 3)H$"]).unwrap(),
+            the_description: format_as!(HTML, "" Spades "≥5"),
+            the_name: "Jacobi transfer",
+        });
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C$"]).unwrap(),
+            the_description: format_as!(HTML, "hcp≥23"),
+            the_name: "Strong two",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D$"]).unwrap(),
+            the_description: format_as!(HTML, "0-7 hcp"),
+            the_name: "Weak response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 2S$"]).unwrap(),
+            the_description: format_as!(HTML, Spades "≥5<br/>" Spades ">" Hearts),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 2H$"]).unwrap(),
+            the_description: format_as!(HTML, Hearts "≥5"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 3C$"]).unwrap(),
+            the_description: format_as!(HTML, Clubs "≥5<br/>" Spades "<5<br/>" Hearts "<5"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 3D$"]).unwrap(),
+            the_description: format_as!(HTML, Diamonds "≥5<br/>" Diamonds ">" Clubs "<br/>" Spades "<5<br/>" Hearts "<5"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 2N$"]).unwrap(),
+            the_description: format_as!(HTML, "23-24 hcp"),
+            the_name: "Game invite",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D P 3N$"]).unwrap(),
+            the_description: format_as!(HTML, "25-27 hcp"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D ..? 4N$"]).unwrap(),
+            the_description: format_as!(HTML, "28-30 hcp"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2D ..? 5N$"]).unwrap(),
+            the_description: format_as!(HTML, "31-32 hcp"),
+            the_name: "Strong two rebid",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2H$"]).unwrap(),
+            the_description: format_as!(HTML, "hcp≥8<br/>" Hearts "≥5"),
+            the_name: "Strong response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2S$"]).unwrap(),
+            the_description: format_as!(HTML, "hcp≥8<br/>" Spades "≥5"),
+            the_name: "Strong response",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^(P )*2C P 2N$"]).unwrap(),
+            the_description: format_as!(HTML, "hcp≥8<br/>" Hearts "≲5" Spades "≲5"),
+            the_name: "Strong response",
         });
 
         sheets.add(Convention::Simple {
