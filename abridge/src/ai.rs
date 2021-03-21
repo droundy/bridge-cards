@@ -278,20 +278,36 @@ impl Convention {
             },
         });
 
-        for opening in [Hearts, Spades].iter() {
+        for opening in [Hearts, Spades].iter().cloned() {
+            let mut min_support = min.length;
+            min_support[opening] = 3;
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, opening)]).unwrap(),
-                the_description: format_as!(HTML, "6-10 hcp<br/>" opening "≥3"),
-                max,
-                min,
+                the_description: "".to_string(),
+                max: HandValuation {
+                    hcp: 10,
+                    ..max
+                },
+                min: HandValuation {
+                    hcp: 6,
+                    length: min_support,
+                    ..min
+                },
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} P 3{:?}", opening, opening)]).unwrap(),
                 the_description: format_as!(HTML, "11-12 hcp<br/>" opening "≥3"),
-                max,
-                min,
+                max: HandValuation {
+                    hcp: 12,
+                    ..max
+                },
+                min: HandValuation {
+                    hcp: 11,
+                    length: min_support,
+                    ..min
+                },
             });
         }
         for opening in [Clubs, Diamonds].iter() {
