@@ -297,6 +297,8 @@ impl Suit {
             .iter()
             .map(|&x| x)
     }
+    /// All four suits from lowest to highest
+    pub const ALL: &'static [Self] = &[Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
 }
 
 /// A deck or hand of cards
@@ -442,6 +444,16 @@ impl Cards {
         Cards {
             bits: ((self.bits >> offset) & 0xFFFF) << offset,
         }
+    }
+
+    /// All the cards divided by suits
+    pub fn in_suits(self) -> PerSuit<Cards> {
+        PER_SUITS.map(|suit| {
+            let offset = suit as i32 * 16;
+            Cards {
+                bits: ((self.bits >> offset) & 0xFFFF) << offset,
+            }
+        })
     }
     /// All the cards in specified suit, or all the cards if the suit is void
     pub fn following_suit(self, suit: Suit) -> Cards {
@@ -623,6 +635,25 @@ impl Cards {
             }
         }
         total
+    }
+
+    /// Return the hand valuation
+    pub fn values(self) -> HandValuation {
+        let suits = self.in_suits();
+        let length = suits.map(|s| s.len() as u8);
+        let hcp_in_suit = suits.map(|s| s.high_card_points() as u8);
+        let hcp = hcp_in_suit.sum();
+        let lhcp = self.long_card_points() as u8 + hcp;
+        let hcp_outside_suit = hcp_in_suit.map(|i| hcp - i);
+        HandValuation {
+            hcp,
+            shcp: self.protected_high_card_points() as u8 + self.short_card_points() as u8,
+            nltc2: (self.new_losing_trick_count() * 2.0) as u8,
+            lhcp,
+            length,
+            hcp_in_suit,
+            hcp_outside_suit,
+        }
     }
 }
 
@@ -857,4 +888,127 @@ fn iterate() {
 
     cards = Cards::SPADES;
     assert_eq!(Some(Card::SA), cards.next_back());
+}
+
+/// The counts associated with a given hand
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct HandValuation {
+    /// The high card points
+    pub hcp: u8,
+    /// The high card points + long card points
+    pub lhcp: u8,
+    /// The protected high card points + short card points
+    pub shcp: u8,
+    /// Twice the New Losing Trick Count
+    pub nltc2: u8,
+    /// The suit length
+    pub length: PerSuit<u8>,
+    /// The number of HCP in the suit
+    pub hcp_in_suit: PerSuit<u8>,
+    /// The number of HCP outside the suit
+    pub hcp_outside_suit: PerSuit<u8>,
+}
+
+impl HandValuation {
+    /// The highest possible valuation
+    pub const MAX: HandValuation = HandValuation {
+        hcp: 37,
+        lhcp: 37,
+        shcp: 37,
+        nltc2: 28,
+        length: PerSuit { internal: [13; 4] },
+        hcp_in_suit:  PerSuit { internal: [10; 4] },
+        hcp_outside_suit:  PerSuit { internal: [30; 4] },
+    };
+    /// The lowest possible valuation
+    pub const MIN: HandValuation = HandValuation {
+        hcp: 0,
+        lhcp: 0,
+        shcp: 0,
+        nltc2: 0,
+        length: PerSuit { internal: [0; 4] },
+        hcp_in_suit:  PerSuit { internal: [0; 4] },
+        hcp_outside_suit:  PerSuit { internal: [0; 4] },
+    };
+    /// Am I greater than or equal on any parameter?
+    #[inline]
+    pub fn exceeds(self, upper: HandValuation) -> bool {
+        self.hcp > upper.hcp
+            || self.lhcp > upper.lhcp
+            || self.shcp > upper.lhcp
+            || self.nltc2 > upper.nltc2
+            || self.length.exceeds(upper.length)
+            || self.hcp_in_suit.exceeds(upper.hcp_in_suit)
+            || self.hcp_outside_suit.exceeds(upper.hcp_outside_suit)
+    }
+}
+
+impl HandValuation {}
+
+/// A data type to hold an array of items, one per suit.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PerSuit<T> {
+    internal: [T; 4],
+}
+
+/// The suits arranged in a PerSuit data structure.
+const PER_SUITS: PerSuit<Suit> = PerSuit {
+    internal: [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades],
+};
+
+impl<T> PerSuit<T> {
+    fn map<U, F: Fn(T) -> U>(self, f: F) -> PerSuit<U> {
+        let [c, d, h, s] = self.internal;
+        PerSuit {
+            internal: [f(c), f(d), f(h), f(s)],
+        }
+    }
+}
+
+impl<T> From<[T; 4]> for PerSuit<T> {
+    fn from(internal: [T; 4]) -> Self {
+        PerSuit { internal }
+    }
+}
+impl<T> PerSuit<T> {
+    const fn new(internal: [T; 4]) -> Self {
+        PerSuit { internal }
+    }
+    fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.internal.iter()
+    }
+}
+
+impl<T> std::ops::Index<Suit> for PerSuit<T> {
+    type Output = T;
+
+    fn index(&self, index: Suit) -> &T {
+        &self.internal[index as usize]
+    }
+}
+
+impl<T> std::ops::IndexMut<Suit> for PerSuit<T> {
+    fn index_mut(&mut self, index: Suit) -> &mut T {
+        &mut self.internal[index as usize]
+    }
+}
+
+impl PerSuit<usize> {
+    /// add up elements
+    pub fn sum(self) -> usize {
+        self.internal[0] + self.internal[1] + self.internal[2] + self.internal[3]
+    }
+}
+
+impl PerSuit<u8> {
+    /// add up elements
+    pub fn sum(self) -> u8 {
+        self.internal[0] + self.internal[1] + self.internal[2] + self.internal[3]
+    }
+    fn exceeds(self, upper: Self) -> bool {
+        self.internal[0] > upper.internal[0]
+            || self.internal[1] > upper.internal[1]
+            || self.internal[2] > upper.internal[2]
+            || self.internal[3] > upper.internal[3]
+    }
 }
