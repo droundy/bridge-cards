@@ -941,6 +941,21 @@ impl HandValuation {
             || self.hcp_in_suit.exceeds(upper.hcp_in_suit)
             || self.hcp_outside_suit.exceeds(upper.hcp_outside_suit)
     }
+    /// Modify self to have hcp
+    pub fn with_hcp(mut self, hcp: u8) -> Self {
+        self.hcp = hcp;
+        self
+    }
+    /// Modify self to have shcp
+    pub fn with_shcp(mut self, shcp: u8) -> Self {
+        self.shcp = shcp;
+        self
+    }
+    /// Modify self to have lhcp
+    pub fn with_lhcp(mut self, lhcp: u8) -> Self {
+        self.lhcp = lhcp;
+        self
+    }
 }
 
 impl HandValuation {}
