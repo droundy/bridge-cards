@@ -955,6 +955,20 @@ impl HandValuation {
             hcp_outside_suit: self.hcp_outside_suit.min_with(other.hcp_outside_suit),
         }
     }
+    /// Max of both
+    #[inline]
+    pub fn max(self, other: HandValuation) -> HandValuation {
+        use std::cmp::max;
+        HandValuation {
+            hcp: max(self.hcp, other.hcp),
+            lhcp: max(self.lhcp, other.lhcp),
+            shcp: max(self.shcp, other.shcp),
+            nltc2: max(self.nltc2, other.nltc2),
+            length: self.length.max_with(other.length),
+            hcp_in_suit: self.hcp_in_suit.max_with(other.hcp_in_suit),
+            hcp_outside_suit: self.hcp_outside_suit.max_with(other.hcp_outside_suit),
+        }
+    }
     /// Modify self to have hcp
     pub fn with_hcp(mut self, hcp: u8) -> Self {
         self.hcp = hcp;
@@ -1048,6 +1062,17 @@ impl PerSuit<u8> {
                 min(self.internal[1], other.internal[1]),
                 min(self.internal[2], other.internal[2]),
                 min(self.internal[3], other.internal[3]),
+            ],
+        }
+    }
+    fn max_with(self, other: Self) -> Self {
+        use std::cmp::max;
+        PerSuit {
+            internal: [
+                max(self.internal[0], other.internal[0]),
+                max(self.internal[1], other.internal[1]),
+                max(self.internal[2], other.internal[2]),
+                max(self.internal[3], other.internal[3]),
             ],
         }
     }

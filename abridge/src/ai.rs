@@ -38,6 +38,7 @@ pub enum Convention {
     Natural {
         bid: Bid,
         min: HandValuation,
+        max: HandValuation,
     },
     Ordered {
         conventions: Vec<Convention>,
@@ -91,6 +92,14 @@ impl Convention {
             _ => unreachable!(),
         }
     }
+    fn max_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
+        match self.refine(actual_bids) {
+            None => HandValuation::MIN,
+            Some(Convention::Simple { max, .. }) => max,
+            Some(Convention::Natural { max, .. }) => max, // FIXME
+            _ => unreachable!(),
+        }
+    }
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         match self {
             Convention::Simple { regex, .. } => {
@@ -109,27 +118,33 @@ impl Convention {
             }
             Convention::Ordered { conventions, .. } => {
                 match conventions.iter().filter(|c| c.applies(actual_bids)).next() {
-                    Some(Convention::Natural { bid, min }) => {
+                    Some(Convention::Natural { bid, min, max }) => {
                         let mut partner = HandValuation::MIN;
+                        let mut partner_max = HandValuation::MAX;
+                        let mut max = *max;
                         for i in (2..actual_bids.len()).step_by(4) {
                             let bids = &actual_bids[0..actual_bids.len() - i];
-                            partner = partner.min(self.min_valuation(bids));
+                            partner = partner.max(self.min_valuation(bids));
+                            partner_max = partner_max.min(self.max_valuation(bids));
                         }
                         let mut myself = HandValuation::MIN;
                         for i in (4..actual_bids.len()).step_by(4) {
                             let bids = &actual_bids[0..actual_bids.len() - i];
-                            myself = myself.min(self.min_valuation(bids));
+                            myself = myself.max(self.min_valuation(bids));
                         }
                         let mut min = *min;
                         let bid = *bid;
                         match bid {
                             Bid::NT(_) => {
-                                min.hcp = min.hcp.saturating_sub(partner.hcp);
+                                min.hcp = min.hcp.saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
                             }
                             Bid::Suit(_, suit) => {
                                 min.hcp = min
                                     .hcp
                                     .saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
+                                if partner_max.hcp < HandValuation::MAX.hcp {
+                                    max.hcp = min.hcp + 2;
+                                }
                                 min.length[suit] =
                                     min.length[suit].saturating_sub(partner.length[suit]);
                                 if myself.length[suit] >= min.length[suit] {
@@ -138,7 +153,7 @@ impl Convention {
                             }
                             _ => (),
                         }
-                        Some(Convention::Natural { bid, min })
+                        Some(Convention::Natural { bid, min, max })
                     }
                     o => o.cloned(),
                 }
@@ -432,7 +447,7 @@ impl Convention {
                     min.length[response] = 4;
                     sheets.add(Convention::Simple {
                         the_name: "2/1 response",
-                        regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, response)])
+                        regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}$", opening, response)])
                             .unwrap(),
                         the_description: "".to_string(),
                         max,
@@ -460,7 +475,7 @@ impl Convention {
                 sheets.add(Convention::Simple {
                     the_name: "Splinter",
                     regex: RegexSet::new(&[&format!(
-                        "^(P )*1{:?} P {}{:?}",
+                        "^(P )*1{:?} P {}{:?}$",
                         opening, splinterbid, response
                     )])
                     .unwrap(),
@@ -800,14 +815,61 @@ impl Convention {
         sheets.add(Convention::Natural {
             bid: Bid::NT(3),
             min: min.with_hcp(26),
+            max: HandValuation::MAX,
+        });
+        sheets.add(Convention::Natural {
+            bid: Bid::NT(6),
+            min: min.with_hcp(33),
+            max: HandValuation::MAX,
+        });
+        sheets.add(Convention::Natural {
+            bid: Bid::NT(7),
+            min: min.with_hcp(37),
+            max: HandValuation::MAX,
         });
         for major in [Hearts, Spades].iter().cloned() {
             let mut length = min.length;
             length[major] = 8;
             sheets.add(Convention::Natural {
                 bid: Bid::Suit(4, major),
+                max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 26,
+                    length,
+                    ..min
+                },
+            });
+        }
+        for minor in [Clubs, Diamonds].iter().cloned() {
+            let mut length = min.length;
+            length[minor] = 8;
+            sheets.add(Convention::Natural {
+                bid: Bid::Suit(5, minor),
+                max: HandValuation::MAX,
+                min: HandValuation {
+                    hcp: 28,
+                    length,
+                    ..min
+                },
+            });
+        }
+        for suit in [Clubs, Diamonds, Hearts, Spades].iter().cloned() {
+            let mut length = min.length;
+            length[suit] = 8;
+            sheets.add(Convention::Natural {
+                bid: Bid::Suit(6, suit),
+                max: HandValuation::MAX,
+                min: HandValuation {
+                    hcp: 33,
+                    length,
+                    ..min
+                },
+            });
+            sheets.add(Convention::Natural {
+                bid: Bid::Suit(7, suit),
+                max: HandValuation::MAX,
+                min: HandValuation {
+                    hcp: 37,
                     length,
                     ..min
                 },
