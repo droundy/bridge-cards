@@ -275,10 +275,12 @@ impl GameState {
         }
     }
     fn bid_convention(&self, bids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        self.conventions[0].refine(bids).map(|c| c.clone())
+        self.conventions[0].refine(bids).map(|c| c.description())
     }
     fn bid_convention2(&self, bid: Bid, oldbids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        self.conventions[0].refine2(bid, oldbids).map(|c| c.clone())
+        let mut bids: Vec<_> = oldbids.iter().cloned().collect();
+        bids.push(bid);
+        self.bid_convention(&bids)
     }
     fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
         self.conventions[0].refine2(bid, otherbids).is_some()

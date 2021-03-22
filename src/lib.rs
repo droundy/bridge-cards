@@ -917,8 +917,8 @@ impl HandValuation {
         shcp: 37,
         nltc2: 28,
         length: PerSuit { internal: [13; 4] },
-        hcp_in_suit:  PerSuit { internal: [10; 4] },
-        hcp_outside_suit:  PerSuit { internal: [30; 4] },
+        hcp_in_suit: PerSuit { internal: [10; 4] },
+        hcp_outside_suit: PerSuit { internal: [30; 4] },
     };
     /// The lowest possible valuation
     pub const MIN: HandValuation = HandValuation {
@@ -927,8 +927,8 @@ impl HandValuation {
         shcp: 0,
         nltc2: 0,
         length: PerSuit { internal: [0; 4] },
-        hcp_in_suit:  PerSuit { internal: [0; 4] },
-        hcp_outside_suit:  PerSuit { internal: [0; 4] },
+        hcp_in_suit: PerSuit { internal: [0; 4] },
+        hcp_outside_suit: PerSuit { internal: [0; 4] },
     };
     /// Am I greater than or equal on any parameter?
     #[inline]
@@ -940,6 +940,20 @@ impl HandValuation {
             || self.length.exceeds(upper.length)
             || self.hcp_in_suit.exceeds(upper.hcp_in_suit)
             || self.hcp_outside_suit.exceeds(upper.hcp_outside_suit)
+    }
+    /// Min of both
+    #[inline]
+    pub fn min(self, other: HandValuation) -> HandValuation {
+        use std::cmp::min;
+        HandValuation {
+            hcp: min(self.hcp, other.hcp),
+            lhcp: min(self.lhcp, other.lhcp),
+            shcp: min(self.shcp, other.shcp),
+            nltc2: min(self.nltc2, other.nltc2),
+            length: self.length.min_with(other.length),
+            hcp_in_suit: self.hcp_in_suit.min_with(other.hcp_in_suit),
+            hcp_outside_suit: self.hcp_outside_suit.min_with(other.hcp_outside_suit),
+        }
     }
     /// Modify self to have hcp
     pub fn with_hcp(mut self, hcp: u8) -> Self {
@@ -1025,5 +1039,16 @@ impl PerSuit<u8> {
             || self.internal[1] > upper.internal[1]
             || self.internal[2] > upper.internal[2]
             || self.internal[3] > upper.internal[3]
+    }
+    fn min_with(self, other: Self) -> Self {
+        use std::cmp::min;
+        PerSuit {
+            internal: [
+                min(self.internal[0], other.internal[0]),
+                min(self.internal[1], other.internal[1]),
+                min(self.internal[2], other.internal[2]),
+                min(self.internal[3], other.internal[3]),
+            ],
+        }
     }
 }

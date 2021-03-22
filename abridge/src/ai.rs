@@ -35,6 +35,10 @@ pub enum Convention {
         max: HandValuation,
         min: HandValuation,
     },
+    Natural {
+        bid: Bid,
+        min: HandValuation,
+    },
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
@@ -79,21 +83,69 @@ fn format_range(s: &mut String, min: u8, max: u8, theoretical_max: u8, name: &st
 }
 
 impl Convention {
-    pub fn refine(&self, actual_bids: &[Bid]) -> Option<&Convention> {
+    fn min_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
+        match self.refine(actual_bids) {
+            None => HandValuation::MIN,
+            Some(Convention::Simple { min, .. }) => min,
+            Some(Convention::Natural { min, .. }) => min, // FIXME
+            _ => unreachable!(),
+        }
+    }
+    pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         match self {
             Convention::Simple { regex, .. } => {
                 if regex.is_match(&bids_string(actual_bids)) {
-                    Some(self)
+                    Some(self.clone())
+                } else {
+                    None
+                }
+            }
+            Convention::Natural { bid, .. } => {
+                if actual_bids.last() == Some(bid) {
+                    Some(self.clone())
                 } else {
                     None
                 }
             }
             Convention::Ordered { conventions, .. } => {
-                conventions.iter().filter(|c| c.applies(actual_bids)).next()
+                match conventions.iter().filter(|c| c.applies(actual_bids)).next() {
+                    Some(Convention::Natural { bid, min }) => {
+                        let mut partner = HandValuation::MIN;
+                        for i in (2..actual_bids.len()).step_by(4) {
+                            let bids = &actual_bids[0..actual_bids.len() - i];
+                            partner = partner.min(self.min_valuation(bids));
+                        }
+                        let mut myself = HandValuation::MIN;
+                        for i in (4..actual_bids.len()).step_by(4) {
+                            let bids = &actual_bids[0..actual_bids.len() - i];
+                            myself = myself.min(self.min_valuation(bids));
+                        }
+                        let mut min = *min;
+                        let bid = *bid;
+                        match bid {
+                            Bid::NT(_) => {
+                                min.hcp = min.hcp.saturating_sub(partner.hcp);
+                            }
+                            Bid::Suit(_, suit) => {
+                                min.hcp = min
+                                    .hcp
+                                    .saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
+                                min.length[suit] =
+                                    min.length[suit].saturating_sub(partner.length[suit]);
+                                if myself.length[suit] >= min.length[suit] {
+                                    min.length[suit] = 0;
+                                }
+                            }
+                            _ => (),
+                        }
+                        Some(Convention::Natural { bid, min })
+                    }
+                    o => o.cloned(),
+                }
             }
         }
     }
-    pub fn refine2(&self, bid: Bid, otherbids: &[Bid]) -> Option<&Convention> {
+    pub fn refine2(&self, bid: Bid, otherbids: &[Bid]) -> Option<Convention> {
         let mut bids = otherbids.iter().cloned().collect::<Vec<_>>();
         bids.push(bid);
         self.refine(&bids)
@@ -103,7 +155,7 @@ impl Convention {
         self.refine(actual_bids).is_some()
     }
     /// A short description of the meaning of this bid.
-    fn description(&self) -> String {
+    pub fn description(&self) -> impl DisplayAs<HTML> {
         use bridge_deck::Suit;
         match self {
             Convention::Simple {
@@ -141,15 +193,45 @@ impl Convention {
                     );
                 }
                 s.push_str(&the_description);
-                s
+                RawHtml(s)
             }
-            Convention::Ordered { the_name, .. } => the_name.to_string(),
+            Convention::Natural { bid, min, .. } => {
+                let mut s = format_as!(HTML, "<strong>Natural " bid "</strong><br/>");
+                let max = HandValuation::MAX;
+                format_range(&mut s, min.hcp, min.hcp + 2, max.hcp, "hcp");
+                for suit in Suit::ALL.iter().cloned() {
+                    format_range(
+                        &mut s,
+                        min.length[suit],
+                        max.length[suit],
+                        13,
+                        &format_as!(HTML, suit),
+                    );
+                    format_range(
+                        &mut s,
+                        min.hcp_in_suit[suit],
+                        max.hcp_in_suit[suit],
+                        10,
+                        &format_as!(HTML, "hcp in " suit),
+                    );
+                    format_range(
+                        &mut s,
+                        min.hcp_outside_suit[suit],
+                        max.hcp_outside_suit[suit],
+                        30,
+                        &format_as!(HTML, "hcp outside" suit),
+                    );
+                }
+                RawHtml(s)
+            }
+            Convention::Ordered { the_name, .. } => RawHtml(the_name.to_string()),
         }
     }
     /// Name of the convention
     fn name(&self) -> String {
         match self {
             Convention::Simple { the_name, .. } => the_name.to_string(),
+            Convention::Natural { bid, .. } => format_as!(HTML, "Natural " bid),
             Convention::Ordered { the_name, .. } => the_name.to_string(),
         }
     }
@@ -171,7 +253,7 @@ impl Convention {
             Convention::Ordered { conventions, .. } => {
                 conventions.push(convention);
             }
-            Convention::Simple { .. } => {
+            Convention::Simple { .. } | Convention::Natural { .. } => {
                 let s = self.clone();
                 *self = Convention::Ordered {
                     conventions: vec![s, convention],
@@ -181,9 +263,6 @@ impl Convention {
         }
     }
 }
-
-#[with_template(self.description() as UTF8)]
-impl DisplayAs<HTML> for Convention {}
 
 impl Convention {
     pub fn sheets() -> Self {
@@ -717,6 +796,23 @@ impl Convention {
             the_description: "".to_string(),
             the_name: "Response pass",
         });
+
+        sheets.add(Convention::Natural {
+            bid: Bid::NT(3),
+            min: min.with_hcp(26),
+        });
+        for major in [Hearts, Spades].iter().cloned() {
+            let mut length = min.length;
+            length[major] = 8;
+            sheets.add(Convention::Natural {
+                bid: Bid::Suit(4, major),
+                min: HandValuation {
+                    hcp: 26,
+                    length,
+                    ..min
+                },
+            });
+        }
         sheets
     }
 }
@@ -742,3 +838,7 @@ fn test_sheets() {
             .map(|c| c.name())
     );
 }
+
+struct RawHtml(String);
+#[with_template(self.0 as UTF8)]
+impl DisplayAs<HTML> for RawHtml {}
