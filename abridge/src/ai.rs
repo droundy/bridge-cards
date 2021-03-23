@@ -1,5 +1,5 @@
 use crate::{Bid, GameState};
-use bridge_deck::{Card, Cards, HandValuation};
+use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
 pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid]) -> Bid;
@@ -136,7 +136,9 @@ impl Convention {
                         let bid = *bid;
                         match bid {
                             Bid::NT(_) => {
-                                min.hcp = min.hcp.saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
+                                min.hcp = min
+                                    .hcp
+                                    .saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
                             }
                             Bid::Suit(_, suit) => {
                                 min.hcp = min
@@ -171,7 +173,6 @@ impl Convention {
     }
     /// A short description of the meaning of this bid.
     pub fn description(&self) -> impl DisplayAs<HTML> {
-        use bridge_deck::Suit;
         match self {
             Convention::Simple {
                 the_name,
@@ -243,7 +244,7 @@ impl Convention {
         }
     }
     /// Name of the convention
-    fn name(&self) -> String {
+    pub fn name(&self) -> String {
         match self {
             Convention::Simple { the_name, .. } => the_name.to_string(),
             Convention::Natural { bid, .. } => format_as!(HTML, "Natural " bid),
@@ -284,7 +285,104 @@ impl Convention {
         let mut sheets = Convention::new("Sheets");
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
+        let max_no_5_major = HandValuation {
+            length: [13, 13, 4, 4].into(),
+            ..max
+        };
         let min = HandValuation::MIN;
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P P 1H$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 12,
+                length: [0, 0, 5, 4].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, "15+ hcp + " Spades),
+            the_name: "Rule of 15 opening",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P P 1S$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 11,
+                length: [0, 0, 0, 5].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, "15+ hcp + " Spades),
+            the_name: "Rule of 15 opening",
+        });
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P P 1C$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 12,
+                length: [3, 0, 0, 3].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, "15+ hcp + " Spades),
+            the_name: "Rule of 15 opening",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P P 1D$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 12,
+                length: [0, 3, 0, 3].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, "15+ hcp + " Spades),
+            the_name: "Rule of 15 opening",
+        });
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P HS$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 12,
+                length: [0, 0, 5, 0].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, Hearts "≥" Spades),
+            the_name: "Rule of 20 opening",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P 1S$"]).unwrap(),
+            max,
+            min: HandValuation {
+                lhcp: 12,
+                length: [0, 0, 0, 5].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, Spades ">" Hearts),
+            the_name: "Rule of 20 opening",
+        });
+
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P 1C$"]).unwrap(),
+            max: max_no_5_major,
+            min: HandValuation {
+                lhcp: 12,
+                length: [3, 0, 0, 0].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, Clubs "≥" Diamonds),
+            the_name: "Rule of 20 opening",
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[r"^P P 1D$"]).unwrap(),
+            max: max_no_5_major,
+            min: HandValuation {
+                lhcp: 12,
+                length: [0, 3, 0, 0].into(),
+                ..min
+            },
+            the_description: format_as!(HTML, Diamonds ">" Clubs),
+            the_name: "Rule of 20 opening",
+        });
+
         sheets.add(Convention::Simple {
             the_name: "Opening bid",
             regex: RegexSet::new(&[r"^(P )*1H$"]).unwrap(),
@@ -311,10 +409,7 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*1C$"]).unwrap(),
             the_description: format_as!(HTML, Clubs "≥" Diamonds),
             the_name: "Opening bid",
-            max: HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            },
+            max: max_no_5_major,
             min: HandValuation {
                 lhcp: 13,
                 length: [3, 0, 0, 0].into(),
@@ -325,10 +420,7 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*1D$"]).unwrap(),
             the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Opening bid",
-            max: HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            },
+            max: max_no_5_major,
             min: HandValuation {
                 lhcp: 13,
                 length: [0, 3, 0, 0].into(),
@@ -397,7 +489,7 @@ impl Convention {
         }
         for opening in [Clubs, Diamonds].iter().cloned() {
             let mut min_support = min;
-            min_support.length[opening] = 4;
+            min_support.length[opening] = 5;
             let max = HandValuation {
                 length: [13, 13, 4, 4].into(),
                 ..max
@@ -409,6 +501,7 @@ impl Convention {
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
             });
+            min_support.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor strong raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}", opening, opening)]).unwrap(),
@@ -447,14 +540,27 @@ impl Convention {
                     min.length[response] = 4;
                     sheets.add(Convention::Simple {
                         the_name: "2/1 response",
-                        regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}$", opening, response)])
-                            .unwrap(),
+                        regex: RegexSet::new(&[&format!(
+                            "^(P )*1{:?} P 2{:?}$",
+                            opening, response
+                        )])
+                        .unwrap(),
                         the_description: "".to_string(),
                         max,
                         min,
                     });
                 }
             }
+
+            let mut min_jacobi = min;
+            min_jacobi.length[opening] = 4;
+            sheets.add(Convention::Simple {
+                the_name: "Jacobi 2NT",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2N", opening)]).unwrap(),
+                the_description: "".to_string(),
+                max,
+                min: min_jacobi.with_shcp(13),
+            });
         }
         for opening in [Clubs, Diamonds].iter().cloned() {
             let mut min_splinter = min;
@@ -588,7 +694,10 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N P 2C P 2|2N P 3C P 3)S$"]).unwrap(),
-            max,
+            max: HandValuation {
+                length: [0, 0, 3, 0].into(),
+                ..max
+            },
             min: HandValuation {
                 length: [0, 0, 0, 4].into(),
                 ..min
@@ -812,6 +921,101 @@ impl Convention {
             the_name: "Response pass",
         });
 
+        // Overcall bids and responses!
+        for opening in Suit::ALL.iter().cloned() {
+            for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
+                let mut min_overcall = min.with_hcp(9);
+                min_overcall.length[overcall] = 5;
+                let bid = if overcall > opening { 1 } else { 2 };
+                sheets.add(Convention::Simple {
+                    the_name: "Direct overcall",
+                    regex: RegexSet::new(&[&format!(
+                        "^(P )*1{:?} {}{:?}$",
+                        opening, bid, overcall
+                    )])
+                    .unwrap(),
+                    max: max.with_hcp(17),
+                    min: min_overcall,
+                    the_description: "".to_string(),
+                });
+
+                sheets.add(Convention::Simple {
+                    the_name: "Overcall",
+                    regex: RegexSet::new(&[&format!(
+                        "^(P )*1{:?} P P {}{:?}$",
+                        opening, bid, overcall
+                    )])
+                    .unwrap(),
+                    max: max.with_hcp(17),
+                    min: min_overcall,
+                    the_description: "".to_string(),
+                });
+            }
+
+            for response in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
+                let responsebid = if response > opening { 1 } else { 2 };
+                for overcall in Suit::ALL
+                    .iter()
+                    .cloned()
+                    .filter(|s| *s != opening && *s != response)
+                {
+                    let bid = if overcall > response {
+                        responsebid
+                    } else {
+                        responsebid + 1
+                    };
+                    let mut min_overcall = min.with_hcp(9);
+                    min_overcall.length[overcall] = 5;
+                    sheets.add(Convention::Simple {
+                        the_name: "Overcall",
+                        regex: RegexSet::new(&[&format!(
+                            "^(P )*1{:?} P {}{:?} {}{:?}$",
+                            opening, responsebid, response, bid, overcall
+                        )])
+                        .unwrap(),
+                        max: max.with_hcp(17),
+                        min: min_overcall,
+                        the_description: "".to_string(),
+                    });
+                }
+            }
+
+            let (michaels_length, the_description) = match opening {
+                Clubs | Diamonds => ([0, 0, 5, 5], "".to_string()),
+                Hearts => ([0, 0, 0, 5], "5 in a minor".to_string()),
+                Spades => ([0, 0, 5, 0], "5 in a minor".to_string()),
+            };
+            sheets.add(Convention::Simple {
+                the_name: "Michael's cuebid",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}$", opening, opening)])
+                    .unwrap(),
+                max: max.with_hcp(12),
+                min: HandValuation {
+                    length: michaels_length.into(),
+                    hcp: 9,
+                    ..min
+                },
+                the_description,
+            });
+
+            sheets.add(Convention::Simple {
+                the_name: "Unusual 2NT",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2N$", opening)]).unwrap(),
+                max: max.with_hcp(12),
+                min: HandValuation {
+                    length: match opening {
+                        Clubs => [0, 5, 5, 0],
+                        Diamonds => [5, 0, 5, 0],
+                        Hearts | Spades => [5, 5, 0, 0],
+                    }
+                    .into(),
+                    hcp: 9,
+                    ..min
+                },
+                the_description: "9-12 hcp or 17+ hcp".to_string(),
+            });
+        }
+
         sheets.add(Convention::Natural {
             bid: Bid::NT(3),
             min: min.with_hcp(26),
@@ -847,7 +1051,7 @@ impl Convention {
                 bid: Bid::Suit(5, minor),
                 max: HandValuation::MAX,
                 min: HandValuation {
-                    hcp: 28,
+                    hcp: 29,
                     length,
                     ..min
                 },

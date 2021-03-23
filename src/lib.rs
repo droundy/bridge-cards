@@ -1014,10 +1014,12 @@ impl<T> From<[T; 4]> for PerSuit<T> {
     }
 }
 impl<T> PerSuit<T> {
-    const fn new(internal: [T; 4]) -> Self {
+    /// Create a PerSuit from an array
+    pub const fn new(internal: [T; 4]) -> Self {
         PerSuit { internal }
     }
-    fn iter(&self) -> std::slice::Iter<'_, T> {
+    /// Iterate over each suit
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
         self.internal.iter()
     }
 }

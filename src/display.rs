@@ -1,7 +1,9 @@
 
 use crate::{Card, Cards, Suit};
 
-use display_as::{with_template, format_as, DisplayAs, HTML, UTF8};
+use display_as::{with_template, DisplayAs, HTML, UTF8};
+#[cfg(test)]
+use display_as::{format_as};
 
 #[with_template("[%" "%]" "card.html")]
 impl DisplayAs<HTML> for Card {}
