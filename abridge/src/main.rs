@@ -674,7 +674,7 @@ async fn ws_connected(
                             if p.0[s].is_empty() {
                                 g.names[s] = "Robot".into();
                                 p.0[s] = PlayerConnection::Ai {
-                                    bidder: Box::new(ai::AllPass),
+                                    bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
                                     player: Box::new(ai::RandomPlay),
                                 };
                             }
@@ -756,7 +756,7 @@ async fn ws_connected(
                         // It's an AI's move!
                         tokio::time::delay_for(std::time::Duration::from_secs(2)).await;
                         if g.bidder().is_some() {
-                            let bid = bidder.bid(&g.bids);
+                            let bid = bidder.bid(&g.bids, g.hands[turn]);
                             g.bids.push(bid);
                             if g.bids.len() > 3
                                 && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]

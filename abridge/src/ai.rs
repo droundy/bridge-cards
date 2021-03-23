@@ -2,7 +2,7 @@ use crate::{Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
 pub trait BidAI: std::fmt::Debug {
-    fn bid(&mut self, history: &[Bid]) -> Bid;
+    fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid;
 }
 pub trait PlayAI: std::fmt::Debug {
     fn play(&mut self, game: &GameState) -> Card;
@@ -11,7 +11,75 @@ pub trait PlayAI: std::fmt::Debug {
 #[derive(Debug)]
 pub struct AllPass;
 impl BidAI for AllPass {
-    fn bid(&mut self, _history: &[Bid]) -> Bid {
+    fn bid(&mut self, _history: &[Bid], _hand: Cards) -> Bid {
+        println!("Using AllPass AI");
+        Bid::Pass
+    }
+}
+
+#[derive(Debug)]
+pub struct ConventionalBid(pub Convention);
+impl BidAI for ConventionalBid {
+    fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
+        let mut legal_bids = vec![Bid::Pass];
+        let len = history.len();
+        if history.len() > 0 && history[len - 1].is_contract() {
+            legal_bids.push(Bid::Double);
+        } else if history.len() > 2
+            && history[len - 1] == Bid::Pass
+            && history[len - 2] == Bid::Pass
+            && history[len - 3].is_contract()
+        {
+            legal_bids.push(Bid::Double);
+        } else if history.len() > 0 && history[len - 1] == Bid::Double {
+            legal_bids.push(Bid::Redouble);
+        } else if history.len() > 2
+            && history[len - 1] == Bid::Pass
+            && history[len - 2] == Bid::Pass
+            && history[len - 3] == Bid::Double
+        {
+            legal_bids.push(Bid::Redouble);
+        }
+        let last_contract = history
+            .iter()
+            .cloned()
+            .rev()
+            .filter(|b| b.is_contract())
+            .next()
+            .unwrap_or(Bid::NT(0));
+        for level in 1..8 {
+            for suit in Suit::ALL.iter().cloned() {
+                let bid = Bid::Suit(level, suit);
+                if bid > last_contract {
+                    legal_bids.push(bid);
+                }
+            }
+            if Bid::NT(level) > last_contract {
+                legal_bids.push(Bid::NT(level));
+            }
+        }
+        let mut bids = Vec::with_capacity(len + 1);
+        bids.extend_from_slice(history);
+        bids.push(Bid::Pass);
+        for b in legal_bids.into_iter() {
+            bids[len] = b;
+            if let Some(c) = self.0.refine(&bids) {
+                let min = c.min_valuation(&bids);
+                let max = c.max_valuation(&bids);
+                let handvalue = hand.values();
+                if !handvalue.exceeds(max) && !min.exceeds(handvalue) {
+                    println!(
+                        "Bidding {:?} with convention {}",
+                        b,
+                        format_as!(HTML, c.description())
+                    );
+                    println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
+                    println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
+                    return b;
+                }
+                println!("Not bidding {:?}...", b);
+            }
+        }
         Bid::Pass
     }
 }
@@ -26,7 +94,7 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, HTML, UTF8};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
         regex: RegexSet,
@@ -94,7 +162,7 @@ impl Convention {
     }
     fn max_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
         match self.refine(actual_bids) {
-            None => HandValuation::MIN,
+            None => HandValuation::MAX,
             Some(Convention::Simple { max, .. }) => max,
             Some(Convention::Natural { max, .. }) => max, // FIXME
             _ => unreachable!(),
@@ -923,6 +991,41 @@ impl Convention {
 
         // Overcall bids and responses!
         for opening in Suit::ALL.iter().cloned() {
+            let (michaels_length, the_description) = match opening {
+                Clubs | Diamonds => ([0, 0, 5, 5], "".to_string()),
+                Hearts => ([0, 0, 0, 5], "5 in a minor".to_string()),
+                Spades => ([0, 0, 5, 0], "5 in a minor".to_string()),
+            };
+            sheets.add(Convention::Simple {
+                the_name: "Michael's cuebid",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}$", opening, opening)])
+                    .unwrap(),
+                max: max.with_hcp(12),
+                min: HandValuation {
+                    length: michaels_length.into(),
+                    hcp: 9,
+                    ..min
+                },
+                the_description,
+            });
+
+            sheets.add(Convention::Simple {
+                the_name: "Unusual 2NT",
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2N$", opening)]).unwrap(),
+                max: max.with_hcp(12),
+                min: HandValuation {
+                    length: match opening {
+                        Clubs => [0, 5, 5, 0],
+                        Diamonds => [5, 0, 5, 0],
+                        Hearts | Spades => [5, 5, 0, 0],
+                    }
+                    .into(),
+                    hcp: 9,
+                    ..min
+                },
+                the_description: "9-12 hcp or 17+ hcp".to_string(),
+            });
+
             for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
                 let mut min_overcall = min.with_hcp(9);
                 min_overcall.length[overcall] = 5;
@@ -979,41 +1082,6 @@ impl Convention {
                     });
                 }
             }
-
-            let (michaels_length, the_description) = match opening {
-                Clubs | Diamonds => ([0, 0, 5, 5], "".to_string()),
-                Hearts => ([0, 0, 0, 5], "5 in a minor".to_string()),
-                Spades => ([0, 0, 5, 0], "5 in a minor".to_string()),
-            };
-            sheets.add(Convention::Simple {
-                the_name: "Michael's cuebid",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2{:?}$", opening, opening)])
-                    .unwrap(),
-                max: max.with_hcp(12),
-                min: HandValuation {
-                    length: michaels_length.into(),
-                    hcp: 9,
-                    ..min
-                },
-                the_description,
-            });
-
-            sheets.add(Convention::Simple {
-                the_name: "Unusual 2NT",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} P 2N$", opening)]).unwrap(),
-                max: max.with_hcp(12),
-                min: HandValuation {
-                    length: match opening {
-                        Clubs => [0, 5, 5, 0],
-                        Diamonds => [5, 0, 5, 0],
-                        Hearts | Spades => [5, 5, 0, 0],
-                    }
-                    .into(),
-                    hcp: 9,
-                    ..min
-                },
-                the_description: "9-12 hcp or 17+ hcp".to_string(),
-            });
         }
 
         sheets.add(Convention::Natural {
