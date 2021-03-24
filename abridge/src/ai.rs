@@ -282,7 +282,9 @@ impl Convention {
                 s.push_str(&the_description);
                 RawHtml(s)
             }
-            Convention::Natural { the_name, min, max, .. } => {
+            Convention::Natural {
+                the_name, min, max, ..
+            } => {
                 let mut s = format_as!(HTML, "<strong>" the_name "</strong><br/>");
                 format_range(&mut s, min.hcp, max.hcp, 37, "hcp");
                 for suit in Suit::ALL.iter().cloned() {
@@ -360,6 +362,49 @@ impl Convention {
             ..max
         };
         let min = HandValuation::MIN;
+
+        for bid in Suit::ALL.iter().cloned() {
+            let mut all_unbid = min.length;
+            for o in Suit::ALL.iter().cloned().filter(|&o| o != bid) {
+                all_unbid[o] = 4;
+            }
+            sheets.add(Convention::Simple {
+                regex: RegexSet::new(&[&format!(r"^(P )?[123]{:?} X$", bid)]).unwrap(),
+                max,
+                min: HandValuation {
+                    lhcp: 9,
+                    length: all_unbid,
+                    ..min
+                },
+                the_description: "".to_string(),
+                the_name: "Takeout double",
+            });
+            for response in Suit::ALL.iter().cloned() {
+                let mut all_unbid = min.length;
+                for o in Suit::ALL
+                    .iter()
+                    .cloned()
+                    .filter(|&o| o != bid && o != response)
+                {
+                    all_unbid[o] = 4;
+                }
+                sheets.add(Convention::Simple {
+                    regex: RegexSet::new(&[&format!(
+                        r"^(P )?[123]{:?} P [123]{:?} X$",
+                        bid, response
+                    )])
+                    .unwrap(),
+                    max,
+                    min: HandValuation {
+                        lhcp: 9,
+                        length: all_unbid,
+                        ..min
+                    },
+                    the_description: "".to_string(),
+                    the_name: "Takeout double",
+                });
+            }
+        }
 
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^P P P 1H$"]).unwrap(),
