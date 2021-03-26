@@ -61,7 +61,7 @@ impl BidAI for ConventionalBid {
         let mut bids = Vec::with_capacity(len + 1);
         bids.extend_from_slice(history);
         bids.push(Bid::Pass);
-        for b in legal_bids.into_iter() {
+        for b in legal_bids.into_iter().rev() {
             bids[len] = b;
             if let Some(c) = self.0.refine(&bids) {
                 let min = c.min_valuation(&bids);
@@ -77,7 +77,6 @@ impl BidAI for ConventionalBid {
                     println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
                     return b;
                 }
-                println!("Not bidding {:?}...", b);
             }
         }
         Bid::Pass
@@ -92,7 +91,7 @@ impl PlayAI for RandomPlay {
     }
 }
 
-use display_as::{DisplayAs, FormattedString, HTML, UTF8, format_as};
+use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 
 #[derive(Clone, Debug)]
 pub enum Convention {
@@ -135,22 +134,25 @@ fn bids_string(bids: &[Bid]) -> String {
     s
 }
 
-fn format_range(min: u8, max: u8, theoretical_max: u8, name: &str) -> FormattedString<HTML> {
-    if min == 0 && max >= theoretical_max {
-        return format_as!(HTML, "");
+struct ValueRange {
+    min: u8,
+    max: u8,
+    theoretical_max: u8,
+    name: String,
+}
+
+#[with_template("[%" "%]" "value_range.html")]
+impl DisplayAs<HTML> for ValueRange {}
+
+impl ValueRange {
+    fn new(min: u8, max: u8, theoretical_max: u8, name: &str) -> Self {
+        ValueRange {
+            max,
+            min,
+            theoretical_max,
+            name: name.to_string(),
+        }
     }
-    format_as!(HTML,
-    if max == min {
-        max
-    } else if min > 0 && max < theoretical_max {
-        min "-" max
-    } else if min > 0 {
-        min "+"
-    } else {
-        "<" max+1
-    }
-    " " name as UTF8 "<br/>"
-    )
 }
 
 impl Convention {
@@ -209,15 +211,25 @@ impl Convention {
                         }
                         let mut min = *min;
                         let regex = regex.clone();
-                        min.hcp = min
-                            .hcp
-                            .saturating_sub(std::cmp::max(partner.lhcp, partner.hcp));
-                        if partner_max.hcp < HandValuation::MAX.hcp {
-                            max.hcp = min.hcp + 2;
+                        if min.hcp > 0 {
+                            let partner_hcp = std::cmp::max(partner.lhcp, partner.hcp);
+                            if partner_hcp < HandValuation::MAX.hcp {
+                                max.hcp = (min.hcp + 2).saturating_sub(partner_hcp);
+                            }
+                            min.hcp = min.hcp.saturating_sub(partner_hcp);
                         }
                         for suit in Suit::ALL.iter().cloned() {
-                            min.length[suit] =
-                                min.length[suit].saturating_sub(partner.length[suit]);
+                            // If partner hasn't said anything about
+                            let partner_length = if partner.length[suit] == 0
+                                && partner_max.length[suit] == 13
+                            {
+                                // Assume equally divided suits by partner if they haven't mentioned a suit
+                                (13 - partner.length.sum())
+                                    / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
+                            } else {
+                                partner.length[suit]
+                            };
+                            min.length[suit] = min.length[suit].saturating_sub(partner_length);
                             if myself.length[suit] >= min.length[suit] {
                                 min.length[suit] = 0;
                             }
@@ -253,27 +265,27 @@ impl Convention {
                 min,
                 ..
             } => {
-                format_as!(HTML, 
+                format_as!(HTML,
                     "<strong>" the_name "</strong><br/>"
-                format_range(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
-                format_range(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
-                format_range(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+                ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                ValueRange::new(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
+                ValueRange::new(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
                 for suit in Suit::ALL.iter().cloned() {
-                    format_range(
+                    ValueRange::new(
                         min.length[suit],
                         max.length[suit],
                         13,
                         &format_as!(HTML, suit).into_string(),
                     )
                     ""
-                    format_range(
+                    ValueRange::new(
                         min.hcp_in_suit[suit],
                         max.hcp_in_suit[suit],
                         10,
                         &format_as!(HTML, "hcp in " suit).into_string(),
                     )
                     ""
-                    format_range(
+                    ValueRange::new(
                         min.hcp_outside_suit[suit],
                         max.hcp_outside_suit[suit],
                         30,
@@ -287,25 +299,25 @@ impl Convention {
             Convention::Natural {
                 the_name, min, max, ..
             } => {
-                format_as!(HTML, 
+                format_as!(HTML,
                     "<strong>" the_name "</strong><br/>"
-                format_range(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                    ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
                 for suit in Suit::ALL.iter().cloned() {
-                    format_range(
+                    ValueRange::new(
                         min.length[suit],
                         max.length[suit],
                         13,
                         &format_as!(HTML, suit).into_string(),
                     )
                     ""
-                    format_range(
+                    ValueRange::new(
                         min.hcp_in_suit[suit],
                         max.hcp_in_suit[suit],
                         10,
                         &format_as!(HTML, "hcp in " suit).into_string(),
                     )
                     ""
-                    format_range(
+                    ValueRange::new(
                         min.hcp_outside_suit[suit],
                         max.hcp_outside_suit[suit],
                         30,
@@ -314,7 +326,9 @@ impl Convention {
                 }
                 )
             }
-            Convention::Ordered { the_name, .. } => FormattedString::from_formatted(the_name.to_string()),
+            Convention::Ordered { the_name, .. } => {
+                FormattedString::from_formatted(the_name.to_string())
+            }
         }
     }
     /// Name of the convention
@@ -440,19 +454,22 @@ impl Convention {
                             ),
                             &format!(
                                 r"^(P )?.{:?} P 2{:?} X P {}{:?}$",
-                                bid, response, level+1, takeout_response
+                                bid,
+                                response,
+                                level + 1,
+                                takeout_response
                             ),
                             &format!(
                                 r"^(P )?.{:?} P 3{:?} X P {}{:?}$",
-                                bid, response, level+2, takeout_response
+                                bid,
+                                response,
+                                level + 2,
+                                takeout_response
                             ),
                         ])
                         .unwrap(),
                         max,
-                        min: HandValuation {
-                            length,
-                            ..min
-                        },
+                        min: HandValuation { length, ..min },
                         the_description: format_as!(HTML, ""),
                         the_name: "Takeout double response",
                     });
@@ -656,14 +673,16 @@ impl Convention {
             };
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)]).unwrap(),
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)])
+                    .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)]).unwrap(),
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)])
+                    .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
                 min: min_support.with_hcp(11),
@@ -678,7 +697,8 @@ impl Convention {
             };
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor weak raise",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)]).unwrap(),
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)])
+                    .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
@@ -686,7 +706,8 @@ impl Convention {
             min_support.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor strong raise",
-                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)]).unwrap(),
+                regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)])
+                    .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max,
                 min: min_support.with_hcp(11),
@@ -777,8 +798,8 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Impossible response",
             regex: RegexSet::new(&[r"^(P )*1C [PX] 1N$"]).unwrap(),
-            max,
             min,
+            max,
             the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
         });
         sheets.add(Convention::Simple {
@@ -1218,6 +1239,13 @@ impl Convention {
             sheets.add(Convention::Natural {
                 the_name: "Law of total tricks",
                 regex: RegexSet::new(&[&format!("[123]. [123]. .*3{:?}$", suit)]).unwrap(),
+                max,
+                min,
+            });
+            min.length[suit] = 10;
+            sheets.add(Convention::Natural {
+                the_name: "Law of total tricks",
+                regex: RegexSet::new(&[&format!("[123]. [123]. .*4{:?}$", suit)]).unwrap(),
                 max,
                 min,
             });
