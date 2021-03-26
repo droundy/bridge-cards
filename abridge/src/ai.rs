@@ -92,6 +92,15 @@ impl PlayAI for RandomPlay {
 }
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
+pub enum Forcing {
+    Passable,
+    Forcing,
+    GameForcing,
+}
+
+#[with_template("" if *self == Forcing::Forcing { "<br/><strong>Forcing</strong>" } else if *self == Forcing::GameForcing { "<br/><strong>Game forcing</strong>" } )]
+impl DisplayAs<HTML> for Forcing {}
 
 #[derive(Clone, Debug)]
 pub enum Convention {
@@ -101,6 +110,7 @@ pub enum Convention {
         the_name: &'static str,
         max: HandValuation,
         min: HandValuation,
+        forcing: Forcing,
     },
     Natural {
         the_name: &'static str,
@@ -263,6 +273,7 @@ impl Convention {
                 the_description,
                 max,
                 min,
+                forcing,
                 ..
             } => {
                 format_as!(HTML,
@@ -294,6 +305,8 @@ impl Convention {
                 }
                 ""
                 the_description
+                ""
+                forcing
                 )
             }
             Convention::Natural {
@@ -394,6 +407,7 @@ impl Convention {
                 },
                 the_description: format_as!(HTML, ""),
                 the_name: "Takeout double",
+                forcing: Forcing::Forcing,
             });
             for response in Suit::ALL.iter().cloned() {
                 if response != bid {
@@ -411,6 +425,7 @@ impl Convention {
                         min: HandValuation { length, ..min },
                         the_description: format_as!(HTML, ""),
                         the_name: "Takeout double response",
+                        forcing: Forcing::Passable,
                     });
                 }
 
@@ -436,6 +451,7 @@ impl Convention {
                     },
                     the_description: format_as!(HTML, ""),
                     the_name: "Takeout double",
+                    forcing: Forcing::Forcing,
                 });
 
                 for takeout_response in Suit::ALL
@@ -457,14 +473,14 @@ impl Convention {
                                 bid,
                                 response,
                                 level + 1,
-                                takeout_response
+                                takeout_response,
                             ),
                             &format!(
                                 r"^(P )?.{:?} P 3{:?} X P {}{:?}$",
                                 bid,
                                 response,
                                 level + 2,
-                                takeout_response
+                                takeout_response,
                             ),
                         ])
                         .unwrap(),
@@ -472,6 +488,7 @@ impl Convention {
                         min: HandValuation { length, ..min },
                         the_description: format_as!(HTML, ""),
                         the_name: "Takeout double response",
+                        forcing: Forcing::Passable,
                     });
                 }
             }
@@ -487,6 +504,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, "15+ hcp + " Spades),
             the_name: "Rule of 15 opening",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^P P P 1S$"]).unwrap(),
@@ -498,6 +516,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, "15+ hcp + " Spades),
             the_name: "Rule of 15 opening",
+            forcing: Forcing::Passable,
         });
 
         sheets.add(Convention::Simple {
@@ -510,6 +529,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, "15+ hcp + " Spades),
             the_name: "Rule of 15 opening",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^P P P 1D$"]).unwrap(),
@@ -521,6 +541,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, "15+ hcp + " Spades),
             the_name: "Rule of 15 opening",
+            forcing: Forcing::Passable,
         });
 
         sheets.add(Convention::Simple {
@@ -533,6 +554,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Hearts "≥" Spades),
             the_name: "Rule of 20 opening",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^P P 1S$"]).unwrap(),
@@ -544,6 +566,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Rule of 20 opening",
+            forcing: Forcing::Passable,
         });
 
         sheets.add(Convention::Simple {
@@ -556,6 +579,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Clubs "≥" Diamonds),
             the_name: "Rule of 20 opening",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^P P 1D$"]).unwrap(),
@@ -567,6 +591,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Rule of 20 opening",
+            forcing: Forcing::Passable,
         });
 
         sheets.add(Convention::Simple {
@@ -579,6 +604,7 @@ impl Convention {
                 length: [0, 0, 5, 0].into(),
                 ..min
             },
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1S$"]).unwrap(),
@@ -590,6 +616,7 @@ impl Convention {
                 length: [0, 0, 0, 5].into(),
                 ..min
             },
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1C$"]).unwrap(),
@@ -601,6 +628,7 @@ impl Convention {
                 length: [3, 0, 0, 0].into(),
                 ..min
             },
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1D$"]).unwrap(),
@@ -612,6 +640,7 @@ impl Convention {
                 length: [0, 3, 0, 0].into(),
                 ..min
             },
+            forcing: Forcing::Passable,
         });
 
         sheets.add(Convention::Simple {
@@ -624,6 +653,7 @@ impl Convention {
                 length: [0, 0, 0, 4].into(),
                 ..min
             },
+            forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
             the_name: "Response",
@@ -635,6 +665,7 @@ impl Convention {
                 length: [0, 0, 4, 0].into(),
                 ..min
             },
+            forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
             the_name: "Response",
@@ -649,6 +680,7 @@ impl Convention {
                 length: [0, 4, 0, 0].into(),
                 ..min
             },
+            forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
             the_name: "Up the line",
@@ -662,6 +694,7 @@ impl Convention {
                 length: [0, 0, 0, 4].into(),
                 ..min
             },
+            forcing: Forcing::Forcing,
         });
 
         for opening in [Hearts, Spades].iter().cloned() {
@@ -678,6 +711,7 @@ impl Convention {
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
+                forcing: Forcing::Passable,
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
@@ -686,6 +720,7 @@ impl Convention {
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
                 min: min_support.with_hcp(11),
+                forcing: Forcing::Passable,
             });
         }
         for opening in [Clubs, Diamonds].iter().cloned() {
@@ -702,15 +737,17 @@ impl Convention {
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
+                forcing: Forcing::Passable,
             });
             min_support.length[opening] = 4;
             sheets.add(Convention::Simple {
-                the_name: "Inverted minor strong raise",
+                the_name: "Inverted minor limit raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
-                max,
+                max: max.with_hcp(12),
                 min: min_support.with_hcp(11),
+                forcing: Forcing::Passable,
             });
         }
         for opening in [Hearts, Spades].iter().cloned() {
@@ -737,6 +774,7 @@ impl Convention {
                     the_description: format_as!(HTML, ""),
                     max: max_splinter,
                     min: min_splinter,
+                    forcing: Forcing::GameForcing,
                 });
                 if response < opening {
                     let mut min = min.with_hcp(11);
@@ -751,6 +789,7 @@ impl Convention {
                         the_description: format_as!(HTML, ""),
                         max,
                         min,
+                        forcing: Forcing::Forcing,
                     });
                 }
             }
@@ -763,6 +802,7 @@ impl Convention {
                 the_description: format_as!(HTML, ""),
                 max,
                 min: min_jacobi.with_shcp(13),
+                forcing: Forcing::GameForcing,
             });
         }
         for opening in [Clubs, Diamonds].iter().cloned() {
@@ -791,6 +831,7 @@ impl Convention {
                     max: max_splinter,
                     min: min_splinter,
                     the_description: format_as!(HTML, ""),
+                    forcing: Forcing::GameForcing,
                 });
             }
         }
@@ -801,6 +842,7 @@ impl Convention {
             min,
             max,
             the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -812,6 +854,7 @@ impl Convention {
             },
             min: min.with_hcp(6),
             the_description: format_as!(HTML, ""),
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -823,6 +866,7 @@ impl Convention {
             },
             min: min.with_hcp(6),
             the_description: format_as!(HTML, ""),
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -834,6 +878,7 @@ impl Convention {
             },
             min: min.with_hcp(6),
             the_description: format_as!(HTML, ""),
+            forcing: Forcing::Passable,
         });
 
         let mut min_nt = min;
@@ -846,6 +891,7 @@ impl Convention {
             min: min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
             the_description: format_as!(HTML, ""),
             the_name: "Opening 1NT",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2N$"]).unwrap(),
@@ -853,6 +899,7 @@ impl Convention {
             min: min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
             the_description: format_as!(HTML, ""),
             the_name: "Opening 2NT",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1N [PX] 2N$"]).unwrap(),
@@ -860,6 +907,7 @@ impl Convention {
             min: min.with_hcp(8),
             the_description: format_as!(HTML, ""),
             the_name: "Game invite",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1N [PX] 4N$"]).unwrap(),
@@ -867,6 +915,7 @@ impl Convention {
             min: min.with_hcp(16),
             the_description: format_as!(HTML, ""),
             the_name: "Slam invite",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2N [PX] 3N$"]).unwrap(),
@@ -874,6 +923,7 @@ impl Convention {
             min: min.with_hcp(5),
             the_description: format_as!(HTML, ""),
             the_name: "Game after 2N opening",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2|2N [PX] 3)C$"]).unwrap(),
@@ -881,6 +931,7 @@ impl Convention {
             min,
             the_description: format_as!(HTML, "4-card major?"),
             the_name: "Stayman",
+            forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)D$"]).unwrap(),
@@ -891,6 +942,7 @@ impl Convention {
             min,
             the_description: format_as!(HTML, ""),
             the_name: "Stayman response",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)H$"]).unwrap(),
@@ -901,6 +953,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Stayman response",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)S$"]).unwrap(),
@@ -914,6 +967,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Stayman response",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2|2N [PX] 3)D$"]).unwrap(),
@@ -924,6 +978,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Jacobi transfer",
+            forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2|2N [PX] 3)H$"]).unwrap(),
@@ -934,6 +989,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Jacobi transfer",
+            forcing: Forcing::Forcing,
         });
 
         sheets.add(Convention::Simple {
@@ -942,6 +998,7 @@ impl Convention {
             min: min.with_lhcp(23),
             the_description: format_as!(HTML, "hcp≥23"),
             the_name: "Strong two",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D$"]).unwrap(),
@@ -949,6 +1006,7 @@ impl Convention {
             min,
             the_description: format_as!(HTML, ""),
             the_name: "Weak response",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 2S$"]).unwrap(),
@@ -959,6 +1017,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 2H$"]).unwrap(),
@@ -969,6 +1028,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 3C$"]).unwrap(),
@@ -982,6 +1042,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 3D$"]).unwrap(),
@@ -995,6 +1056,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Strong two rebid",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
@@ -1002,6 +1064,7 @@ impl Convention {
             min: min.with_lhcp(24),
             the_description: format_as!(HTML, ""),
             the_name: "Game invite",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 3N$"]).unwrap(),
@@ -1009,6 +1072,7 @@ impl Convention {
             min: min.with_lhcp(25),
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D ..? 4N$"]).unwrap(),
@@ -1016,6 +1080,7 @@ impl Convention {
             min: min.with_lhcp(28),
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D ..? 5N$"]).unwrap(),
@@ -1023,6 +1088,7 @@ impl Convention {
             min: min.with_lhcp(31),
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2H$"]).unwrap(),
@@ -1035,6 +1101,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong response",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2S$"]).unwrap(),
@@ -1047,6 +1114,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong response",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 3C$"]).unwrap(),
@@ -1059,6 +1127,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong response",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 3D$"]).unwrap(),
@@ -1071,6 +1140,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong response",
+            forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2N$"]).unwrap(),
@@ -1085,6 +1155,7 @@ impl Convention {
             },
             the_description: format_as!(HTML, ""),
             the_name: "Strong response",
+            forcing: Forcing::GameForcing,
         });
 
         for opening in [Diamonds, Hearts, Spades].iter().cloned() {
@@ -1099,6 +1170,7 @@ impl Convention {
                 min,
                 the_description: format_as!(HTML, ""),
                 the_name: "Weak two",
+                forcing: Forcing::Passable,
             });
         }
         for opening in [Clubs, Diamonds, Hearts, Spades].iter().cloned() {
@@ -1113,6 +1185,7 @@ impl Convention {
                 min,
                 the_description: format_as!(HTML, ""),
                 the_name: "Weak three",
+                forcing: Forcing::Passable,
             });
         }
 
@@ -1122,6 +1195,7 @@ impl Convention {
             min,
             the_description: format_as!(HTML, ""),
             the_name: "Opening pass",
+            forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1. P P$"]).unwrap(),
@@ -1129,6 +1203,7 @@ impl Convention {
             min,
             the_description: format_as!(HTML, ""),
             the_name: "Response pass",
+            forcing: Forcing::Passable,
         });
 
         // Overcall bids and responses!
@@ -1149,6 +1224,7 @@ impl Convention {
                     ..min
                 },
                 the_description,
+                forcing: Forcing::Forcing,
             });
 
             sheets.add(Convention::Simple {
@@ -1166,6 +1242,7 @@ impl Convention {
                     ..min
                 },
                 the_description: format_as!(HTML, "9-12 hcp or 17+ hcp"),
+                forcing: Forcing::Forcing,
             });
 
             for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
@@ -1182,6 +1259,7 @@ impl Convention {
                     max: max.with_hcp(17),
                     min: min_overcall,
                     the_description: format_as!(HTML, ""),
+                    forcing: Forcing::Passable,
                 });
 
                 sheets.add(Convention::Simple {
@@ -1194,6 +1272,7 @@ impl Convention {
                     max: max.with_hcp(17),
                     min: min_overcall,
                     the_description: format_as!(HTML, ""),
+                    forcing: Forcing::Passable,
                 });
             }
 
@@ -1221,6 +1300,7 @@ impl Convention {
                         max: max.with_hcp(17),
                         min: min_overcall,
                         the_description: format_as!(HTML, ""),
+                        forcing: Forcing::Passable,
                     });
                 }
             }
