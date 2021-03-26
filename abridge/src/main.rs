@@ -725,7 +725,7 @@ async fn ws_connected(
                                 game: &*g,
                             };
                             let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                         }
                         if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                             let pp = Player {
@@ -733,7 +733,7 @@ async fn ws_connected(
                                 game: &*g,
                             };
                             let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                         }
                         if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                             let pp = Player {
@@ -741,7 +741,7 @@ async fn ws_connected(
                                 game: &*g,
                             };
                             let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                         }
                         if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                             let pp = Player {
@@ -749,7 +749,7 @@ async fn ws_connected(
                                 game: &*g,
                             };
                             let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg))).ok();
+                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                         }
                     }
                     if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
@@ -797,7 +797,7 @@ async fn ws_connected(
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                     let pp = Player {
@@ -805,7 +805,7 @@ async fn ws_connected(
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                     let pp = Player {
@@ -813,7 +813,7 @@ async fn ws_connected(
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                     let pp = Player {
@@ -821,7 +821,7 @@ async fn ws_connected(
                         game: &*g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg))).ok();
+                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
             }
         }

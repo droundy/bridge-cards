@@ -71,7 +71,7 @@ impl BidAI for ConventionalBid {
                     println!(
                         "Bidding {:?} with convention {}",
                         b,
-                        format_as!(HTML, c.description())
+                        format_as!(HTML, c.description()).into_string()
                     );
                     println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
                     println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
@@ -92,13 +92,13 @@ impl PlayAI for RandomPlay {
     }
 }
 
-use display_as::{format_as, with_template, DisplayAs, HTML, UTF8};
+use display_as::{DisplayAs, FormattedString, HTML, UTF8, format_as};
 
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
         regex: RegexSet,
-        the_description: String,
+        the_description: FormattedString<HTML>,
         the_name: &'static str,
         max: HandValuation,
         min: HandValuation,
@@ -135,21 +135,22 @@ fn bids_string(bids: &[Bid]) -> String {
     s
 }
 
-fn format_range(s: &mut String, min: u8, max: u8, theoretical_max: u8, name: &str) {
-    if max == min {
-        s.push_str(&format!("{}", max));
-    } else if min > 0 && max < theoretical_max {
-        s.push_str(&format!("{}-{}", min, max));
-    } else if min > 0 {
-        s.push_str(&format!("{}+", min));
-    } else if max < theoretical_max {
-        s.push_str(&format!("<{}", max + 1));
-    } else {
-        return;
+fn format_range(min: u8, max: u8, theoretical_max: u8, name: &str) -> FormattedString<HTML> {
+    if min == 0 && max >= theoretical_max {
+        return format_as!(HTML, "");
     }
-    s.push(' ');
-    s.push_str(name);
-    s.push_str("<br/>")
+    format_as!(HTML,
+    if max == min {
+        max
+    } else if min > 0 && max < theoretical_max {
+        min "-" max
+    } else if min > 0 {
+        min "+"
+    } else {
+        "<" max+1
+    }
+    " " name as UTF8 "<br/>"
+    )
 }
 
 impl Convention {
@@ -252,75 +253,76 @@ impl Convention {
                 min,
                 ..
             } => {
-                let mut s = format!("<strong>{}</strong><br/>", the_name);
-                format_range(&mut s, min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp");
-                format_range(&mut s, min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp");
-                format_range(&mut s, min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp");
+                format_as!(HTML, 
+                    "<strong>" the_name "</strong><br/>"
+                format_range(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                format_range(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
+                format_range(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
                 for suit in Suit::ALL.iter().cloned() {
                     format_range(
-                        &mut s,
                         min.length[suit],
                         max.length[suit],
                         13,
-                        &format_as!(HTML, suit),
-                    );
+                        &format_as!(HTML, suit).into_string(),
+                    )
+                    ""
                     format_range(
-                        &mut s,
                         min.hcp_in_suit[suit],
                         max.hcp_in_suit[suit],
                         10,
-                        &format_as!(HTML, "hcp in " suit),
-                    );
+                        &format_as!(HTML, "hcp in " suit).into_string(),
+                    )
+                    ""
                     format_range(
-                        &mut s,
                         min.hcp_outside_suit[suit],
                         max.hcp_outside_suit[suit],
                         30,
-                        &format_as!(HTML, "hcp outside" suit),
-                    );
+                        &format_as!(HTML, "hcp outside" suit).into_string(),
+                    )
                 }
-                s.push_str(&the_description);
-                RawHtml(s)
+                ""
+                the_description
+                )
             }
             Convention::Natural {
                 the_name, min, max, ..
             } => {
-                let mut s = format_as!(HTML, "<strong>" the_name "</strong><br/>");
-                format_range(&mut s, min.hcp, max.hcp, 37, "hcp");
+                format_as!(HTML, 
+                    "<strong>" the_name "</strong><br/>"
+                format_range(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
                 for suit in Suit::ALL.iter().cloned() {
                     format_range(
-                        &mut s,
                         min.length[suit],
                         max.length[suit],
                         13,
-                        &format_as!(HTML, suit),
-                    );
+                        &format_as!(HTML, suit).into_string(),
+                    )
+                    ""
                     format_range(
-                        &mut s,
                         min.hcp_in_suit[suit],
                         max.hcp_in_suit[suit],
                         10,
-                        &format_as!(HTML, "hcp in " suit),
-                    );
+                        &format_as!(HTML, "hcp in " suit).into_string(),
+                    )
+                    ""
                     format_range(
-                        &mut s,
                         min.hcp_outside_suit[suit],
                         max.hcp_outside_suit[suit],
                         30,
-                        &format_as!(HTML, "hcp outside" suit),
-                    );
+                        &format_as!(HTML, "hcp outside" suit).into_string(),
+                    )
                 }
-                RawHtml(s)
+                )
             }
-            Convention::Ordered { the_name, .. } => RawHtml(the_name.to_string()),
+            Convention::Ordered { the_name, .. } => FormattedString::from_formatted(the_name.to_string()),
         }
     }
     /// Name of the convention
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> FormattedString<HTML> {
         match self {
-            Convention::Simple { the_name, .. } => the_name.to_string(),
-            Convention::Natural { the_name, .. } => the_name.to_string(),
-            Convention::Ordered { the_name, .. } => the_name.to_string(),
+            Convention::Simple { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
         }
     }
     /// Does this bid work for this hand?
@@ -376,7 +378,7 @@ impl Convention {
                     length: all_unbid,
                     ..min
                 },
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 the_name: "Takeout double",
             });
             for response in Suit::ALL.iter().cloned() {
@@ -393,7 +395,7 @@ impl Convention {
                         .unwrap(),
                         max,
                         min: HandValuation { length, ..min },
-                        the_description: "".to_string(),
+                        the_description: format_as!(HTML, ""),
                         the_name: "Takeout double response",
                     });
                 }
@@ -418,7 +420,7 @@ impl Convention {
                         length: all_unbid,
                         ..min
                     },
-                    the_description: "".to_string(),
+                    the_description: format_as!(HTML, ""),
                     the_name: "Takeout double",
                 });
 
@@ -451,7 +453,7 @@ impl Convention {
                             length,
                             ..min
                         },
-                        the_description: "".to_string(),
+                        the_description: format_as!(HTML, ""),
                         the_name: "Takeout double response",
                     });
                 }
@@ -634,7 +636,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Up the line",
             regex: RegexSet::new(&[r"^(P )*1[CD] P 1[DH] [PX] 1S$"]).unwrap(),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             max: HandValuation {
                 length: [13, 13, 3, 4].into(),
                 ..max
@@ -655,14 +657,14 @@ impl Convention {
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)]).unwrap(),
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)]).unwrap(),
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
                 min: min_support.with_hcp(11),
             });
@@ -677,7 +679,7 @@ impl Convention {
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor weak raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)]).unwrap(),
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
                 min: min_support.with_hcp(6),
             });
@@ -685,7 +687,7 @@ impl Convention {
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor strong raise",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)]).unwrap(),
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 max,
                 min: min_support.with_hcp(11),
             });
@@ -711,7 +713,7 @@ impl Convention {
                         opening, splinterbid, response
                     )])
                     .unwrap(),
-                    the_description: "".to_string(),
+                    the_description: format_as!(HTML, ""),
                     max: max_splinter,
                     min: min_splinter,
                 });
@@ -725,7 +727,7 @@ impl Convention {
                             opening, response
                         )])
                         .unwrap(),
-                        the_description: "".to_string(),
+                        the_description: format_as!(HTML, ""),
                         max,
                         min,
                     });
@@ -737,7 +739,7 @@ impl Convention {
             sheets.add(Convention::Simple {
                 the_name: "Jacobi 2NT",
                 regex: RegexSet::new(&[&format!("^(P )*1{:?} [PX] 2N", opening)]).unwrap(),
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 max,
                 min: min_jacobi.with_shcp(13),
             });
@@ -767,7 +769,7 @@ impl Convention {
                     .unwrap(),
                     max: max_splinter,
                     min: min_splinter,
-                    the_description: "".to_string(),
+                    the_description: format_as!(HTML, ""),
                 });
             }
         }
@@ -788,7 +790,7 @@ impl Convention {
                 ..max
             },
             min: min.with_hcp(6),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -799,7 +801,7 @@ impl Convention {
                 ..max
             },
             min: min.with_hcp(6),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
@@ -810,7 +812,7 @@ impl Convention {
                 ..max
             },
             min: min.with_hcp(6),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
         });
 
         let mut min_nt = min;
@@ -821,35 +823,35 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*1N$"]).unwrap(),
             max: max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
             min: min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Opening 1NT",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2N$"]).unwrap(),
             max: max_nt.with_hcp(22).with_shcp(23).with_lhcp(23),
             min: min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Opening 2NT",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1N [PX] 2N$"]).unwrap(),
             max: max.with_hcp(10),
             min: min.with_hcp(8),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Game invite",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1N [PX] 4N$"]).unwrap(),
             max: max.with_hcp(17),
             min: min.with_hcp(16),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Slam invite",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2N [PX] 3N$"]).unwrap(),
             max: max.with_hcp(10),
             min: min.with_hcp(5),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Game after 2N opening",
         });
         sheets.add(Convention::Simple {
@@ -866,7 +868,7 @@ impl Convention {
                 ..max
             },
             min,
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Stayman response",
         });
         sheets.add(Convention::Simple {
@@ -876,7 +878,7 @@ impl Convention {
                 length: [0, 0, 4, 0].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Stayman response",
         });
         sheets.add(Convention::Simple {
@@ -899,7 +901,7 @@ impl Convention {
                 length: [0, 0, 5, 0].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Jacobi transfer",
         });
         sheets.add(Convention::Simple {
@@ -909,7 +911,7 @@ impl Convention {
                 length: [0, 0, 0, 5].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Jacobi transfer",
         });
 
@@ -924,7 +926,7 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D$"]).unwrap(),
             max: max.with_lhcp(7),
             min,
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Weak response",
         });
         sheets.add(Convention::Simple {
@@ -944,7 +946,7 @@ impl Convention {
                 length: [0, 0, 5, 0].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
         });
         sheets.add(Convention::Simple {
@@ -957,7 +959,7 @@ impl Convention {
                 length: [5, 0, 0, 0].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
         });
         sheets.add(Convention::Simple {
@@ -977,28 +979,28 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
             max: max.with_lhcp(23),
             min: min.with_lhcp(24),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Game invite",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D [PX] 3N$"]).unwrap(),
             max: max.with_lhcp(27),
             min: min.with_lhcp(25),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D ..? 4N$"]).unwrap(),
             max: max.with_lhcp(30),
             min: min.with_lhcp(28),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C [PX] 2D ..? 5N$"]).unwrap(),
             max: max.with_lhcp(32),
             min: min.with_lhcp(31),
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
         });
         sheets.add(Convention::Simple {
@@ -1010,7 +1012,7 @@ impl Convention {
                 hcp: 8,
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong response",
         });
         sheets.add(Convention::Simple {
@@ -1022,7 +1024,7 @@ impl Convention {
                 hcp: 8,
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong response",
         });
         sheets.add(Convention::Simple {
@@ -1034,7 +1036,7 @@ impl Convention {
                 hcp: 8,
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong response",
         });
         sheets.add(Convention::Simple {
@@ -1046,7 +1048,7 @@ impl Convention {
                 hcp: 8,
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong response",
         });
         sheets.add(Convention::Simple {
@@ -1060,7 +1062,7 @@ impl Convention {
                 length: [2, 2, 2, 2].into(),
                 ..min
             },
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Strong response",
         });
 
@@ -1074,7 +1076,7 @@ impl Convention {
                 regex: RegexSet::new(&[&format!(r"^(P )?(P )?2{:?}$", opening)]).unwrap(),
                 max,
                 min,
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 the_name: "Weak two",
             });
         }
@@ -1088,7 +1090,7 @@ impl Convention {
                 regex: RegexSet::new(&[&format!(r"^(P )?(P )?3{:?}$", opening)]).unwrap(),
                 max,
                 min,
-                the_description: "".to_string(),
+                the_description: format_as!(HTML, ""),
                 the_name: "Weak three",
             });
         }
@@ -1097,23 +1099,23 @@ impl Convention {
             regex: RegexSet::new(&[r"^(P )*P$"]).unwrap(),
             max: max.with_lhcp(12),
             min,
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Opening pass",
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*1. P P$"]).unwrap(),
             max: max.with_hcp(5),
             min,
-            the_description: "".to_string(),
+            the_description: format_as!(HTML, ""),
             the_name: "Response pass",
         });
 
         // Overcall bids and responses!
         for opening in Suit::ALL.iter().cloned() {
             let (michaels_length, the_description) = match opening {
-                Clubs | Diamonds => ([0, 0, 5, 5], "".to_string()),
-                Hearts => ([0, 0, 0, 5], "5 in a minor".to_string()),
-                Spades => ([0, 0, 5, 0], "5 in a minor".to_string()),
+                Clubs | Diamonds => ([0, 0, 5, 5], format_as!(HTML, "")),
+                Hearts => ([0, 0, 0, 5], format_as!(HTML, "5 in a minor")),
+                Spades => ([0, 0, 5, 0], format_as!(HTML, "5 in a minor")),
             };
             sheets.add(Convention::Simple {
                 the_name: "Michael's cuebid",
@@ -1142,7 +1144,7 @@ impl Convention {
                     hcp: 9,
                     ..min
                 },
-                the_description: "9-12 hcp or 17+ hcp".to_string(),
+                the_description: format_as!(HTML, "9-12 hcp or 17+ hcp"),
             });
 
             for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
@@ -1158,7 +1160,7 @@ impl Convention {
                     .unwrap(),
                     max: max.with_hcp(17),
                     min: min_overcall,
-                    the_description: "".to_string(),
+                    the_description: format_as!(HTML, ""),
                 });
 
                 sheets.add(Convention::Simple {
@@ -1170,7 +1172,7 @@ impl Convention {
                     .unwrap(),
                     max: max.with_hcp(17),
                     min: min_overcall,
-                    the_description: "".to_string(),
+                    the_description: format_as!(HTML, ""),
                 });
             }
 
@@ -1197,7 +1199,7 @@ impl Convention {
                         .unwrap(),
                         max: max.with_hcp(17),
                         min: min_overcall,
-                        the_description: "".to_string(),
+                        the_description: format_as!(HTML, ""),
                     });
                 }
             }
@@ -1313,11 +1315,11 @@ fn test_sheets() {
     let sheets = Convention::sheets();
     assert_eq!(None, sheets.refine(&[]).map(|c| c.name()));
     assert_eq!(
-        Some("Opening pass".to_string()),
+        Some(format_as!(HTML, "Opening pass")),
         sheets.refine(&[Pass]).map(|c| c.name())
     );
     assert_eq!(
-        Some("Opening bid".to_string()),
+        Some(format_as!(HTML, "Opening bid")),
         sheets.refine(&[Suit(1, Clubs)]).map(|c| c.name())
     );
     assert_eq!(
@@ -1327,7 +1329,3 @@ fn test_sheets() {
             .map(|c| c.name())
     );
 }
-
-struct RawHtml(String);
-#[with_template(self.0 as UTF8)]
-impl DisplayAs<HTML> for RawHtml {}

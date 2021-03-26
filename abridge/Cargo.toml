@@ -20,4 +20,4 @@ tokio = { version = "0.2", features = ["full", "time"] }
 futures = "0.3.8"
 regex = "1.4.3"
 
-display-as = { version = "0.5.2", features = ["usewarp"] }
+display-as = { path = "../../display-as/display-as", version = "0.6.0", features = ["usewarp"] }
