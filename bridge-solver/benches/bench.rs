@@ -1,6 +1,6 @@
-use easybench::bench;
 use rand::rngs::{SmallRng, StdRng};
 use rand::SeedableRng;
+use scaling::{bench, bench_scaling_gen};
 
 use bridge_deck::{Card, Cards, Suit};
 use bridge_solver::{Naive, Starting};
@@ -81,6 +81,55 @@ fn main() {
     for _ in 0..4 {
         println!("   \"{}\".parse().unwrap(),", cards.pick(13).unwrap());
     }
+
+    println!(
+        "scaling with deal size {}",
+        bench_scaling_gen(
+            |n| {
+                let mut cards = Cards::ALL;
+                let mut hands = [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS];
+                for i in 0..4 {
+                    hands[i] = cards.pick(n).unwrap();
+                }
+                Starting {
+                    hands,
+                    unknown: Cards::EMPTY,
+                }
+            },
+            |starting| Naive::new(Some(Suit::Hearts)).score(*starting).mean(),
+            0
+        )
+    );
+
+    println!(
+        "random shortened deal, hearts trump {}",
+        bench(|| Naive::new(Some(Suit::Hearts))
+            .score(Starting {
+                hands: [
+                    "♠65♥A7".parse().unwrap(),
+                    "♠9♥KT9".parse().unwrap(),
+                    "♠KQT8".parse().unwrap(),
+                    "♠AJ72".parse().unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            })
+            .mean())
+    );
+
+    println!(
+        "random less shortened deal, hearts trump {}",
+        bench(|| Naive::new(Some(Suit::Hearts))
+            .score(Starting {
+                hands: [
+                    "♠65♥A7♦Q65♣J7".parse().unwrap(),
+                    "♠9♥KT92♦J32♣4".parse().unwrap(),
+                    "♠KQT43♥J6♦4♣3".parse().unwrap(),
+                    "♠AJ72♥Q84♦AK".parse().unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            })
+            .mean())
+    );
 
     println!(
         "random deal, hearts trump {}",
