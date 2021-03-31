@@ -988,6 +988,35 @@ impl HandValuation {
 
 impl HandValuation {}
 
+/// A data type to hold a mapping of Cards
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CardMap {
+    internal: [Card; 64],
+}
+impl CardMap {
+    /// Create an empty CardMap
+    pub fn new() -> Self {
+        CardMap {
+            internal: [Card::new(Suit::Clubs, 0); 64]
+        }
+    }
+}
+
+impl std::ops::Index<Card> for CardMap {
+    type Output = Card;
+
+    fn index(&self, index: Card) -> &Card {
+        &self.internal[index.offset as usize]
+    }
+}
+
+impl std::ops::IndexMut<Card> for CardMap {
+    fn index_mut(&mut self, index: Card) -> &mut Card {
+        &mut self.internal[index.offset as usize]
+    }
+}
+
+
 /// A data type to hold an array of items, one per suit.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PerSuit<T> {

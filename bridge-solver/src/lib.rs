@@ -1,7 +1,26 @@
-pub use bridge_deck::{Card, Cards, Suit};
+pub use bridge_deck::{Card, CardMap, Cards, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
+pub fn normalize_create_map(all: Cards) -> CardMap {
+    let mut map = CardMap::new();
+    for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
+        for (n, x) in all.in_suit(s).enumerate() {
+            map[x] = Card::new(s, 2 + n as u8);
+        }
+    }
+    map
+}
+
+pub fn map_normalize(map: CardMap, hand: Cards) -> Cards {
+    let mut c = Cards::EMPTY;
+    for x in hand {
+        c = c.insert(map[x]);
+    }
+    c
+}
+
+#[cfg(test)]
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
     let mut c = Cards::EMPTY;
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
@@ -23,8 +42,13 @@ fn test_normalize() {
         + Cards::singleton(Card::H2)
         + Cards::singleton(Card::D2)
         + Cards::singleton(Card::C2);
+    let map = normalize_create_map(Cards::ACES);
     println!("\n\nTwos:\n\n");
     assert_eq!(twos, normalize(Cards::ACES, Cards::ACES));
+    assert_eq!(
+        map_normalize(map, Cards::ACES),
+        normalize(Cards::ACES, Cards::ACES)
+    );
     println!("\n\nWeird all aces:\n\n");
     assert_eq!(Cards::ACES, normalize(Cards::ALL, Cards::ACES));
 }
@@ -104,13 +128,16 @@ impl Starting {
         }
         let cards_left =
             (self.unknown + self.hands[0] + self.hands[1] + self.hands[2] + self.hands[3]) - played;
-        let unknown = normalize(cards_left, self.unknown - played);
+
+        let map = normalize_create_map(cards_left);
+        let unknown = map_normalize(map, self.unknown - played);
         let hands = [
-            normalize(cards_left, self.hands[winner] - played),
-            normalize(cards_left, self.hands[(winner + 1) % 4] - played),
-            normalize(cards_left, self.hands[(winner + 2) % 4] - played),
-            normalize(cards_left, self.hands[(winner + 3) % 4] - played),
+            map_normalize(map, self.hands[winner] - played),
+            map_normalize(map, self.hands[(winner + 1) % 4] - played),
+            map_normalize(map, self.hands[(winner + 2) % 4] - played),
+            map_normalize(map, self.hands[(winner + 3) % 4] - played),
         ];
+
         let mut next = Starting { hands, unknown };
         if next.unknown.len() > 0 {
             let per_hand = next.tricks_remaining();
@@ -292,6 +319,7 @@ impl std::ops::Add<TrickTaken> for Score {
 #[derive(Clone)]
 pub struct Naive {
     cache: std::collections::HashMap<Starting, Score>,
+    // cache: dashmap::DashMap<Starting, Score>,
     /// What is trump?
     trump: Option<Suit>,
     rng: SmallRng,
@@ -300,6 +328,7 @@ pub struct Naive {
 impl Naive {
     pub fn new(trump: Option<Suit>) -> Self {
         let mut cache = std::collections::HashMap::new();
+        // let cache = dashmap::DashMap::new();
         // Prepopulate cache with stopping point of no cards->no points.
         cache.insert(
             Starting {
