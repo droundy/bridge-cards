@@ -369,13 +369,7 @@ impl Naive {
         best
     }
 
-    pub fn score_after(&mut self, starting: Starting, plays: &[Card]) -> Score {
-        if plays.len() == 0 {
-            if let Some(score) = self.cache.get(&starting) {
-                // println!("found score {:?}", score);
-                return *score;
-            }
-        }
+    pub fn score_after(&mut self, starting: Starting, plays: &[Card]) -> (Score, Card) {
         let hands = starting.random_hands(&mut self.rng);
         let mut possible_plays = hands.clone();
         for (i, c) in plays.iter().cloned().enumerate() {
@@ -384,6 +378,7 @@ impl Naive {
         // for i in 0..4 {
         //     println!("possible_plays are {}", possible_plays[i]);
         // }
+        let mut card_to_play = Card::S2;
         let mut best = Score::MIN;
         for c0 in possible_plays[0] {
             println!("considering playing first {}", c0);
@@ -411,6 +406,9 @@ impl Naive {
                         // );
                         if mysc < worst {
                             worst = mysc;
+                            if plays.len() == 3 {
+                                card_to_play = c3;
+                            }
                         // println!("worst = {}", worst.mean());
                         } else {
                             // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
@@ -418,21 +416,30 @@ impl Naive {
                     }
                     if worst > best {
                         best = worst;
+                        if plays.len() == 2 {
+                            card_to_play = c2;
+                        }
                     }
                 }
                 if worst > best {
                     worst = best;
+                    if plays.len() == 1 {
+                        card_to_play = c1;
+                    }
                 }
             }
             if worst > best {
                 best = worst;
+                if plays.len() == 0 {
+                    card_to_play = c0;
+                }
                 // println!("Move {} gives {}", c0, best.mean());
             }
         }
         if plays.len() == 0 {
             self.cache.insert(starting, best);
         }
-        best
+        (best, card_to_play)
     }
 }
 
@@ -454,6 +461,7 @@ fn naive_score() {
             },
             &[Card::S2]
         )
+        .0
         .mean()
     );
 
@@ -497,6 +505,7 @@ fn naive_score() {
             },
             &[]
         )
+        .0
         .mean()
     );
     assert_eq!(
@@ -516,6 +525,7 @@ fn naive_score() {
             },
             &[]
         )
+        .0
         .mean()
     );
     assert_eq!(
@@ -527,6 +537,7 @@ fn naive_score() {
             },
             &[Card::SA]
         )
+        .0
         .mean()
     );
     assert_eq!(
