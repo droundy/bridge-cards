@@ -370,9 +370,11 @@ impl Naive {
     }
 
     pub fn score_after(&mut self, starting: Starting, plays: &[Card]) -> Score {
-        if let Some(score) = self.cache.get(&starting) {
-            // println!("found score {:?}", score);
-            return *score;
+        if plays.len() == 0 {
+            if let Some(score) = self.cache.get(&starting) {
+                // println!("found score {:?}", score);
+                return *score;
+            }
         }
         let hands = starting.random_hands(&mut self.rng);
         let mut possible_plays = hands.clone();
