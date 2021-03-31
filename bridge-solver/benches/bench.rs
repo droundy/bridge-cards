@@ -82,67 +82,46 @@ fn main() {
         println!("   \"{}\".parse().unwrap(),", cards.pick(13).unwrap());
     }
 
+    fn gen_starting(n: usize) -> Starting {
+        let mut cards = Cards::ALL;
+        let mut hands = [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS];
+        for i in 0..4 {
+            hands[i] = cards.pick(n).unwrap();
+        }
+        Starting {
+            hands,
+            unknown: Cards::EMPTY,
+        }
+    }
+
+    for n in 1..14 {
+        println!(
+            "{} cards, trump    {}",
+            n,
+            bench(|| Naive::new(Some(Suit::Hearts)).score(gen_starting(n)).mean())
+        );
+        println!(
+            "{} cards, no trump {}",
+            n,
+            bench(|| Naive::new(None).score(gen_starting(n)).mean())
+        );
+    }
+
     println!(
-        "scaling with deal size {}",
+        "trump scaling with deal size {}",
         bench_scaling_gen(
-            |n| {
-                let mut cards = Cards::ALL;
-                let mut hands = [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS];
-                for i in 0..4 {
-                    hands[i] = cards.pick(n).unwrap();
-                }
-                Starting {
-                    hands,
-                    unknown: Cards::EMPTY,
-                }
-            },
+            gen_starting,
             |starting| Naive::new(Some(Suit::Hearts)).score(*starting).mean(),
             0
         )
     );
-
     println!(
-        "random shortened deal, hearts trump {}",
-        bench(|| Naive::new(Some(Suit::Hearts))
-            .score(Starting {
-                hands: [
-                    "♠65♥A7".parse().unwrap(),
-                    "♠9♥KT9".parse().unwrap(),
-                    "♠KQT8".parse().unwrap(),
-                    "♠AJ72".parse().unwrap(),
-                ],
-                unknown: Cards::EMPTY,
-            })
-            .mean())
+        "no trump scaling with deal size {}",
+        bench_scaling_gen(
+            gen_starting,
+            |starting| Naive::new(None).score(*starting).mean(),
+            0
+        )
     );
 
-    println!(
-        "random less shortened deal, hearts trump {}",
-        bench(|| Naive::new(Some(Suit::Hearts))
-            .score(Starting {
-                hands: [
-                    "♠65♥A7♦Q65♣J7".parse().unwrap(),
-                    "♠9♥KT92♦J32♣4".parse().unwrap(),
-                    "♠KQT43♥J6♦4♣3".parse().unwrap(),
-                    "♠AJ72♥Q84♦AK".parse().unwrap(),
-                ],
-                unknown: Cards::EMPTY,
-            })
-            .mean())
-    );
-
-    println!(
-        "random deal, hearts trump {}",
-        bench(|| Naive::new(Some(Suit::Hearts))
-            .score(Starting {
-                hands: [
-                    "♠65♥A7♦Q9765♣J765".parse().unwrap(),
-                    "♠9♥KT92♦JT832♣A84".parse().unwrap(),
-                    "♠KQT843♥J653♦4♣K3".parse().unwrap(),
-                    "♠AJ72♥Q84♦AK♣QT92".parse().unwrap(),
-                ],
-                unknown: Cards::EMPTY,
-            })
-            .mean())
-    );
 }

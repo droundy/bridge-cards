@@ -368,12 +368,93 @@ impl Naive {
         self.cache.insert(starting, best);
         best
     }
+
+    pub fn score_after(&mut self, starting: Starting, plays: &[Card]) -> Score {
+        if let Some(score) = self.cache.get(&starting) {
+            // println!("found score {:?}", score);
+            return *score;
+        }
+        let hands = starting.random_hands(&mut self.rng);
+        let mut possible_plays = hands.clone();
+        for (i, c) in plays.iter().cloned().enumerate() {
+            possible_plays[i] = Cards::singleton(c);
+        }
+        // for i in 0..4 {
+        //     println!("possible_plays are {}", possible_plays[i]);
+        // }
+        let mut best = Score::MIN;
+        for c0 in possible_plays[0] {
+            println!("considering playing first {}", c0);
+            let mut worst = Score::MAX;
+            for c1 in possible_plays[1].following_suit(c0.suit()) {
+                let mut best = Score::MIN;
+                for c2 in possible_plays[2].following_suit(c0.suit()) {
+                    let mut worst = Score::MAX;
+                    for c3 in possible_plays[3].following_suit(c0.suit()) {
+                        // println!("considering playing fourth {}", c3);
+                        let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
+                        let sc = self.score(trick_taken.starting());
+                        // println!("score is {:?}", sc);
+                        // println!("trick taken is {:?}", trick_taken);
+                        let mysc = sc + trick_taken;
+                        // println!(
+                        //     " {} {} {} {} -> {} from {:?} and {:?}",
+                        //     c0,
+                        //     c1,
+                        //     c2,
+                        //     c3,
+                        //     mysc.mean(),
+                        //     sc,
+                        //     trick_taken
+                        // );
+                        if mysc < worst {
+                            worst = mysc;
+                        // println!("worst = {}", worst.mean());
+                        } else {
+                            // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+                        }
+                    }
+                    if worst > best {
+                        best = worst;
+                    }
+                }
+                if worst > best {
+                    worst = best;
+                }
+            }
+            if worst > best {
+                best = worst;
+                // println!("Move {} gives {}", c0, best.mean());
+            }
+        }
+        if plays.len() == 0 {
+            self.cache.insert(starting, best);
+        }
+        best
+    }
 }
 
 #[test]
 fn naive_score() {
     let mut nt = Naive::new(None);
     let mut sp = Naive::new(Some(Suit::Spades));
+    assert_eq!(
+        0.0,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::singleton(Card::S2) + Cards::singleton(Card::SA),
+                    Cards::singleton(Card::D3) + Cards::singleton(Card::D5),
+                    Cards::singleton(Card::D4) + Cards::singleton(Card::C3),
+                    Cards::singleton(Card::S5) + Cards::singleton(Card::D8),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[Card::S2]
+        )
+        .mean()
+    );
+
     assert_eq!(
         0.0,
         nt.score(Starting {
@@ -401,11 +482,49 @@ fn naive_score() {
         .mean()
     );
     assert_eq!(
+        2.0,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::singleton(Card::S2) + Cards::singleton(Card::SA),
+                    Cards::singleton(Card::D3) + Cards::singleton(Card::D5),
+                    Cards::singleton(Card::D4) + Cards::singleton(Card::C3),
+                    Cards::singleton(Card::S5) + Cards::singleton(Card::D8),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[]
+        )
+        .mean()
+    );
+    assert_eq!(
         13.0,
         nt.score(Starting {
             hands: [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS,],
             unknown: Cards::EMPTY,
         })
+        .mean()
+    );
+    assert_eq!(
+        13.0,
+        nt.score_after(
+            Starting {
+                hands: [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS,],
+                unknown: Cards::EMPTY,
+            },
+            &[]
+        )
+        .mean()
+    );
+    assert_eq!(
+        13.0,
+        nt.score_after(
+            Starting {
+                hands: [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS,],
+                unknown: Cards::EMPTY,
+            },
+            &[Card::SA]
+        )
         .mean()
     );
     assert_eq!(
