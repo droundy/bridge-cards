@@ -476,6 +476,75 @@ impl Naive {
 fn naive_score() {
     let mut nt = Naive::new(None);
     let mut sp = Naive::new(Some(Suit::Spades));
+    use std::str::FromStr;
+    assert_eq!(
+        1.0,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::from_str("SA2").unwrap(),
+                    Cards::from_str("S34").unwrap(),
+                    Cards::from_str("S56").unwrap(),
+                    Cards::from_str("S78").unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[Card::S2]
+        )
+        .0
+        .mean()
+    );
+    assert_eq!(
+        0.0,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::from_str("SA2").unwrap(),
+                    Cards::from_str("S34").unwrap(),
+                    Cards::from_str("S56").unwrap(),
+                    Cards::from_str("S7D8").unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[Card::S2]
+        )
+        .0
+        .mean()
+    );
+    assert_eq!(
+        2.0,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::from_str("SA2").unwrap(),
+                    Cards::from_str("S34").unwrap(),
+                    Cards::from_str("S56").unwrap(),
+                    Cards::from_str("S7 D8").unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[Card::SA]
+        )
+        .0
+        .mean()
+    );
+    assert_eq!(
+        Card::SA,
+        nt.score_after(
+            Starting {
+                hands: [
+                    Cards::from_str("SA2").unwrap(),
+                    Cards::from_str("S34").unwrap(),
+                    Cards::from_str("S56").unwrap(),
+                    Cards::from_str("S7 D8").unwrap(),
+                ],
+                unknown: Cards::EMPTY,
+            },
+            &[]
+        )
+        .1
+    );
+
     assert_eq!(
         0.0,
         nt.score_after(
