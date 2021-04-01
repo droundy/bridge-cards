@@ -80,6 +80,10 @@ impl Starting {
         let n = self.tricks_remaining();
         let mut unknown = self.unknown;
         let mut hands = self.hands;
+        // for seat in 0..4 {
+        //     println!("  hand {}: {} ({})", seat, self.hands[seat], self.hands[seat].len());
+        // }
+        // println!("  extra: {} ({})", self.unknown, self.unknown.len());
         for seat in 0..4 {
             if hands[seat].len() < n {
                 let extra = unknown
@@ -407,7 +411,13 @@ impl Naive {
         best
     }
 
-    pub fn score_after(&mut self, starting: Starting, plays: &[Card]) -> (Score, Card) {
+    pub fn score_after(&mut self, mut starting: Starting, plays: &[Card]) -> (Score, Card) {
+        // First update the hands to ensure that the plays correspond to cards
+        // in the various hands.
+        for (i, card) in plays.iter().cloned().enumerate() {
+            starting.hands[i] += Cards::singleton(card);
+            starting.unknown -= Cards::singleton(card);
+        }
         let hands = starting.random_hands(&mut self.rng);
         let mut possible_plays = hands.clone();
         for (i, c) in plays.iter().cloned().enumerate() {
@@ -419,7 +429,7 @@ impl Naive {
         let mut card_to_play = Card::S2;
         let mut best = Score::MIN;
         for c0 in possible_plays[0] {
-            println!("considering playing first {}", c0);
+            // println!("considering playing first {}", c0);
             let mut worst = Score::MAX;
             for c1 in possible_plays[1].following_suit(c0.suit()) {
                 let mut best = Score::MIN;

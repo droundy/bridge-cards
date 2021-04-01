@@ -100,6 +100,17 @@ fn main() {
         hands: [one_hand, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY],
         unknown: Cards::ALL - one_hand,
     };
+    let mut dummy_after_opening_lead = opening_lead.clone();
+    dummy_after_opening_lead.hands[1] = dummy_after_opening_lead.unknown.pick(13).unwrap();
+    let dummy_after_opening_lead_play = one_hand.clone().pick(1).unwrap().next().unwrap();
+    println!(
+        "next after opening lead, trump    {}",
+        bench(|| Naive::new(Some(Suit::Hearts)).score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play]).0.mean())
+    );
+    println!(
+        "next after opening lead, no trump {}",
+        bench(|| Naive::new(None).score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play]).0.mean())
+    );
     println!(
         "opening lead cards, trump    {}",
         bench(|| Naive::new(Some(Suit::Hearts)).score(opening_lead).mean())
