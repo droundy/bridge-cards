@@ -119,9 +119,18 @@ impl Starting {
         if unknown_in_suit.len() > 0 {
             for i in 1..4 {
                 if plays[i].suit() != plays[0].suit() {
-                    // i showed void
-                    self.hands[(i + 2) % 4] += unknown_in_suit;
-                    self.unknown -= unknown_in_suit;
+                    // i showed void.  if only one player has unknown cards, they must have
+                    // all the cards in this suit.
+                    let lengths: Vec<usize> = self.hands.iter().map(|h| h.len()).collect();
+                    let max_length = lengths.iter().cloned().max().unwrap();
+                    if lengths.iter().filter(|&&l| l != max_length).count() == 1 {
+                        for j in 0..4 {
+                            if self.hands[j].len() < max_length {
+                                self.hands[j] += unknown_in_suit;
+                                self.unknown -= unknown_in_suit;
+                            }
+                        }
+                    }
                     break;
                 }
             }

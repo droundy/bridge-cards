@@ -95,6 +95,19 @@ fn main() {
         }
     }
 
+    let one_hand = Cards::ALL.clone().pick(13).unwrap();
+    let opening_lead = Starting {
+        hands: [one_hand, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY],
+        unknown: Cards::ALL - one_hand,
+    };
+    println!(
+        "opening lead cards, trump    {}",
+        bench(|| Naive::new(Some(Suit::Hearts)).score(opening_lead).mean())
+    );
+    println!(
+        "opening lead cards, no trump {}",
+        bench(|| Naive::new(None).score(opening_lead).mean())
+    );
     for n in 1..14 {
         println!(
             "{} cards, trump    {}",
@@ -124,5 +137,4 @@ fn main() {
             0
         )
     );
-
 }

@@ -87,6 +87,34 @@ impl BidAI for ConventionalBid {
 pub struct RandomPlay;
 impl PlayAI for RandomPlay {
     fn play(&mut self, game: &GameState) -> Card {
+        let starting = game.starting().expect("playing at the wrong time");
+        if game.played.len() == 0 && starting.hands[0].len() == 13 {
+            // Heuristic for opening lead!
+            if let Some(Bid::Suit(_, _trump)) = game.highest_contract_bid() {
+            } else {
+                // NT: 4th down from longest and strongest suit
+                let suits: Vec<Cards> = Suit::ALL
+                    .iter()
+                    .cloned()
+                    .map(|suit| starting.hands[0].in_suit(suit))
+                    .collect();
+                let lengths: Vec<usize> = suits
+                    .iter()
+                    .cloned()
+                    .map(|cards| cards.len() * 8 + cards.high_card_points())
+                    .collect();
+                let max_length = lengths.iter().cloned().max().unwrap();
+                for i in 0..4 {
+                    if lengths[i] == max_length {
+                        for (n, c) in suits[i].rev().enumerate() {
+                            if n == 3 {
+                                return c;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         game.could_be_played().pick(1).unwrap().next().unwrap()
     }
 }

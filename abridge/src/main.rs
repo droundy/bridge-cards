@@ -1,4 +1,4 @@
-use ai::{Convention};
+use ai::Convention;
 use bridge_deck::{Card, Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{FutureExt, StreamExt};
@@ -272,6 +272,28 @@ impl GameState {
             ew_tricks: 0,
             last_action: std::time::Instant::now(),
             conventions: vec![ai::Convention::sheets()],
+        }
+    }
+    fn starting(&self) -> Option<bridge_solver::Starting> {
+        let lead = self.lead?;
+        let playing = self.turn()?;
+        let mut unknown = self.hands[Seat::South]
+            + self.hands[Seat::North]
+            + self.hands[Seat::East]
+            + self.hands[Seat::West];
+        let mut hands = [Cards::EMPTY, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY];
+        unknown -= self.hands[playing];
+        hands[(playing as usize + 4 - lead as usize) % 4] = self.hands[playing];
+        for (i,c) in self.played.iter().cloned().enumerate() {
+            hands[i] += Cards::singleton(c);
+            unknown -= Cards::singleton(c);
+        }
+        if let Some(dummy) = self.dummy() {
+            hands[(dummy as usize + 4 - lead as usize) % 4] = self.hands[dummy];
+            unknown -= self.hands[dummy];
+            Some(bridge_solver::Starting { hands, unknown })
+        } else {
+            Some(bridge_solver::Starting { hands, unknown })
         }
     }
     fn bid_convention(&self, bids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
