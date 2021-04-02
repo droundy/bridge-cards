@@ -178,8 +178,20 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
 #[test]
 fn test_opening_lead() {
     use std::str::FromStr;
-    assert_eq!(Card::C3, opening_lead(None, Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()));
-    assert_eq!(Card::CK, opening_lead(Some(Suit::Hearts), Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()));
+    assert_eq!(
+        Card::C3,
+        opening_lead(
+            None,
+            Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()
+        )
+    );
+    assert_eq!(
+        Card::CK,
+        opening_lead(
+            Some(Suit::Hearts),
+            Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()
+        )
+    );
 }
 
 #[derive(Debug)]
@@ -187,14 +199,38 @@ pub struct RandomPlay;
 impl PlayAI for RandomPlay {
     fn play(&mut self, game: &GameState) -> Card {
         let starting = game.starting().expect("playing at the wrong time");
+        let nt_or_trump = if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {
+            Some(trump)
+        } else {
+            None
+        };
         if game.played.len() == 0 && starting.hands[0].len() == 13 {
-            if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {
-                return opening_lead(Some(trump), starting.hands[0]);
+            opening_lead(nt_or_trump, starting.hands[0])
+        } else if game.hands.iter().map(|h| h.len()).max().unwrap() < 10
+            && game.could_be_played().clone().len() > 1
+        {
+            let hands: &[Card] = if game.played.len() == 4 {
+                &[]
             } else {
-                return opening_lead(None, starting.hands[0]);
+                &game.played
+            };
+            let starting = game.starting().unwrap();
+            for i in 0..4 {
+                println!("   {}: {}", i, starting.hands[i]);
             }
+            println!("   extra: {}", starting.unknown);
+            bridge_solver::Naive::new(nt_or_trump)
+                .score_after(starting, hands)
+                .1
+        } else {
+            // The follwoing should just unwrap, since there should always be a
+            game.could_be_played()
+                .clone()
+                .pick(1)
+                .unwrap()
+                .next()
+                .unwrap_or(Card::S2)
         }
-        game.could_be_played().pick(1).unwrap().next().unwrap()
     }
 }
 
@@ -1266,7 +1302,7 @@ impl Convention {
         });
 
         for opening in [Diamonds, Hearts, Spades].iter().cloned() {
-            let mut max = max.with_hcp(10);
+            let mut max = max.with_hcp(10).with_lhcp(12);
             max.length[opening] = 6;
             let mut min = min.with_hcp(5);
             min.length[opening] = 6;
@@ -1281,7 +1317,7 @@ impl Convention {
             });
         }
         for opening in [Clubs, Diamonds, Hearts, Spades].iter().cloned() {
-            let mut max = max.with_hcp(9);
+            let mut max = max.with_hcp(9).with_lhcp(12);
             max.length[opening] = 7;
             let mut min = min.with_hcp(5);
             min.length[opening] = 7;

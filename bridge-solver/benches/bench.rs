@@ -82,6 +82,31 @@ fn main() {
         println!("   \"{}\".parse().unwrap(),", cards.pick(13).unwrap());
     }
 
+    fn gen_starting_single_dummy(n: usize) -> Starting {
+        let mut rng = SmallRng::seed_from_u64(3);
+        let mut cards = Cards::ALL;
+        let mut hands = [Cards::EMPTY; 4];
+        let mut unknown = Cards::EMPTY;
+        for i in [1, 3].iter().cloned() {
+            hands[i] = cards.pick_rng(&mut rng, n).unwrap();
+        }
+        unknown += cards.pick_rng(&mut rng, 2*n).unwrap();
+
+        Starting { hands, unknown }
+    }
+    for n in 1..14 {
+        println!(
+            "declarer {} cards, trump    {}",
+            n,
+            bench(|| Naive::new(Some(Suit::Hearts)).score(gen_starting_single_dummy(n)).mean())
+        );
+        println!(
+            "declarer {} cards, no trump {}",
+            n,
+            bench(|| Naive::new(None).score(gen_starting_single_dummy(n)).mean())
+        );
+    }
+
     fn gen_starting(n: usize) -> Starting {
         let mut rng = SmallRng::seed_from_u64(3);
         let mut cards = Cards::ALL;
@@ -105,11 +130,17 @@ fn main() {
     let dummy_after_opening_lead_play = one_hand.clone().pick(1).unwrap().next().unwrap();
     println!(
         "next after opening lead, trump    {}",
-        bench(|| Naive::new(Some(Suit::Hearts)).score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play]).0.mean())
+        bench(|| Naive::new(Some(Suit::Hearts))
+            .score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play])
+            .0
+            .mean())
     );
     println!(
         "next after opening lead, no trump {}",
-        bench(|| Naive::new(None).score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play]).0.mean())
+        bench(|| Naive::new(None)
+            .score_after(dummy_after_opening_lead, &[dummy_after_opening_lead_play])
+            .0
+            .mean())
     );
     println!(
         "opening lead cards, trump    {}",

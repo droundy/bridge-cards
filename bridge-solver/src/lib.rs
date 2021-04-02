@@ -426,7 +426,12 @@ impl Naive {
         // for i in 0..4 {
         //     println!("possible_plays are {}", possible_plays[i]);
         // }
-        let mut card_to_play = Card::S2;
+        let mut card_to_play = starting.hands[plays.len() % 4]
+            .clone()
+            .pick(1)
+            .expect("There is no card to play?!")
+            .next()
+            .unwrap();
         let mut best = Score::MIN;
         for c0 in possible_plays[0] {
             // println!("considering playing first {}", c0);
