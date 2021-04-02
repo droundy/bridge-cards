@@ -225,7 +225,6 @@ impl PlayAI for RandomPlay {
         } else {
             // The follwoing should just unwrap, since there should always be a
             game.could_be_played()
-                .clone()
                 .pick(1)
                 .unwrap()
                 .next()

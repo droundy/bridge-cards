@@ -284,7 +284,7 @@ impl GameState {
         let mut hands = [Cards::EMPTY, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY];
         unknown -= self.hands[playing];
         hands[(playing as usize + 4 - lead as usize) % 4] = self.hands[playing];
-        for (i,c) in self.played.iter().cloned().enumerate() {
+        for (i, c) in self.played.iter().cloned().enumerate() {
             hands[i] += Cards::singleton(c);
             unknown -= Cards::singleton(c);
         }
@@ -793,6 +793,7 @@ async fn ws_connected(
                         } else {
                             let seat = turn;
                             let card = player.play(&g);
+                            assert!(g.could_be_played().contains(card));
                             if g.played.len() == 4 {
                                 g.played.clear();
                                 // Give players some time to see the finished trick...
