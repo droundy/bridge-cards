@@ -83,36 +83,115 @@ impl BidAI for ConventionalBid {
     }
 }
 
+fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
+    // Heuristic for opening lead!
+    if let Some(trump) = trump {
+        let mut suits_to_consider = [Cards::EMPTY; 3];
+        let mut goodness = [1000usize; 3];
+        for (i, suit) in Suit::ALL
+            .iter()
+            .cloned()
+            .filter(|&s| s != trump)
+            .enumerate()
+        {
+            let cards = hand.in_suit(suit);
+            suits_to_consider[i] = cards;
+
+            if cards.len() == 1 {
+                goodness[i] += 100;
+            }
+            let have_ace = cards.aces().non_empty();
+            let have_king = cards.kings().non_empty();
+            let have_queen = cards.queens().non_empty();
+            let have_jack = cards.jacks().non_empty();
+            let have_ten = cards.tens().non_empty();
+            if have_ace && have_king {
+                goodness[i] += 6;
+            }
+            if have_queen && have_king {
+                goodness[i] += 4;
+            }
+            if have_queen && have_jack {
+                goodness[i] += 3;
+            }
+            if have_ten && have_jack {
+                goodness[i] += 2;
+            }
+            goodness[i] += 2 * cards.len();
+            goodness[i] += cards.high_card_points();
+            if have_ace && !have_king && cards.len() > 1 {
+                goodness[i] -= 100;
+            }
+            if have_king && !have_ace && !have_queen && cards.len() > 1 {
+                goodness[i] -= 7;
+            }
+        }
+        let best_goodness = goodness.iter().cloned().max().unwrap();
+        for i in (0..3).rev() {
+            if goodness[i] == best_goodness {
+                let cards = suits_to_consider[i];
+                let have_ace = cards.aces().non_empty();
+                let have_king = cards.kings().non_empty();
+                let have_queen = cards.queens().non_empty();
+                let have_jack = cards.jacks().non_empty();
+                let have_ten = cards.tens().non_empty();
+                if have_ace && have_king {
+                    return cards.kings().next().unwrap();
+                } else if (have_king && have_queen)
+                    || (have_queen && have_jack)
+                    || (cards.len() == 2)
+                {
+                    return cards.rev().next().unwrap();
+                } else if have_jack && have_ten {
+                    return cards.jacks().next().unwrap();
+                }
+                // The normal advice is not to do something random, but
+                return cards.clone().pick(1).unwrap().next().unwrap();
+            }
+        }
+    } else {
+        // NT: 4th down from longest and strongest suit
+        let suits: Vec<Cards> = Suit::ALL
+            .iter()
+            .cloned()
+            .map(|suit| hand.in_suit(suit))
+            .collect();
+        let lengths: Vec<usize> = suits
+            .iter()
+            .cloned()
+            .map(|cards| cards.len() * 8 + cards.high_card_points())
+            .collect();
+        let max_length = lengths.iter().cloned().max().unwrap();
+        for i in 0..4 {
+            if lengths[i] == max_length {
+                for (n, c) in suits[i].rev().enumerate() {
+                    if n == 3 {
+                        return c;
+                    }
+                }
+            }
+        }
+    }
+    hand.clone().pick(1).unwrap().next().unwrap()
+}
+
+#[test]
+fn test_opening_lead() {
+    use std::str::FromStr;
+    assert_eq!(Card::C3, opening_lead(None, Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()));
+    assert_eq!(Card::CK, opening_lead(Some(Suit::Hearts), Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()));
+}
+
 #[derive(Debug)]
 pub struct RandomPlay;
 impl PlayAI for RandomPlay {
     fn play(&mut self, game: &GameState) -> Card {
         let starting = game.starting().expect("playing at the wrong time");
         if game.played.len() == 0 && starting.hands[0].len() == 13 {
-            // Heuristic for opening lead!
-            if let Some(Bid::Suit(_, _trump)) = game.highest_contract_bid() {
+            if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {
+                return opening_lead(Some(trump), starting.hands[0]);
             } else {
-                // NT: 4th down from longest and strongest suit
-                let suits: Vec<Cards> = Suit::ALL
-                    .iter()
-                    .cloned()
-                    .map(|suit| starting.hands[0].in_suit(suit))
-                    .collect();
-                let lengths: Vec<usize> = suits
-                    .iter()
-                    .cloned()
-                    .map(|cards| cards.len() * 8 + cards.high_card_points())
-                    .collect();
-                let max_length = lengths.iter().cloned().max().unwrap();
-                for i in 0..4 {
-                    if lengths[i] == max_length {
-                        for (n, c) in suits[i].rev().enumerate() {
-                            if n == 3 {
-                                return c;
-                            }
-                        }
-                    }
-                }
+                return opening_lead(None, starting.hands[0]);
             }
         }
         game.could_be_played().pick(1).unwrap().next().unwrap()

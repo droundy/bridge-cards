@@ -321,6 +321,10 @@ impl Cards {
     pub const fn is_empty(&self) -> bool {
         self.bits == 0
     }
+    /// Is it non-empty?
+    pub const fn non_empty(&self) -> bool {
+        self.bits != 0
+    }
 
     /// insert a card to the deck or hand
     pub const fn insert(self, card: Card) -> Cards {
@@ -506,6 +510,16 @@ impl Cards {
     /// Just the jacks from this hand
     pub const fn jacks(self) -> Cards {
         self.intersection(Cards::JACKS)
+    }
+    /// The tens
+    pub const TENS: Cards = Cards::EMPTY
+        .insert(Card::C10)
+        .insert(Card::D10)
+        .insert(Card::H10)
+        .insert(Card::S10);
+    /// Just the tens from this hand
+    pub const fn tens(self) -> Cards {
+        self.intersection(Cards::TENS)
     }
 
     /// High card points
