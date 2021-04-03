@@ -284,9 +284,11 @@ impl GameState {
         let mut hands = [Cards::EMPTY, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY];
         unknown -= self.hands[playing];
         hands[(playing as usize + 4 - lead as usize) % 4] = self.hands[playing];
-        for (i, c) in self.played.iter().cloned().enumerate() {
-            hands[i] += Cards::singleton(c);
-            unknown -= Cards::singleton(c);
+        if self.played.len() < 4 {
+            for (i, c) in self.played.iter().cloned().enumerate() {
+                hands[i] += Cards::singleton(c);
+                unknown -= Cards::singleton(c);
+            }
         }
         if let Some(dummy) = self.dummy() {
             hands[(dummy as usize + 4 - lead as usize) % 4] = self.hands[dummy];
