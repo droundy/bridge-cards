@@ -8,7 +8,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 /// A single card
-#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 pub struct Card {
     offset: u8,
 }
@@ -734,6 +734,27 @@ impl Iterator for Cards {
             Some(Card { offset: next as u8 })
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len(), Some(self.len()))
+    }
+
+    fn count(self) -> usize {
+        self.len()
+    }
+
+    fn max(self) -> Option<Card> {
+        if self.bits == 0 {
+            None
+        } else {
+            let next = self.bits.leading_zeros();
+            Some(Card { offset: (63 - next) as u8 })
+        }
+    }
+
+    fn min(self) -> Option<Card> {
+        self.clone().next()
+    }
 }
 
 impl std::fmt::Display for Cards {
@@ -872,8 +893,12 @@ fn all_cards() {
 fn iterate() {
     let mut cards = Cards::EMPTY;
     assert_eq!(cards.next(), None);
+    assert_eq!(cards.max(), None);
+    assert_eq!(cards.min(), None);
     assert_eq!(cards.len(), 0);
     cards = cards.insert(Card::C2);
+    assert_eq!(cards.min(), Some(Card::C2));
+    assert_eq!(cards.max(), Some(Card::C2));
     assert_eq!(cards.len(), 1);
     cards = cards.insert(Card::C4);
     assert_eq!(cards.len(), 2);
@@ -1011,7 +1036,7 @@ impl CardMap {
     /// Create an empty CardMap
     pub fn new() -> Self {
         CardMap {
-            internal: [Card::new(Suit::Clubs, 0); 64]
+            internal: [Card::new(Suit::Clubs, 0); 64],
         }
     }
 }
@@ -1029,7 +1054,6 @@ impl std::ops::IndexMut<Card> for CardMap {
         &mut self.internal[index.offset as usize]
     }
 }
-
 
 /// A data type to hold an array of items, one per suit.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

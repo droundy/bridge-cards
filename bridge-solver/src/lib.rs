@@ -290,10 +290,29 @@ impl PartialEq for Score {
         self.mean() == other.mean()
     }
 }
+impl Eq for Score {
+    fn assert_receiver_is_total_eq(&self) {}
+}
 
 impl PartialOrd for Score {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.mean().partial_cmp(&other.mean())
+    }
+}
+impl Ord for Score {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.mean().partial_cmp(&other.mean()).unwrap()
+    }
+}
+
+impl std::ops::Add<Score> for Score {
+    type Output = Score;
+
+    fn add(self, rhs: Score) -> Self::Output {
+        Score {
+            tot_score: self.tot_score + rhs.tot_score,
+            num: self.num + rhs.num,
+        }
     }
 }
 
@@ -326,6 +345,17 @@ impl std::ops::Add<TrickTaken> for Score {
     }
 }
 
+/// How carefully do we want to solve?
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+enum Thoroughness {
+    /// Only consider playing high/low card in a suit
+    HighLow,
+    /// Imagine one random deal
+    Normal,
+    /// Imagine N random deals
+    Statistical(usize),
+}
+
 /// The Naive solver assumes no knowledge from the bidding.
 //  It's really only suitable for declarer play when opponents did not bid, and
 //  even then is suboptimal on weak partnerships.
@@ -336,10 +366,20 @@ pub struct Naive {
     /// What is trump?
     trump: Option<Suit>,
     rng: SmallRng,
+    care: Thoroughness,
 }
 
 impl Naive {
     pub fn new(trump: Option<Suit>) -> Self {
+        Naive::with_thoroughness(trump, Thoroughness::Normal)
+    }
+    pub fn statistical(trump: Option<Suit>, samples: usize) -> Self {
+        Naive::with_thoroughness(trump, Thoroughness::Statistical(samples))
+    }
+    pub fn high_low(trump: Option<Suit>) -> Self {
+        Naive::with_thoroughness(trump, Thoroughness::HighLow)
+    }
+    fn with_thoroughness(trump: Option<Suit>, care: Thoroughness) -> Self {
         let mut cache = std::collections::HashMap::new();
         // let cache = dashmap::DashMap::new();
         // Prepopulate cache with stopping point of no cards->no points.
@@ -357,6 +397,33 @@ impl Naive {
             cache,
             trump,
             rng: SmallRng::from_entropy(),
+            care,
+        }
+    }
+
+    fn thorough_plays(&self, plays: Cards) -> Cards {
+        if self.care == Thoroughness::HighLow {
+            let mut p = Cards::EMPTY;
+            for suit in Suit::ALL.clone().iter().cloned() {
+                let s = plays.in_suit(suit);
+                if s.len() > 2 {
+                    p = p.insert(plays.max().unwrap());
+                    p = p.insert(plays.min().unwrap());
+                } else {
+                    p += s;
+                }
+            }
+            p
+        } else {
+            plays
+        }
+    }
+
+    fn num_statistics(&self) -> usize {
+        if let Thoroughness::Statistical(n) = self.care {
+            n
+        } else {
+            1
         }
     }
 
@@ -365,50 +432,57 @@ impl Naive {
             // println!("found score {:?}", score);
             return *score;
         }
-        let hands = starting.random_hands(&mut self.rng);
-        let mut best = Score::MIN;
-        for c0 in hands[0] {
-            let mut worst = Score::MAX;
-            for c1 in hands[1].following_suit(c0.suit()) {
-                let mut best = Score::MIN;
-                for c2 in hands[2].following_suit(c0.suit()) {
-                    let mut worst = Score::MAX;
-                    for c3 in hands[3].following_suit(c0.suit()) {
-                        let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
-                        let sc = self.score(trick_taken.starting());
-                        let mysc = sc + trick_taken;
-                        // println!(
-                        //     " {} {} {} {} -> {} from {:?} and {:?}",
-                        //     c0,
-                        //     c1,
-                        //     c2,
-                        //     c3,
-                        //     mysc.mean(),
-                        //     sc,
-                        //     trick_taken
-                        // );
-                        if mysc < worst {
-                            worst = mysc;
-                        // println!("worst = {}", worst.mean());
-                        } else {
-                            // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+        let mut score = Score {
+            tot_score: 0,
+            num: 0,
+        };
+        for _ in 0..self.num_statistics() {
+            let hands = starting.random_hands(&mut self.rng);
+            let mut best = Score::MIN;
+            for c0 in self.thorough_plays(hands[0]) {
+                let mut worst = Score::MAX;
+                for c1 in self.thorough_plays(hands[1].following_suit(c0.suit())) {
+                    let mut best = Score::MIN;
+                    for c2 in self.thorough_plays(hands[2].following_suit(c0.suit())) {
+                        let mut worst = Score::MAX;
+                        for c3 in self.thorough_plays(hands[3].following_suit(c0.suit())) {
+                            let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
+                            let sc = self.score(trick_taken.starting());
+                            let mysc = sc + trick_taken;
+                            // println!(
+                            //     " {} {} {} {} -> {} from {:?} and {:?}",
+                            //     c0,
+                            //     c1,
+                            //     c2,
+                            //     c3,
+                            //     mysc.mean(),
+                            //     sc,
+                            //     trick_taken
+                            // );
+                            if mysc < worst {
+                                worst = mysc;
+                            // println!("worst = {}", worst.mean());
+                            } else {
+                                // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+                            }
+                        }
+                        if worst > best {
+                            best = worst;
                         }
                     }
                     if worst > best {
-                        best = worst;
+                        worst = best;
                     }
                 }
                 if worst > best {
-                    worst = best;
+                    best = worst;
+                    // println!("Move {} gives {}", c0, best.mean());
                 }
             }
-            if worst > best {
-                best = worst;
-                // println!("Move {} gives {}", c0, best.mean());
-            }
+            score = score + best;
         }
-        self.cache.insert(starting, best);
-        best
+        self.cache.insert(starting, score);
+        score
     }
 
     pub fn score_after(&mut self, mut starting: Starting, plays: &[Card]) -> (Score, Card) {
@@ -418,81 +492,103 @@ impl Naive {
             starting.hands[i] += Cards::singleton(card);
             starting.unknown -= Cards::singleton(card);
         }
-        let hands = starting.random_hands(&mut self.rng);
-        let mut possible_plays = hands.clone();
-        for (i, c) in plays.iter().cloned().enumerate() {
-            possible_plays[i] = Cards::singleton(c);
-        }
-        // for i in 0..4 {
-        //     println!("possible_plays are {}", possible_plays[i]);
-        // }
+        let mut score = Score {
+            tot_score: 0,
+            num: 0,
+        };
+        let mut play_result: std::collections::HashMap<Card, Score> = std::collections::HashMap::new();
         let mut card_to_play = starting.hands[plays.len() % 4]
             .clone()
             .pick(1)
             .expect("There is no card to play?!")
             .next()
             .unwrap();
-        let mut best = Score::MIN;
-        for c0 in possible_plays[0] {
-            // println!("considering playing first {}", c0);
-            let mut worst = Score::MAX;
-            for c1 in possible_plays[1].following_suit(c0.suit()) {
-                let mut best = Score::MIN;
-                for c2 in possible_plays[2].following_suit(c0.suit()) {
-                    let mut worst = Score::MAX;
-                    for c3 in possible_plays[3].following_suit(c0.suit()) {
-                        // println!("considering playing fourth {}", c3);
-                        let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
-                        let sc = self.score(trick_taken.starting());
-                        // println!("score is {:?}", sc);
-                        // println!("trick taken is {:?}", trick_taken);
-                        let mysc = sc + trick_taken;
-                        // println!(
-                        //     " {} {} {} {} -> {} from {:?} and {:?}",
-                        //     c0,
-                        //     c1,
-                        //     c2,
-                        //     c3,
-                        //     mysc.mean(),
-                        //     sc,
-                        //     trick_taken
-                        // );
-                        if mysc < worst {
-                            worst = mysc;
-                            if plays.len() == 3 {
-                                card_to_play = c3;
+        for _ in 0..self.num_statistics() {
+            let hands = starting.random_hands(&mut self.rng);
+            let mut possible_plays = hands.clone();
+            for (i, c) in plays.iter().cloned().enumerate() {
+                possible_plays[i] = Cards::singleton(c);
+            }
+            // for i in 0..4 {
+            //     println!("possible_plays are {}", possible_plays[i]);
+            // }
+            let mut best = Score::MIN;
+            for c0 in self.thorough_plays(possible_plays[0]) {
+                // println!("considering playing first {}", c0);
+                let mut worst = Score::MAX;
+                for c1 in self.thorough_plays(possible_plays[1].following_suit(c0.suit())) {
+                    let mut best = Score::MIN;
+                    for c2 in self.thorough_plays(possible_plays[2].following_suit(c0.suit())) {
+                        let mut worst = Score::MAX;
+                        for c3 in self.thorough_plays(possible_plays[3].following_suit(c0.suit())) {
+                            // println!("considering playing fourth {}", c3);
+                            let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
+                            let sc = self.score(trick_taken.starting());
+                            // println!("score is {:?}", sc);
+                            // println!("trick taken is {:?}", trick_taken);
+                            let mysc = sc + trick_taken;
+                            // println!(
+                            //     " {} {} {} {} -> {} from {:?} and {:?}",
+                            //     c0,
+                            //     c1,
+                            //     c2,
+                            //     c3,
+                            //     mysc.mean(),
+                            //     sc,
+                            //     trick_taken
+                            // );
+                            if mysc < worst {
+                                worst = mysc;
+                                if plays.len() == 3 {
+                                    let s = play_result.get(&c3).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                                    play_result.insert(c3, s + worst);
+                                    card_to_play = c3;
+                                }
+                            // println!("worst = {}", worst.mean());
+                            } else {
+                                // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
                             }
-                        // println!("worst = {}", worst.mean());
-                        } else {
-                            // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+                        }
+                        if worst > best {
+                            best = worst;
+                            if plays.len() == 2 {
+                                let s = play_result.get(&c2).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                                play_result.insert(c2, s + best);
+                                card_to_play = c2;
+                            }
                         }
                     }
                     if worst > best {
-                        best = worst;
-                        if plays.len() == 2 {
-                            card_to_play = c2;
+                        worst = best;
+                        if plays.len() == 1 {
+                            let s = play_result.get(&c1).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                            play_result.insert(c1, s + best);
+                            card_to_play = c1;
                         }
                     }
                 }
                 if worst > best {
-                    worst = best;
-                    if plays.len() == 1 {
-                        card_to_play = c1;
+                    best = worst;
+                    if plays.len() == 0 {
+                        let s = play_result.get(&c0).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                        play_result.insert(c0, s + best);
+                        card_to_play = c0;
                     }
+                    // println!("Move {} gives {}", c0, best.mean());
                 }
             }
-            if worst > best {
-                best = worst;
-                if plays.len() == 0 {
-                    card_to_play = c0;
-                }
-                // println!("Move {} gives {}", c0, best.mean());
-            }
+            score = score + best;
         }
         if plays.len() == 0 {
-            self.cache.insert(starting, best);
+            self.cache.insert(starting, score);
         }
-        (best, card_to_play)
+        let bestscore = play_result.values().cloned().max().unwrap();
+        for (c,s) in play_result.iter() {
+            if *s == bestscore {
+                return (score, *c);
+            }
+        }
+        (score, card_to_play)
     }
 }
 

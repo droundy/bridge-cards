@@ -95,16 +95,25 @@ fn main() {
         Starting { hands, unknown }
     }
     for n in 1..14 {
+        println!("{} cards declarer", n);
         println!(
-            "declarer {} cards, trump    {}",
-            n,
+            "     trump        {}",
             bench(|| Naive::new(Some(Suit::Hearts)).score(gen_starting_single_dummy(n)).mean())
         );
         println!(
-            "declarer {} cards, no trump {}",
-            n,
+            "    high-low      {}",
+            bench(|| Naive::high_low(Some(Suit::Hearts)).score(gen_starting_single_dummy(n)).mean())
+        );
+        println!(
+            "    statistical 8 {}",
+            bench(|| Naive::statistical(Some(Suit::Hearts), 8).score(gen_starting_single_dummy(n)).mean())
+        );
+        println!();
+        println!(
+            "    no trump      {}",
             bench(|| Naive::new(None).score(gen_starting_single_dummy(n)).mean())
         );
+        println!();
     }
 
     fn gen_starting(n: usize) -> Starting {

@@ -204,11 +204,10 @@ impl PlayAI for RandomPlay {
         } else {
             None
         };
+        let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
         if game.played.len() == 0 && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
-        } else if game.hands.iter().map(|h| h.len()).max().unwrap() < 10
-            && game.could_be_played().clone().len() > 1
-        {
+        } else if tricks_left < 11 && game.could_be_played().clone().len() > 1 {
             let hands: &[Card] = if game.played.len() == 4 {
                 &[]
             } else {
@@ -219,11 +218,17 @@ impl PlayAI for RandomPlay {
                 println!("   {}: {}", i, starting.hands[i]);
             }
             println!("   extra: {}", starting.unknown);
-            bridge_solver::Naive::new(nt_or_trump)
-                .score_after(starting, hands)
-                .1
+            let mut solver = if tricks_left < 7 {
+                bridge_solver::Naive::statistical(nt_or_trump, 8)
+            } else if tricks_left < 9 {
+                bridge_solver::Naive::new(nt_or_trump)
+            } else {
+                bridge_solver::Naive::high_low(nt_or_trump)
+            };
+            solver.score_after(starting, hands).1
         } else {
-            // The follwoing should just unwrap, since there should always be a
+            // The follwoing should just unwrap, since there should always be a card to pick
+            println!("could be played: {}", game.could_be_played());
             game.could_be_played()
                 .pick(1)
                 .unwrap()
