@@ -496,14 +496,16 @@ impl Naive {
             tot_score: 0,
             num: 0,
         };
-        let mut play_result: std::collections::HashMap<Card, Score> = std::collections::HashMap::new();
+        let statistics = self.num_statistics();
+        let mut play_result: std::collections::HashMap<Card, Score> =
+            std::collections::HashMap::new();
         let mut card_to_play = starting.hands[plays.len() % 4]
             .clone()
             .pick(1)
             .expect("There is no card to play?!")
             .next()
             .unwrap();
-        for _ in 0..std::cmp::max(16, self.num_statistics()) {
+        for _ in 0..std::cmp::max(16, statistics) {
             let hands = starting.random_hands(&mut self.rng);
             let mut possible_plays = hands.clone();
             for (i, c) in plays.iter().cloned().enumerate() {
@@ -526,7 +528,11 @@ impl Naive {
                             let sc = self.score(trick_taken.starting());
                             // println!("score is {:?}", sc);
                             // println!("trick taken is {:?}", trick_taken);
-                            let mysc = sc + trick_taken;
+                            let mysc = if statistics == 1 {
+                                sc + trick_taken + trick_taken
+                            } else {
+                                sc + trick_taken
+                            };
                             // println!(
                             //     " {} {} {} {} -> {} from {:?} and {:?}",
                             //     c0,
@@ -540,7 +546,13 @@ impl Naive {
                             if mysc < worst {
                                 worst = mysc;
                                 if plays.len() == 3 {
-                                    let s = play_result.get(&c3).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                                    let s = play_result
+                                        .get(&c3)
+                                        .unwrap_or(&Score {
+                                            tot_score: 0,
+                                            num: 0,
+                                        })
+                                        .clone();
                                     play_result.insert(c3, s + worst);
                                     card_to_play = c3;
                                 }
@@ -552,7 +564,13 @@ impl Naive {
                         if worst > best {
                             best = worst;
                             if plays.len() == 2 {
-                                let s = play_result.get(&c2).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                                let s = play_result
+                                    .get(&c2)
+                                    .unwrap_or(&Score {
+                                        tot_score: 0,
+                                        num: 0,
+                                    })
+                                    .clone();
                                 play_result.insert(c2, s + best);
                                 card_to_play = c2;
                             }
@@ -561,7 +579,13 @@ impl Naive {
                     if worst > best {
                         worst = best;
                         if plays.len() == 1 {
-                            let s = play_result.get(&c1).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                            let s = play_result
+                                .get(&c1)
+                                .unwrap_or(&Score {
+                                    tot_score: 0,
+                                    num: 0,
+                                })
+                                .clone();
                             play_result.insert(c1, s + best);
                             card_to_play = c1;
                         }
@@ -570,7 +594,13 @@ impl Naive {
                 if worst > best {
                     best = worst;
                     if plays.len() == 0 {
-                        let s = play_result.get(&c0).unwrap_or(&Score { tot_score: 0, num: 0}).clone();
+                        let s = play_result
+                            .get(&c0)
+                            .unwrap_or(&Score {
+                                tot_score: 0,
+                                num: 0,
+                            })
+                            .clone();
                         play_result.insert(c0, s + best);
                         card_to_play = c0;
                     }
@@ -583,7 +613,7 @@ impl Naive {
             self.cache.insert(starting, score);
         }
         let bestscore = play_result.values().cloned().max().unwrap();
-        for (c,s) in play_result.iter() {
+        for (c, s) in play_result.iter() {
             if *s == bestscore {
                 return (score, *c);
             }
