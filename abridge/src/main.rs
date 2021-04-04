@@ -385,7 +385,9 @@ impl GameState {
                 0 | 4 => lead,
                 n => lead + n,
             };
-            if play_seat == dummy {
+            if self.hands[dummy].len() == 0 {
+                None
+            } else if play_seat == dummy {
                 Some(declarer)
             } else {
                 Some(play_seat)
@@ -792,7 +794,7 @@ async fn ws_connected(
                                     g.hand_done = true;
                                 }
                             }
-                        } else {
+                        } else if g.hands[turn].len() > 0 || g.hands[turn + 2].len() > 0 {
                             let seat = turn;
                             let card = player.play(&g);
                             assert!(g.could_be_played().contains(card));

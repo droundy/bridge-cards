@@ -503,7 +503,7 @@ impl Naive {
             .expect("There is no card to play?!")
             .next()
             .unwrap();
-        for _ in 0..self.num_statistics() {
+        for _ in 0..std::cmp::max(16, self.num_statistics()) {
             let hands = starting.random_hands(&mut self.rng);
             let mut possible_plays = hands.clone();
             for (i, c) in plays.iter().cloned().enumerate() {
@@ -513,14 +513,14 @@ impl Naive {
             //     println!("possible_plays are {}", possible_plays[i]);
             // }
             let mut best = Score::MIN;
-            for c0 in self.thorough_plays(possible_plays[0]) {
+            for c0 in possible_plays[0] {
                 // println!("considering playing first {}", c0);
                 let mut worst = Score::MAX;
-                for c1 in self.thorough_plays(possible_plays[1].following_suit(c0.suit())) {
+                for c1 in possible_plays[1].following_suit(c0.suit()) {
                     let mut best = Score::MIN;
-                    for c2 in self.thorough_plays(possible_plays[2].following_suit(c0.suit())) {
+                    for c2 in possible_plays[2].following_suit(c0.suit()) {
                         let mut worst = Score::MAX;
-                        for c3 in self.thorough_plays(possible_plays[3].following_suit(c0.suit())) {
+                        for c3 in possible_plays[3].following_suit(c0.suit()) {
                             // println!("considering playing fourth {}", c3);
                             let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
                             let sc = self.score(trick_taken.starting());
