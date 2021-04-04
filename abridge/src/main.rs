@@ -385,7 +385,7 @@ impl GameState {
                 0 | 4 => lead,
                 n => lead + n,
             };
-            if self.hands[dummy].len() == 0 {
+            if self.hands[play_seat].len() == 0 {
                 None
             } else if play_seat == dummy {
                 Some(declarer)
