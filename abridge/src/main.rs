@@ -290,8 +290,9 @@ impl GameState {
                 unknown -= Cards::singleton(c);
             }
         }
+        bridge_solver::Starting { hands, unknown }.check();
         if let Some(dummy) = self.dummy() {
-            hands[(dummy as usize + 4 - lead as usize) % 4] = self.hands[dummy];
+            hands[(dummy as usize + 4 - lead as usize) % 4] += self.hands[dummy];
             unknown -= self.hands[dummy];
             Some(bridge_solver::Starting { hands, unknown })
         } else {

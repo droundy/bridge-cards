@@ -204,11 +204,12 @@ impl PlayAI for RandomPlay {
         } else {
             None
         };
+        println!("trump is {:?}", nt_or_trump);
         let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
-        if game.played.len() == 0 && starting.hands[0].len() == 13 {
+        if game.played.len() % 4 == 0 && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
-        } else if tricks_left < 11 && game.could_be_played().clone().len() > 1 {
-            let hands: &[Card] = if game.played.len() == 4 {
+        } else if tricks_left < 14 && game.could_be_played().clone().len() > 1 {
+            let cards_played: &[Card] = if game.played.len() == 4 {
                 &[]
             } else {
                 &game.played
@@ -218,14 +219,15 @@ impl PlayAI for RandomPlay {
                 println!("   {}: {}", i, starting.hands[i]);
             }
             println!("   extra: {}", starting.unknown);
+            starting.check();
             let mut solver = if tricks_left < 7 {
                 bridge_solver::Naive::statistical(nt_or_trump, 8)
-            } else if tricks_left < 9 {
-                bridge_solver::Naive::new(nt_or_trump)
+            } else if tricks_left < 10 {
+                bridge_solver::Naive::statistical(nt_or_trump, 2)
             } else {
-                bridge_solver::Naive::high_low(nt_or_trump)
+                bridge_solver::Naive::oneround(nt_or_trump)
             };
-            solver.score_after(starting, hands).1
+            solver.score_after(starting, cards_played).1
         } else {
             // The follwoing should just unwrap, since there should always be a card to pick
             println!("could be played: {}", game.could_be_played());
@@ -986,7 +988,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Impossible response",
             regex: RegexSet::new(&[r"^(P )*1C [PX] 1N$"]).unwrap(),
-            min,
+            min: max,
             max,
             the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
             forcing: Forcing::Passable,
