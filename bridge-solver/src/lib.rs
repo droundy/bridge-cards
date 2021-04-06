@@ -516,7 +516,18 @@ impl Naive {
                             } else {
                                 self.score(trick_taken.starting())
                             };
-                            let mysc = sc + trick_taken;
+                            let mysc = if self.care != Thoroughness::OneRound {
+                                sc + trick_taken
+                            } else {
+                                if let TrickTaken::Them(_) = trick_taken {
+                                    sc
+                                } else {
+                                    Score {
+                                        tot_score: 1,
+                                        num: 1,
+                                    }
+                                }
+                            };
                             // println!(
                             //     " {} {} {} {} -> {} from {:?} and {:?}",
                             //     c0,
@@ -605,20 +616,21 @@ impl Naive {
                             };
                             // println!("score is {:?}", sc);
                             // println!("trick taken is {:?}", trick_taken);
-                            let mysc = if statistics == 1 && !starting.unknown.is_empty() {
-                                sc + trick_taken + trick_taken
-                            } else {
+                            let mysc = if self.care != Thoroughness::OneRound {
                                 sc + trick_taken
+                            } else {
+                                if let TrickTaken::Them(_) = trick_taken {
+                                    sc
+                                } else {
+                                    Score {
+                                        tot_score: 1,
+                                        num: 1,
+                                    }
+                                }
                             };
                             // println!(
                             //     " {} {} {} {} -> {} from {:?} and {:?}",
-                            //     c0,
-                            //     c1,
-                            //     c2,
-                            //     c3,
-                            //     mysc.mean(),
-                            //     sc,
-                            //     trick_taken
+                            //     c0, c1, c2, c3, mysc.mean(), sc, trick_taken
                             // );
                             if plays.len() == 3 {
                                 let s = play_result
@@ -688,20 +700,32 @@ impl Naive {
         }
         println!("Best plays:");
         for (p, s) in play_result.iter() {
-            println!("    {} -> {:?}", p, s);
+            println!("    {} -> {:.3}", p, s.mean());
         }
-        let bestscore = if plays.len() & 1 == 0 {
+        let risk_worth_taking = if self.care == Thoroughness::OneRound {
+            0.1
+        } else if !starting.unknown.is_empty() {
+            0.5 / (statistics as f64).sqrt()
+        } else {
+            0.0
+        };
+        let mut best_plays = if plays.len() & 1 == 0 {
             // Us is playing next, want highest score
-            play_result.values().cloned().max().unwrap()
+            let m = play_result.values().cloned().max().unwrap().mean();
+            play_result
+                .iter()
+                .filter(|(_, s)| s.mean() >= m - risk_worth_taking)
+                .map(|(c, _)| *c)
+                .collect::<Vec<_>>()
         } else {
             // Them is playing next, want lowest score
-            play_result.values().cloned().max().unwrap()
+            let m = play_result.values().cloned().min().unwrap().mean();
+            play_result
+                .iter()
+                .filter(|(_, s)| s.mean() <= m + risk_worth_taking)
+                .map(|(c, _)| *c)
+                .collect::<Vec<_>>()
         };
-        let mut best_plays = play_result
-            .iter()
-            .filter(|(_, s)| **s == bestscore)
-            .map(|(c, _)| *c)
-            .collect::<Vec<_>>();
         best_plays.sort_by_key(|c| c.rank() + if Some(c.suit()) == self.trump { 13 } else { 0 });
         (score, best_plays[0])
     }
@@ -945,6 +969,11 @@ fn test_ruffing() {
             )
             .1
     );
+}
+
+#[test]
+fn test_bad_bid() {
+    use std::str::FromStr;
     assert_eq!(
         Card::CA,
         Naive::oneround(Some(Suit::Spades))
@@ -962,4 +991,36 @@ fn test_ruffing() {
             )
             .1
     );
+    assert_eq!(
+        Card::CA,
+        Naive::statistical(Some(Suit::Spades), 16)
+            .score_after(
+                Starting {
+                    hands: [
+                        Cards::from_str("♣J").unwrap(),
+                        Cards::from_str("♣A95").unwrap(),
+                        Cards::from_str("").unwrap(),
+                        Cards::from_str("♥A♦9♣T").unwrap(),
+                    ],
+                    unknown: Cards::from_str("♦T8♣432").unwrap(),
+                },
+                &[Card::CJ]
+            )
+            .1
+    );
+
+    let score = Naive::oneround(Some(Suit::Spades)).score_after(
+        Starting {
+            hands: [
+                Cards::from_str("♣T").unwrap(),
+                Cards::from_str("♠A84♥AKQJ9542♦9♣J").unwrap(),
+                Cards::from_str("♠J962♦AKQJ76♣AQ5").unwrap(),
+                Cards::from_str("").unwrap(),
+            ],
+            unknown: Cards::from_str("♠KQT753♥T8763♦T85432♣K9876432").unwrap(),
+        },
+        &[Card::C10, Card::CJ],
+    );
+    println!("mean score: {}", score.0.mean());
+    assert_eq!(Card::CA, score.1);
 }
