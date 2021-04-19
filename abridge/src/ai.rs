@@ -1146,6 +1146,20 @@ impl Convention {
             the_name: "Jacobi transfer",
             forcing: Forcing::Forcing,
         });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new(&[
+                r"^(P )*1N [PX] 2D [PX] 2H$",
+                r"^(P )*1N [PX] 2H [PX] 2S$",
+                r"^(P )*2N [PX] 3D [PX] 3H$",
+                r"^(P )*2N [PX] 3H [PX] 3S$",
+            ])
+            .unwrap(),
+            max,
+            min,
+            the_description: format_as!(HTML, ""),
+            the_name: "Jacobi transfer response",
+            forcing: Forcing::Passable,
+        });
 
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*2C$"]).unwrap(),
