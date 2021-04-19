@@ -227,8 +227,10 @@ impl PlayAI for RandomPlay {
             } else if tricks_left < 9 {
                 bridge_solver::Naive::statistical(nt_or_trump, 2)
             } else if tricks_left < 10 {
-                bridge_solver::Naive::high_low(nt_or_trump)
+                bridge_solver::Naive::statistical(nt_or_trump, 1)
+                // bridge_solver::Naive::high_low(nt_or_trump)
             } else {
+                // bridge_solver::Naive::statistical(nt_or_trump, 1)
                 bridge_solver::Naive::oneround(nt_or_trump)
             };
             solver.score_after(starting, cards_played).1

@@ -96,12 +96,12 @@ fn main() {
     }
     for n in 1..14 {
         println!("{} cards declarer", n);
-        println!(
-            "     trump        {}",
-            bench(|| Naive::new(Some(Suit::Hearts))
-                .score(gen_starting_single_dummy(n))
-                .mean())
-        );
+        // println!(
+        //     "     trump        {}",
+        //     bench(|| Naive::new(Some(Suit::Hearts))
+        //         .score(gen_starting_single_dummy(n))
+        //         .mean())
+        // );
         println!(
             "    oneround      {}",
             bench(|| Naive::oneround(Some(Suit::Hearts))
@@ -115,19 +115,25 @@ fn main() {
                 .mean())
         );
         println!(
-            "    statistical 8 {}",
-            bench(|| Naive::statistical(Some(Suit::Hearts), 8)
+            "    statistical 1 {}",
+            bench(|| Naive::statistical(Some(Suit::Hearts), 1)
                 .score(gen_starting_single_dummy(n))
                 .mean())
         );
-        if n < 8 {
-            println!(
-                "    statistical 256 {}",
-                bench(|| Naive::statistical(Some(Suit::Hearts), 256)
-                    .score(gen_starting_single_dummy(n))
-                    .mean())
-            );
-        }
+        // println!(
+        //     "    statistical 8 {}",
+        //     bench(|| Naive::statistical(Some(Suit::Hearts), 8)
+        //         .score(gen_starting_single_dummy(n))
+        //         .mean())
+        // );
+        // if n < 8 {
+        //     println!(
+        //         "    statistical 256 {}",
+        //         bench(|| Naive::statistical(Some(Suit::Hearts), 256)
+        //             .score(gen_starting_single_dummy(n))
+        //             .mean())
+        //     );
+        // }
         println!();
         println!(
             "    no trump      {}",
