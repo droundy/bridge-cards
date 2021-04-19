@@ -129,6 +129,11 @@ button:disabled {
     line-height: 0.5rem;
 }
 
+.bidhistory th, .bidhistory td {
+    width: 2.2em;
+    text-align: center;
+}
+
 .cardinhand {
     display: inline-block;
     width: 1.1em;
