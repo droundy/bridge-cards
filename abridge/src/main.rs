@@ -708,33 +708,36 @@ async fn ws_connected(
                         }
                     }
                     Action::Bid(b) => {
-                        g.bids.push(b);
-                        if g.bids.len() > 3
-                            && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                        {
-                            println!("Bidding is complete");
-                            if let Some(declarer) = g.find_declarer() {
-                                g.lead = Some(declarer.next());
-                            } else {
-                                g.hand_done = true;
+                        if g.turn() == Some(myseat) {
+                            g.bids.push(b);
+                            if g.bids.len() > 3
+                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                            {
+                                println!("Bidding is complete");
+                                if let Some(declarer) = g.find_declarer() {
+                                    g.lead = Some(declarer.next());
+                                } else {
+                                    g.hand_done = true;
+                                }
                             }
                         }
                     }
                     Action::Play(card) => {
-                        let seat = myseat;
-                        // FIXME check for playable
-                        if g.played.len() == 4 {
-                            g.played.clear();
-                        }
-                        g.played.push(card);
-                        // Be lazy and don't even bother checking whether we
-                        // were playing for dummy, just remove from our hand AND
-                        // partner's hand.
-                        g.hands[seat] = g.hands[seat] - Cards::singleton(card);
-                        g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
-                        g.trick_finish();
-                        if g.ns_tricks + g.ew_tricks == 13 {
-                            g.hand_done = true;
+                        if g.turn() == Some(myseat) {
+                            if let Some(playing) = g.hand_playing() {
+                                let seat = myseat;
+                                if g.playable_cards(playing, seat).playable.contains(card) {
+                                    if g.played.len() == 4 {
+                                        g.played.clear();
+                                    }
+                                    g.played.push(card);
+                                    g.hands[playing] = g.hands[playing] - Cards::singleton(card);
+                                    g.trick_finish();
+                                    if g.ns_tricks + g.ew_tricks == 13 {
+                                        g.hand_done = true;
+                                    }
+                                }
+                            }
                         }
                     }
                     Action::Name(name) => {
