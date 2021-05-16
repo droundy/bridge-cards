@@ -61,21 +61,32 @@ impl BidAI for ConventionalBid {
         let mut bids = Vec::with_capacity(len + 1);
         bids.extend_from_slice(history);
         bids.push(Bid::Pass);
-        for b in legal_bids.into_iter().rev() {
-            bids[len] = b;
-            if let Some(c) = self.0.refine(&bids) {
-                let min = c.min_valuation(&bids);
-                let max = c.max_valuation(&bids);
-                let handvalue = hand.values();
-                if !handvalue.exceeds(max) && !min.exceeds(handvalue) {
-                    println!(
-                        "Bidding {:?} with convention {}",
-                        b,
-                        format_as!(HTML, c.description()).into_string()
-                    );
-                    println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
-                    println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
-                    return b;
+        for forcing_level in [Forcing::GameForcing, Forcing::Forcing, Forcing::Passable]
+            .iter()
+            .cloned()
+        {
+            // First we check if we have a valid game-forcing bid, and pick the
+            // highest such bid.  Otherwise we pick the highest valid forcing
+            // bid.  If no such bid exists, we pick the highest valid passable
+            // bid.
+            for b in legal_bids.iter().cloned().rev() {
+                bids[len] = b;
+                if let Some(c) = self.0.refine(&bids) {
+                    if c.is_forcing() == forcing_level {
+                        let min = c.min_valuation(&bids);
+                        let max = c.max_valuation(&bids);
+                        let handvalue = hand.values();
+                        if !handvalue.exceeds(max) && !min.exceeds(handvalue) {
+                            println!(
+                                "Bidding {:?} with convention {}",
+                                b,
+                                format_as!(HTML, c.description()).into_string()
+                            );
+                            println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
+                            println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
+                            return b;
+                        }
+                    }
                 }
             }
         }
@@ -273,6 +284,12 @@ pub enum Convention {
         min: HandValuation,
         max: HandValuation,
     },
+    Forced {
+        the_name: &'static str,
+        regex: RegexSet,
+        min: HandValuation,
+        max: HandValuation,
+    },
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
@@ -325,7 +342,8 @@ impl Convention {
         match self.refine(actual_bids) {
             None => HandValuation::MIN,
             Some(Convention::Simple { min, .. }) => min,
-            Some(Convention::Natural { min, .. }) => min, // FIXME
+            Some(Convention::Natural { min, .. }) => min,
+            Some(Convention::Forced { min, .. }) => min,
             _ => unreachable!(),
         }
     }
@@ -333,9 +351,14 @@ impl Convention {
         match self.refine(actual_bids) {
             None => HandValuation::MAX,
             Some(Convention::Simple { max, .. }) => max,
-            Some(Convention::Natural { max, .. }) => max, // FIXME
+            Some(Convention::Natural { max, .. }) => max,
+            Some(Convention::Forced { max, .. }) => max,
             _ => unreachable!(),
         }
+    }
+    fn check_forcing(&self, actual_bids: &[Bid]) -> Forcing {
+        self.refine(actual_bids)
+            .map_or(Forcing::Passable, |c| c.is_forcing())
     }
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         match self {
@@ -347,6 +370,13 @@ impl Convention {
                 }
             }
             Convention::Natural { regex, .. } => {
+                if regex.is_match(&bids_string(actual_bids)) {
+                    Some(self.clone())
+                } else {
+                    None
+                }
+            }
+            Convention::Forced { regex, .. } => {
                 if regex.is_match(&bids_string(actual_bids)) {
                     Some(self.clone())
                 } else {
@@ -400,6 +430,64 @@ impl Convention {
                             }
                         }
                         Some(Convention::Natural {
+                            the_name: *the_name,
+                            regex,
+                            min,
+                            max,
+                        })
+                    }
+                    Some(Convention::Forced {
+                        the_name,
+                        regex,
+                        min,
+                        max,
+                    }) => {
+                        let mut partner = HandValuation::MIN;
+                        let mut partner_max = HandValuation::MAX;
+                        let mut max = *max;
+                        let mut is_forcing = Forcing::Passable;
+                        for i in (2..actual_bids.len()).step_by(4) {
+                            let bids = &actual_bids[0..actual_bids.len() - i];
+                            if is_forcing != Forcing::GameForcing {
+                                is_forcing = self.check_forcing(bids);
+                            }
+                            partner = partner.max(self.min_valuation(bids));
+                            partner_max = partner_max.min(self.max_valuation(bids));
+                        }
+                        if is_forcing == Forcing::Passable {
+                            return None;
+                        }
+                        let mut myself = HandValuation::MIN;
+                        for i in (4..actual_bids.len()).step_by(4) {
+                            let bids = &actual_bids[0..actual_bids.len() - i];
+                            myself = myself.max(self.min_valuation(bids));
+                        }
+                        let mut min = *min;
+                        let regex = regex.clone();
+                        if min.hcp > 0 {
+                            let partner_hcp = std::cmp::max(partner.lhcp, partner.hcp);
+                            if partner_hcp < HandValuation::MAX.hcp {
+                                max.hcp = (min.hcp + 2).saturating_sub(partner_hcp);
+                            }
+                            min.hcp = min.hcp.saturating_sub(partner_hcp);
+                        }
+                        for suit in Suit::ALL.iter().cloned() {
+                            // If partner hasn't said anything about
+                            let partner_length = if partner.length[suit] == 0
+                                && partner_max.length[suit] == 13
+                            {
+                                // Assume equally divided suits by partner if they haven't mentioned a suit
+                                (13 - partner.length.sum())
+                                    / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
+                            } else {
+                                partner.length[suit]
+                            };
+                            min.length[suit] = min.length[suit].saturating_sub(partner_length);
+                            if myself.length[suit] >= min.length[suit] {
+                                min.length[suit] = 0;
+                            }
+                        }
+                        Some(Convention::Forced {
                             the_name: *the_name,
                             regex,
                             min,
@@ -494,6 +582,36 @@ impl Convention {
                 }
                 )
             }
+            Convention::Forced {
+                the_name, min, max, ..
+            } => {
+                format_as!(HTML,
+                    "<strong><i>" the_name "</i></strong><br/>"
+                    ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                for suit in Suit::ALL.iter().cloned() {
+                    ValueRange::new(
+                        min.length[suit],
+                        max.length[suit],
+                        13,
+                        &format_as!(HTML, suit).into_string(),
+                    )
+                    ""
+                    ValueRange::new(
+                        min.hcp_in_suit[suit],
+                        max.hcp_in_suit[suit],
+                        10,
+                        &format_as!(HTML, "hcp in " suit).into_string(),
+                    )
+                    ""
+                    ValueRange::new(
+                        min.hcp_outside_suit[suit],
+                        max.hcp_outside_suit[suit],
+                        30,
+                        &format_as!(HTML, "hcp outside" suit).into_string(),
+                    )
+                }
+                )
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -504,12 +622,23 @@ impl Convention {
         match self {
             Convention::Simple { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
         }
     }
     /// Does this bid work for this hand?
     fn _is_appropriate(&self, _bids: &[Bid], _hand: Cards) -> bool {
         todo!()
+    }
+
+    /// How forcing is this bid?
+    fn is_forcing(&self) -> Forcing {
+        match self {
+            Convention::Simple { forcing, .. } => *forcing,
+            Convention::Natural { .. } => Forcing::Passable,
+            Convention::Forced { .. } => Forcing::Passable,
+            Convention::Ordered { .. } => Forcing::Passable,
+        }
     }
 
     /// A new convention
@@ -525,7 +654,7 @@ impl Convention {
             Convention::Ordered { conventions, .. } => {
                 conventions.push(convention);
             }
-            Convention::Simple { .. } | Convention::Natural { .. } => {
+            Convention::Simple { .. } | Convention::Natural { .. } | Convention::Forced { .. } => {
                 let s = self.clone();
                 *self = Convention::Ordered {
                     conventions: vec![s, convention],
@@ -1581,8 +1710,35 @@ impl Convention {
                 },
             });
         }
+
+        sheets.add(Convention::Forced {
+            the_name: "Forced NT",
+            regex: RegexSet::new(&["1. P 1N$", "2. P 2N$"]).unwrap(),
+            min: HandValuation::MIN,
+            max: HandValuation::MAX,
+        });
         sheets
     }
+}
+
+#[test]
+fn test_bidai() {
+    use crate::Suit::*;
+    use std::str::FromStr;
+    use Bid::*;
+
+    let mut sheets = ConventionalBid(Convention::sheets());
+    let weak_hand = Cards::from_str("C 2345 D 234 H 234 S 234").unwrap();
+    assert_eq!(
+        Bid::NT(1),
+        sheets.bid(&[Suit(1, Clubs), Pass, Suit(1, Hearts), Pass], weak_hand)
+    );
+
+    let nt_hand = Cards::from_str("C 23 D Q34 H AK4 S AK456").unwrap();
+    assert_eq!(
+        Bid::Suit(2, Spades),
+        sheets.bid(&[NT(1), Pass, Suit(2, Clubs), Pass], nt_hand)
+    );
 }
 
 #[test]
