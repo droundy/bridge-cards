@@ -61,9 +61,14 @@ impl BidAI for ConventionalBid {
         let mut bids = Vec::with_capacity(len + 1);
         bids.extend_from_slice(history);
         bids.push(Bid::Pass);
-        for forcing_level in [Forcing::GameForcing, Forcing::Forcing, Forcing::Passable]
-            .iter()
-            .cloned()
+        for forcing_level in [
+            Forcing::GameForcing,
+            Forcing::Forcing,
+            Forcing::Passable,
+            Forcing::Forced,
+        ]
+        .iter()
+        .cloned()
         {
             // First we check if we have a valid game-forcing bid, and pick the
             // highest such bid.  Otherwise we pick the highest valid forcing
@@ -260,6 +265,7 @@ impl PlayAI for RandomPlay {
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
+    Forced,
     Passable,
     Forcing,
     GameForcing,
@@ -636,7 +642,7 @@ impl Convention {
         match self {
             Convention::Simple { forcing, .. } => *forcing,
             Convention::Natural { .. } => Forcing::Passable,
-            Convention::Forced { .. } => Forcing::Passable,
+            Convention::Forced { .. } => Forcing::Forced,
             Convention::Ordered { .. } => Forcing::Passable,
         }
     }
@@ -1242,7 +1248,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             regex: RegexSet::new(&[r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)S$"]).unwrap(),
             max: HandValuation {
-                length: [0, 0, 3, 0].into(),
+                length: [13, 13, 3, 13].into(),
                 ..max
             },
             min: HandValuation {
