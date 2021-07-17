@@ -1043,7 +1043,6 @@ impl Convention {
         for opening in [Hearts, Spades].iter().cloned() {
             let mut min_splinter = min;
             min_splinter.length[opening] = 4;
-            min_splinter.hcp_outside_suit[opening] = 10;
             for response in [Clubs, Diamonds, Hearts, Spades]
                 .iter()
                 .cloned()
@@ -1053,6 +1052,7 @@ impl Convention {
                 max_splinter.length[response] = 1;
                 max_splinter.hcp_in_suit[response] = 1;
                 max_splinter.hcp_outside_suit[response] = 12;
+                min_splinter.hcp_outside_suit[response] = 10;
                 let splinterbid = if response > opening { 3 } else { 4 };
                 sheets.add(Convention::Simple {
                     the_name: "Splinter",
