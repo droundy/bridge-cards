@@ -237,9 +237,9 @@ impl PlayAI for RandomPlay {
             println!("   extra: {}", starting.unknown);
             starting.check();
             let mut solver = if tricks_left < 5 {
-                bridge_solver::Naive::statistical(nt_or_trump, 32)
+                bridge_solver::Naive::statistical(nt_or_trump, 16)
             } else if tricks_left < 7 {
-                bridge_solver::Naive::statistical(nt_or_trump, 8)
+                bridge_solver::Naive::statistical(nt_or_trump, 4)
             } else if tricks_left < 9 {
                 bridge_solver::Naive::statistical(nt_or_trump, 2)
             } else if tricks_left < 10 {
