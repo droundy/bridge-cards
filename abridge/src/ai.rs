@@ -238,11 +238,11 @@ impl PlayAI for RandomPlay {
             starting.check();
             let mut solver = if tricks_left < 5 {
                 bridge_solver::Naive::statistical(nt_or_trump, 32)
-            } else if tricks_left < 7 {
+            } else if tricks_left < 5 {
                 bridge_solver::Naive::statistical(nt_or_trump, 8)
-            } else if tricks_left < 9 {
+            } else if tricks_left < 7 {
                 bridge_solver::Naive::statistical(nt_or_trump, 2)
-            } else if tricks_left < 10 {
+            } else if tricks_left < 8 {
                 bridge_solver::Naive::statistical(nt_or_trump, 1)
                 // bridge_solver::Naive::high_low(nt_or_trump)
             } else {
