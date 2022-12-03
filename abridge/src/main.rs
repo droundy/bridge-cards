@@ -1,6 +1,6 @@
 #[tokio::main]
 async fn main() {
-    let router = abridge::serve_abridge("abridge").await;
+    let router = abridge::serve_abridge("").await;
     // Typical hyper setup...
 
     // run it with hyper on localhost:3000

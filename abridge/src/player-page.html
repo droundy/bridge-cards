@@ -3,7 +3,7 @@
 
 <head>
     <title> [% format!("{:?}", self.0.seat) %] </title>
-    <link rel="stylesheet" href="[% self.0.game.root %]/style.css">
+    <link rel="stylesheet" href="[% self.0.game.root as URL %]style.css">
     <link rel="preconnect" href="https://fonts.gstatic.com">
     <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,7 +13,7 @@
     if (location.protocol == 'https:') {
         ws_protocol = 'wss://';
     }
-    const ws = new WebSocket(ws_protocol + location.host + '[% self.0.game.root %]/ws/[% format!("{:?}", self.0.seat).to_lowercase() %]');
+    const ws = new WebSocket(ws_protocol + location.host + '[% self.0.game.root as URL %]/ws/[% format!("{:?}", self.0.seat).to_lowercase() %]');
     console.log('did websocket');
 
     ws.onopen = function () {
