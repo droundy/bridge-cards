@@ -36,7 +36,7 @@
             let name = document.getElementById('myname').innerText;
             document.cookie = "name=" + name;
             ws.send(JSON.stringify({ "Name": name }));
-        }, 5000);
+        }, 3000);
     }
 </script>
 
