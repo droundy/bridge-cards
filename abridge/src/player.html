@@ -46,7 +46,7 @@
     [% if self.game.count_for_me[North] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::North, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
-        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span><span class="alert">[% pc.nltc() %] NLTC</span>[%
+        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span>[%
      } %]
 </div>
 <table>
@@ -56,7 +56,7 @@
     [% if self.game.count_for_me[West] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::West, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
-        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span><span class="alert">[% pc.nltc() %] NLTC</span>[%
+        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span>[%
      } %]
 </div></td>
 <td>
@@ -78,7 +78,7 @@
     [% if self.game.count_for_me[East] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::East, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
-        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span><span class="alert">[% pc.nltc() %] NLTC</span>[%
+        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span>[%
      } %]
 </div></td>
 </tr>
@@ -88,7 +88,7 @@
     [% if self.game.count_for_me[South] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::South, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
-        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span><span class="alert">[% pc.nltc() %] NLTC</span>[%
+        <span class="alert">[% pc.hcp() %] HCP</span><span class="alert">[% pc.lhcp() %] LHCP</span><span class="alert">[% pc.shcp() %] SHCP</span>[%
      } %]
 </div>
 [% } %]
