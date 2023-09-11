@@ -1,10 +1,12 @@
 [%
 match self {
     IsMe::Other(PlayerName::None, seat) => {
-        %]<span class="name">None<br/><a target="_blank" href="/[% seat.long_name() %]">Sit here</a></span>[%
+        %]<span class="name">None<br/>
+            <button onclick="window.open('/[% seat.long_name() %]','_blank')">Sit here</button></span>[%
     }
     IsMe::Other(PlayerName::Robot, seat) => {
-        %]<span class="name">🤖<br/><a target="_blank" href="/[% seat.long_name() %]">Sit here</a></span>[%
+        %]<span class="name">Robot 🤖<br/>
+            <button onclick="window.open('/[% seat.long_name() %]','_blank')">Sit here</button></span>[%
     }
     IsMe::Other(PlayerName::Human(name), _) => {
         %]<span class="name">[% name %]</span>[%

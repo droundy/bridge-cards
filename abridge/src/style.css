@@ -26,6 +26,9 @@ body {
     display: block;
     font-size: small;
 }
+.name button {
+    width: 5em;
+}
 .alert {
     font-size: 9px;
     display: block;
