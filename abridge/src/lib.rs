@@ -1,4 +1,4 @@
-use ai::Convention;
+use ai::{BridgeAi, Convention};
 use bridge_deck::{Card, Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
 use futures::StreamExt;
@@ -7,6 +7,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
+
+pub use ai::BidAI;
 
 mod ai;
 
@@ -106,7 +108,7 @@ pub enum Bid {
     NT(usize),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum Action {
+pub enum Action {
     Redeal,
     SitAI,
     Bid(Bid),
@@ -597,10 +599,7 @@ impl PlayableHand {
 #[derive(Debug)]
 enum PlayerConnection {
     Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
-    Ai {
-        bidder: Box<dyn ai::BidAI + Sync + Send>,
-        player: Box<dyn ai::PlayAI + Sync + Send>,
-    },
+    Ai(BridgeAi),
     None,
 }
 impl Default for PlayerConnection {
@@ -716,10 +715,7 @@ async fn ws_connected(
                         {
                             if p.0[s].is_empty() {
                                 g.names[s] = PlayerName::Robot;
-                                p.0[s] = PlayerConnection::Ai {
-                                    bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
-                                    player: Box::new(ai::RandomPlay),
-                                };
+                                p.0[s] = PlayerConnection::Ai(BridgeAi::new());
                             }
                         }
                     }
@@ -798,41 +794,42 @@ async fn ws_connected(
                             s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                         }
                     }
-                    if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
+                    if let PlayerConnection::Ai(ai) = &mut p.0[turn] {
                         // It's an AI's move!
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if g.bidder().is_some() {
-                            let bid = bidder.bid(&g.bids, g.hands[turn]);
-                            g.bids.push(bid);
-                            if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                            {
-                                println!("Bidding is complete");
-                                if let Some(declarer) = g.find_declarer() {
-                                    g.lead = Some(declarer.next());
-                                } else {
-                                    g.hand_done = true;
+                        match ai.play(&*g) {
+                            Action::Bid(bid) => {
+                                g.bids.push(bid);
+                                if g.bids.len() > 3
+                                    && &g.bids[g.bids.len() - 3..]
+                                        == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                                {
+                                    println!("Bidding is complete");
+                                    if let Some(declarer) = g.find_declarer() {
+                                        g.lead = Some(declarer.next());
+                                    } else {
+                                        g.hand_done = true;
+                                    }
                                 }
                             }
-                        } else if g.hands[turn].len() > 0 || g.hands[turn + 2].len() > 0 {
-                            let seat = turn;
-                            let card = player.play(&g);
-                            assert!(g.could_be_played().contains(card));
-                            if g.played.len() == 4 {
-                                g.played.clear();
-                                // Give players some time to see the finished trick...
-                                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            Action::Play(card) => {
+                                if let Some(seat) = g.hand_playing() {
+                                    assert!(g.could_be_played().contains(card));
+                                    if g.played.len() == 4 {
+                                        g.played.clear();
+                                        // Give players some time to see the finished trick...
+                                        tokio::time::sleep(std::time::Duration::from_secs(10))
+                                            .await;
+                                    }
+                                    g.played.push(card);
+                                    g.hands[seat] = g.hands[seat] - Cards::singleton(card);
+                                    g.trick_finish();
+                                    if g.ns_tricks + g.ew_tricks == 13 {
+                                        g.hand_done = true;
+                                    }
+                                }
                             }
-                            g.played.push(card);
-                            // Be lazy and don't even bother checking whether we
-                            // were playing for dummy, just remove from our hand AND
-                            // partner's hand.
-                            g.hands[seat] = g.hands[seat] - Cards::singleton(card);
-                            g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
-                            g.trick_finish();
-                            if g.ns_tricks + g.ew_tricks == 13 {
-                                g.hand_done = true;
-                            }
+                            badaction => panic!("AI should only bid and play! {badaction:?}"),
                         }
                     } else {
                         break;

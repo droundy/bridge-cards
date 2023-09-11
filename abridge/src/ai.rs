@@ -1,6 +1,29 @@
-use crate::{Bid, GameState};
+use crate::{Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
+
+#[derive(Debug)]
+pub struct BridgeAi {
+    bidder: ConventionalBid,
+    player: RandomPlay,
+}
+
+impl BridgeAi {
+    pub fn new() -> Self {
+        let bidder = ConventionalBid(Convention::sheets());
+        let player = RandomPlay;
+        BridgeAi { bidder, player }
+    }
+    /// Decide which play to make.
+    pub fn play(&mut self, game: &GameState) -> Action {
+        if let Some(seat) = game.bidder() {
+            Action::Bid(self.bidder.bid(&game.bids, game.hands[seat]))
+        } else {
+            Action::Play(self.player.play(game))
+        }
+    }
+}
+
 pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid;
 }
