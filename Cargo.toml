@@ -2,7 +2,7 @@
 name = "bridge-deck"
 version = "0.1.1"
 authors = ["David Roundy <daveroundy@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 keywords = ["card", "deck"]
 
@@ -40,4 +40,5 @@ harness = false
 members = [
     "abridge",
     "bridge-solver",
+    "robot"
 ]
