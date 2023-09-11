@@ -221,7 +221,6 @@ impl Card {
             12 => 13,
             n => n as u32,
         };
-        use std::convert::TryFrom;
         char::try_from(start + shift - 1).unwrap()
     }
 }
@@ -295,7 +294,7 @@ impl Suit {
     fn iter() -> impl Iterator<Item = Suit> {
         [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
             .iter()
-            .map(|&x| x)
+            .copied()
     }
     /// All four suits from lowest to highest
     pub const ALL: &'static [Self] = &[Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
@@ -730,7 +729,7 @@ impl Iterator for Cards {
             None
         } else {
             let next = self.bits.trailing_zeros();
-            self.bits = self.bits & !(1 << next);
+            self.bits &= !(1 << next);
             Some(Card { offset: next as u8 })
         }
     }
@@ -764,7 +763,7 @@ impl std::fmt::Display for Cards {
             .cloned()
         {
             let cards = self.in_suit(suit);
-            if cards.len() > 0 {
+            if !cards.is_empty() {
                 write!(f, "{}", suit.unicode())?;
                 for c in cards.rev() {
                     write!(f, "{}", c.rankchar())?;
@@ -873,7 +872,7 @@ impl DoubleEndedIterator for Cards {
             None
         } else {
             let next = 63 - self.bits.leading_zeros();
-            self.bits = self.bits & !(1 << next);
+            self.bits &= !(1 << next);
             Some(Card { offset: next as u8 })
         }
     }
@@ -1032,9 +1031,9 @@ impl HandValuation {}
 pub struct CardMap {
     internal: [Card; 64],
 }
-impl CardMap {
+impl Default for CardMap {
     /// Create an empty CardMap
-    pub fn new() -> Self {
+    fn default() -> Self {
         CardMap {
             internal: [Card::new(Suit::Clubs, 0); 64],
         }

@@ -3,7 +3,7 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
 pub fn normalize_create_map(all: Cards) -> CardMap {
-    let mut map = CardMap::new();
+    let mut map = CardMap::default();
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
         for (n, x) in all.in_suit(s).enumerate() {
             map[x] = Card::new(s, 2 + n as u8);
