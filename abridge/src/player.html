@@ -18,31 +18,31 @@
 [% if Some(self.seat) == self.game.turn() { %]<audio autoplay><source src="your-play.mp3" type="audio/mpeg"></audio>[% } %]
 [% if self.game.hand_done { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %]" id="north">
-    <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
+    [% self.get_name(North) %]
     [% let h = self.game.original_hands[North]; h %]
     <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span>
 </div>
 <table><tr>
 <td><div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %]" id="west">
-    <span class="name"[% if West == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[West] %]</span>
+    [% self.get_name(West) %]
     [% let h = self.game.original_hands[West]; h %]
     <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span>
 </div></td>
     <td><div class="table"></div></td>
     <td><div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %]" id="east">
-    <span class="name"[% if East == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[East] %]</span>
+    [% self.get_name(East) %]
     [% let h = self.game.original_hands[East]; h %]
     <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span>
 </div></td>
 </tr></table>
 <div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %]" id="south">
-    <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
+    [% self.get_name(South) %]
     [% let h = self.game.original_hands[South]; h %]
     <span class="alert">[% h.high_card_points() %] HCP</span><span class="alert">[% h.long_card_points() + h.high_card_points() %] LHCP</span><span class="alert">[% h.short_card_points() + h.protected_high_card_points() %] SHCP</span>
 </div>
 [% } else { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %][% if Some(North) == self.game.hand_playing() { %] turn[% } %]" id="north">
-    <span class="name"[% if North == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[North] %]</span>
+    [% self.get_name(North) %]
     [% if self.game.count_for_me[North] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::North, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
@@ -52,7 +52,7 @@
 <table>
     <tr><td>
 <div class="hand[% if Some(West) == self.game.dummy() { %] dummy[% } %][% if Some(West) == self.game.hand_playing() { %] turn[% } %]" id="west">
-    <span class="name"[% if West == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[West] %]</span>
+    [% self.get_name(West) %]
     [% if self.game.count_for_me[West] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::West, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
@@ -74,7 +74,7 @@
 </div></td>
 <td>
 <div class="hand[% if Some(East) == self.game.dummy() { %] dummy[% } %][% if Some(East) == self.game.hand_playing() { %] turn[% } %]" id="east">
-    <span class="name"[% if East == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[East] %]</span>
+    [% self.get_name(East) %]
     [% if self.game.count_for_me[East] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::East, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]
@@ -84,7 +84,7 @@
 </tr>
 </table>
 <div class="hand[% if Some(South) == self.game.dummy() { %] dummy[% } %][% if Some(South) == self.game.hand_playing() { %] turn[% } %]" id="south">
-    <span class="name"[% if South == self.seat { %] id="myname" contenteditable="True" oninput="sendname()" [% } %]>[% self.game.names[South] %]</span>
+    [% self.get_name(South) %]
     [% if self.game.count_for_me[South] { %]<span class="alert">Counting</span>[% } %]
     [% let pc = self.game.playable_cards(Seat::South, self.seat); pc %]
     [% if self.game.count_for_me[self.seat] && pc.hand.len() > 0 { %]

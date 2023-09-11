@@ -52,7 +52,9 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
                 let mut g = game.write().await;
                 g.check_timeout();
                 if let Some(name) = name {
-                    g.names[seat] = name;
+                    g.names[seat] = PlayerName::Human(name);
+                } else {
+                    g.names[seat] = PlayerName::Human(memorable_wordlist::camel_case(18));
                 }
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                     Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
@@ -221,9 +223,25 @@ impl Bid {
     }
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum PlayerName {
+    #[default]
+    None,
+    Human(String),
+    Robot,
+}
+
+enum IsMe<T> {
+    Me(T),
+    Other(T, Seat),
+}
+
+#[with_template("[%" "%]" "player-name.html")]
+impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
+
 pub struct GameState {
     root: String,
-    names: Seated<String>,
+    names: Seated<PlayerName>,
     hands: Seated<Cards>,
     original_hands: Seated<Cards>,
 
@@ -254,10 +272,10 @@ impl GameState {
         GameState {
             root,
             names: [
-                memorable_wordlist::camel_case(18),
-                memorable_wordlist::camel_case(18),
-                memorable_wordlist::camel_case(18),
-                memorable_wordlist::camel_case(18),
+                PlayerName::None,
+                PlayerName::None,
+                PlayerName::None,
+                PlayerName::None,
             ]
             .into(),
             hands: [south, west, north, east].into(),
@@ -697,7 +715,7 @@ async fn ws_connected(
                             .cloned()
                         {
                             if p.0[s].is_empty() {
-                                g.names[s] = "Robot".into();
+                                g.names[s] = PlayerName::Robot;
                                 p.0[s] = PlayerConnection::Ai {
                                     bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
                                     player: Box::new(ai::RandomPlay),
@@ -739,7 +757,7 @@ async fn ws_connected(
                         }
                     }
                     Action::Name(name) => {
-                        g.names[myseat] = name;
+                        g.names[myseat] = PlayerName::Human(name);
                     }
                 }
                 g.check_timeout();
@@ -868,6 +886,16 @@ struct Player<'a> {
 }
 #[with_template("[%" "%]" "player.html")]
 impl<'a> DisplayAs<HTML> for Player<'a> {}
+
+impl<'a> Player<'a> {
+    fn get_name(&self, seat: Seat) -> IsMe<PlayerName> {
+        if self.seat == seat {
+            IsMe::Me(self.game.names[seat].clone())
+        } else {
+            IsMe::Other(self.game.names[seat].clone(), seat)
+        }
+    }
+}
 
 struct PlayerPage<'a>(Player<'a>);
 #[with_template("[%" "%]" "player-page.html")]
