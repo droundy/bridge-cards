@@ -3,7 +3,7 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
 pub fn normalize_create_map(all: Cards) -> CardMap {
-    let mut map = CardMap::new();
+    let mut map = CardMap::default();
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
         for (n, x) in all.in_suit(s).enumerate() {
             map[x] = Card::new(s, 2 + n as u8);
@@ -92,19 +92,19 @@ impl Starting {
         let mut needs_least = 0; // = hands.iter().cloned().map(|h| n - h.len()).min().unwrap();
         let mut need_cards = [0, 0, 0, 0];
         let mut num_needs = 0;
-        for seat in 0..4 {
-            if hands[seat].len() < n {
+        for (seat, hand) in hands.iter().enumerate() {
+            if hand.len() < n {
                 need_cards[num_needs] = seat;
                 num_needs += 1;
-                needs_least = std::cmp::min(needs_least, n - hands[seat].len());
+                needs_least = std::cmp::min(needs_least, n - hand.len());
             }
         }
         match num_needs {
             0 => vec![hands],
             1 => {
-                for seat in 0..4 {
-                    if hands[seat].len() < n {
-                        hands[seat] += unknown;
+                for hand in &mut hands {
+                    if hand.len() < n {
+                        *hand += unknown;
                     }
                 }
                 vec![hands]
@@ -195,7 +195,7 @@ impl Starting {
             + Cards::singleton(plays[3]);
         let mut winning_suit = plays[0].suit();
         if let Some(t) = trump {
-            if played.in_suit(t).len() > 0 {
+            if !played.in_suit(t).is_empty() {
                 winning_suit = t;
             }
         }
@@ -215,7 +215,7 @@ impl Starting {
         }
         let tricks_left = self.tricks_remaining();
         let unknown_in_suit = self.unknown.in_suit(plays[0].suit());
-        if unknown_in_suit.len() > 0 {
+        if !unknown_in_suit.is_empty() {
             for i in 1..4 {
                 if plays[i].suit() != plays[0].suit() {
                     // i showed void.  if only one player has unknown cards, they must have
@@ -251,7 +251,7 @@ impl Starting {
         ];
 
         let mut next = Starting { hands, unknown };
-        if next.unknown.len() > 0 {
+        if !next.unknown.is_empty() {
             let per_hand = next.tricks_remaining();
             // println!("per-hand = {}", per_hand);
             for i in 0..4 {
@@ -374,7 +374,7 @@ fn test_after_void() {
     assert_eq!(TrickTaken::Us(after), start.after(plays, None));
 }
 
-#[derive(Default, Debug, Clone, Copy, Hash)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct Score {
     tot_score: u32,
     num: u32,
@@ -583,14 +583,12 @@ impl Naive {
                                 };
                                 let mysc = if self.care != Thoroughness::OneRound {
                                     sc + trick_taken
+                                } else if let TrickTaken::Them(_) = trick_taken {
+                                    sc
                                 } else {
-                                    if let TrickTaken::Them(_) = trick_taken {
-                                        sc
-                                    } else {
-                                        Score {
-                                            tot_score: 1,
-                                            num: 1,
-                                        }
+                                    Score {
+                                        tot_score: 1,
+                                        num: 1,
                                     }
                                 };
                                 // println!(
@@ -652,7 +650,7 @@ impl Naive {
             std::collections::HashMap::new();
         for _ in 0..statistics {
             for hands in starting.random_hands(&mut self.rng).into_iter() {
-                let mut possible_plays = hands.clone();
+                let mut possible_plays = hands;
                 for (i, c) in plays.iter().cloned().enumerate() {
                     possible_plays[i] = Cards::singleton(c);
                 }
@@ -684,14 +682,12 @@ impl Naive {
                                 // println!("trick taken is {:?}", trick_taken);
                                 let mysc = if self.care != Thoroughness::OneRound {
                                     sc + trick_taken
+                                } else if let TrickTaken::Them(_) = trick_taken {
+                                    sc
                                 } else {
-                                    if let TrickTaken::Them(_) = trick_taken {
-                                        sc
-                                    } else {
-                                        Score {
-                                            tot_score: 1,
-                                            num: 1,
-                                        }
+                                    Score {
+                                        tot_score: 1,
+                                        num: 1,
                                     }
                                 };
                                 // println!(
@@ -699,13 +695,10 @@ impl Naive {
                                 //     c0, c1, c2, c3, mysc.mean(), sc, trick_taken
                                 // );
                                 if plays.len() == 3 {
-                                    let s = play_result
-                                        .get(&c3)
-                                        .unwrap_or(&Score {
-                                            tot_score: 0,
-                                            num: 0,
-                                        })
-                                        .clone();
+                                    let s = *play_result.get(&c3).unwrap_or(&Score {
+                                        tot_score: 0,
+                                        num: 0,
+                                    });
                                     play_result.insert(c3, s + mysc);
                                 }
                                 if mysc <= worst {
@@ -716,13 +709,10 @@ impl Naive {
                                 }
                             }
                             if plays.len() == 2 {
-                                let s = play_result
-                                    .get(&c2)
-                                    .unwrap_or(&Score {
-                                        tot_score: 0,
-                                        num: 0,
-                                    })
-                                    .clone();
+                                let s = *play_result.get(&c2).unwrap_or(&Score {
+                                    tot_score: 0,
+                                    num: 0,
+                                });
                                 play_result.insert(c2, s + worst);
                             }
                             if worst >= best {
@@ -730,27 +720,21 @@ impl Naive {
                             }
                         }
                         if plays.len() == 1 {
-                            let s = play_result
-                                .get(&c1)
-                                .unwrap_or(&Score {
-                                    tot_score: 0,
-                                    num: 0,
-                                })
-                                .clone();
+                            let s = *play_result.get(&c1).unwrap_or(&Score {
+                                tot_score: 0,
+                                num: 0,
+                            });
                             play_result.insert(c1, s + best);
                         }
                         if worst >= best {
                             worst = best;
                         }
                     }
-                    if plays.len() == 0 {
-                        let s = play_result
-                            .get(&c0)
-                            .unwrap_or(&Score {
-                                tot_score: 0,
-                                num: 0,
-                            })
-                            .clone();
+                    if plays.is_empty() {
+                        let s = *play_result.get(&c0).unwrap_or(&Score {
+                            tot_score: 0,
+                            num: 0,
+                        });
                         play_result.insert(c0, s + worst);
                     }
                     if worst >= best {
@@ -762,7 +746,7 @@ impl Naive {
             }
         }
         println!("Score: {:?}", score);
-        if plays.len() == 0 {
+        if plays.is_empty() {
             self.cache.insert(starting, score);
         }
         println!("Best plays:");

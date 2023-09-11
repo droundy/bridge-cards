@@ -9,8 +9,8 @@ fn main() {
         let mut rng = SmallRng::seed_from_u64(3);
         let mut cards = Cards::ALL;
         let mut hands = [Cards::SPADES, Cards::HEARTS, Cards::DIAMONDS, Cards::CLUBS];
-        for i in 0..4 {
-            hands[i] = cards.pick_rng(&mut rng, n).unwrap();
+        for hand in &mut hands {
+            *hand = cards.pick_rng(&mut rng, n).unwrap();
         }
         Starting {
             hands,
