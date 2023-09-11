@@ -1,5 +1,5 @@
 [package]
-name = "bridge-wasm"
+name = "robot"
 version = "0.1.0"
 authors = ["davidarch <david.arch@nextroll.com>"]
 edition = "2018"
