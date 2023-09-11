@@ -707,179 +707,7 @@ async fn ws_connected(
             Ok(Err(e)) => {
                 eprintln!("Bad JSON: {:?}", e);
             }
-            Ok(Ok(action)) => {
-                println!("Doing {:?}", action);
-                let mut p = players.write().await;
-                let mut g = game.write().await;
-                match action {
-                    Action::ToggleCountForMe => {
-                        g.count_for_me[myseat] = !g.count_for_me[myseat];
-                    }
-                    Action::Redeal => {
-                        g.redeal();
-                    }
-                    Action::SitAI => {
-                        for s in [Seat::North, Seat::East, Seat::South, Seat::West]
-                            .iter()
-                            .cloned()
-                        {
-                            if p.0[s].is_empty() {
-                                g.names[s] = PlayerName::Robot;
-                                p.0[s] = PlayerConnection::Ai {
-                                    bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
-                                    player: Box::new(ai::RandomPlay),
-                                };
-                            }
-                        }
-                    }
-                    Action::Bid(b) => {
-                        if g.turn() == Some(myseat) {
-                            g.bids.push(b);
-                            if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                            {
-                                println!("Bidding is complete");
-                                if let Some(declarer) = g.find_declarer() {
-                                    g.lead = Some(declarer.next());
-                                } else {
-                                    g.hand_done = true;
-                                }
-                            }
-                        }
-                    }
-                    Action::Play(card) => {
-                        if g.turn() == Some(myseat) {
-                            if let Some(playing) = g.hand_playing() {
-                                let seat = myseat;
-                                if g.playable_cards(playing, seat).playable.contains(card) {
-                                    if g.played.len() == 4 {
-                                        g.played.clear();
-                                    }
-                                    g.played.push(card);
-                                    g.hands[playing] = g.hands[playing] - Cards::singleton(card);
-                                    g.trick_finish();
-                                    if g.ns_tricks + g.ew_tricks == 13 {
-                                        g.hand_done = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Action::Name(name) => {
-                        g.names[myseat] = PlayerName::Human(name);
-                    }
-                }
-                g.check_timeout();
-                // Now we need to run any AI that is relevant.
-                while let Some(turn) = g.turn() {
-                    if p.0[turn].is_ai() {
-                        // Send out an update before we even start thinking.
-                        if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                            let pp = Player {
-                                seat: Seat::North,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                            let pp = Player {
-                                seat: Seat::South,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                            let pp = Player {
-                                seat: Seat::East,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                            let pp = Player {
-                                seat: Seat::West,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                    }
-                    if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
-                        // It's an AI's move!
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if g.bidder().is_some() {
-                            let bid = bidder.bid(&g.bids, g.hands[turn]);
-                            g.bids.push(bid);
-                            if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                            {
-                                println!("Bidding is complete");
-                                if let Some(declarer) = g.find_declarer() {
-                                    g.lead = Some(declarer.next());
-                                } else {
-                                    g.hand_done = true;
-                                }
-                            }
-                        } else if g.hands[turn].len() > 0 || g.hands[turn + 2].len() > 0 {
-                            let seat = turn;
-                            let card = player.play(&g);
-                            assert!(g.could_be_played().contains(card));
-                            if g.played.len() == 4 {
-                                g.played.clear();
-                                // Give players some time to see the finished trick...
-                                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                            }
-                            g.played.push(card);
-                            // Be lazy and don't even bother checking whether we
-                            // were playing for dummy, just remove from our hand AND
-                            // partner's hand.
-                            g.hands[seat] = g.hands[seat] - Cards::singleton(card);
-                            g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
-                            g.trick_finish();
-                            if g.ns_tricks + g.ew_tricks == 13 {
-                                g.hand_done = true;
-                            }
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                    let pp = Player {
-                        seat: Seat::North,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                    let pp = Player {
-                        seat: Seat::South,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                    let pp = Player {
-                        seat: Seat::East,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                    let pp = Player {
-                        seat: Seat::West,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-            }
+            Ok(Ok(action)) => handle_action(&players, &game, myseat, action).await,
         }
     }
 }
@@ -938,185 +766,192 @@ async fn ai_connected(
             Ok(Err(e)) => {
                 eprintln!("Bad JSON: {:?}", e);
             }
-            Ok(Ok(action)) => {
-                println!("Doing {:?}", action);
-                let mut p = players.write().await;
-                let mut g = game.write().await;
-                match action {
-                    Action::ToggleCountForMe => {
-                        g.count_for_me[myseat] = !g.count_for_me[myseat];
-                    }
-                    Action::Redeal => {
-                        g.redeal();
-                    }
-                    Action::SitAI => {
-                        for s in [Seat::North, Seat::East, Seat::South, Seat::West]
-                            .iter()
-                            .cloned()
-                        {
-                            if p.0[s].is_empty() {
-                                g.names[s] = PlayerName::Robot;
-                                p.0[s] = PlayerConnection::Ai {
-                                    bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
-                                    player: Box::new(ai::RandomPlay),
-                                };
-                            }
-                        }
-                    }
-                    Action::Bid(b) => {
-                        if g.turn() == Some(myseat) {
-                            g.bids.push(b);
-                            if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                            {
-                                println!("Bidding is complete");
-                                if let Some(declarer) = g.find_declarer() {
-                                    g.lead = Some(declarer.next());
-                                } else {
-                                    g.hand_done = true;
-                                }
-                            }
-                        }
-                    }
-                    Action::Play(card) => {
-                        if g.turn() == Some(myseat) {
-                            if let Some(playing) = g.hand_playing() {
-                                let seat = myseat;
-                                if g.playable_cards(playing, seat).playable.contains(card) {
-                                    if g.played.len() == 4 {
-                                        g.played.clear();
-                                    }
-                                    g.played.push(card);
-                                    g.hands[playing] = g.hands[playing] - Cards::singleton(card);
-                                    g.trick_finish();
-                                    if g.ns_tricks + g.ew_tricks == 13 {
-                                        g.hand_done = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Action::Name(name) => {
-                        g.names[myseat] = PlayerName::Human(name);
-                    }
+            Ok(Ok(action)) => handle_action(&players, &game, myseat, action).await,
+        }
+    }
+}
+
+async fn handle_action(
+    players: &Arc<RwLock<Players>>,
+    game: &Arc<RwLock<GameState>>,
+    myseat: Seat,
+    action: Action,
+) {
+    println!("Doing {:?}", action);
+    let mut p = players.write().await;
+    let mut g = game.write().await;
+    match action {
+        Action::ToggleCountForMe => {
+            g.count_for_me[myseat] = !g.count_for_me[myseat];
+        }
+        Action::Redeal => {
+            g.redeal();
+        }
+        Action::SitAI => {
+            for s in [Seat::North, Seat::East, Seat::South, Seat::West]
+                .iter()
+                .cloned()
+            {
+                if p.0[s].is_empty() {
+                    g.names[s] = PlayerName::Robot;
+                    p.0[s] = PlayerConnection::Ai {
+                        bidder: Box::new(ai::ConventionalBid(ai::Convention::sheets())),
+                        player: Box::new(ai::RandomPlay),
+                    };
                 }
-                g.check_timeout();
-                // Now we need to run any AI that is relevant if we are using the old in-server AI.
-                while let Some(turn) = g.turn() {
-                    if p.0[turn].is_ai() {
-                        // Send out an update before we even start thinking.
-                        if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                            let pp = Player {
-                                seat: Seat::North,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                            let pp = Player {
-                                seat: Seat::South,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                            let pp = Player {
-                                seat: Seat::East,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                            let pp = Player {
-                                seat: Seat::West,
-                                game: &*g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                    }
-                    if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
-                        // It's an AI's move!
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if g.bidder().is_some() {
-                            let bid = bidder.bid(&g.bids, g.hands[turn]);
-                            g.bids.push(bid);
-                            if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
-                            {
-                                println!("Bidding is complete");
-                                if let Some(declarer) = g.find_declarer() {
-                                    g.lead = Some(declarer.next());
-                                } else {
-                                    g.hand_done = true;
-                                }
-                            }
-                        } else if g.hands[turn].len() > 0 || g.hands[turn + 2].len() > 0 {
-                            let seat = turn;
-                            let card = player.play(&g);
-                            assert!(g.could_be_played().contains(card));
-                            if g.played.len() == 4 {
-                                g.played.clear();
-                                // Give players some time to see the finished trick...
-                                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                            }
-                            g.played.push(card);
-                            // Be lazy and don't even bother checking whether we
-                            // were playing for dummy, just remove from our hand AND
-                            // partner's hand.
-                            g.hands[seat] = g.hands[seat] - Cards::singleton(card);
-                            g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
-                            g.trick_finish();
-                            if g.ns_tricks + g.ew_tricks == 13 {
-                                g.hand_done = true;
-                            }
-                        }
+            }
+        }
+        Action::Bid(b) => {
+            if g.turn() == Some(myseat) {
+                g.bids.push(b);
+                if g.bids.len() > 3
+                    && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                {
+                    println!("Bidding is complete");
+                    if let Some(declarer) = g.find_declarer() {
+                        g.lead = Some(declarer.next());
                     } else {
-                        break;
-                    }
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                    let pp = Player {
-                        seat: Seat::North,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                    let pp = Player {
-                        seat: Seat::South,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                    let pp = Player {
-                        seat: Seat::East,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                    let pp = Player {
-                        seat: Seat::West,
-                        game: &*g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                }
-                if let Some(seat) = g.turn() {
-                    if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-                        println!("FIXME send an appropriate prompt to this robot!");
-                        s.send(Ok(warp::ws::Message::text("FIXME your turn"))).ok();
+                        g.hand_done = true;
                     }
                 }
             }
+        }
+        Action::Play(card) => {
+            if g.turn() == Some(myseat) {
+                if let Some(playing) = g.hand_playing() {
+                    let seat = myseat;
+                    if g.playable_cards(playing, seat).playable.contains(card) {
+                        if g.played.len() == 4 {
+                            g.played.clear();
+                        }
+                        g.played.push(card);
+                        g.hands[playing] = g.hands[playing] - Cards::singleton(card);
+                        g.trick_finish();
+                        if g.ns_tricks + g.ew_tricks == 13 {
+                            g.hand_done = true;
+                        }
+                    }
+                }
+            }
+        }
+        Action::Name(name) => {
+            g.names[myseat] = PlayerName::Human(name);
+        }
+    }
+    g.check_timeout();
+    // Now we need to run any AI that is relevant if we are using the old in-server AI.
+    while let Some(turn) = g.turn() {
+        if p.0[turn].is_ai() {
+            // Send out an update before we even start thinking.
+            if let PlayerConnection::Human(s) = &p.0[Seat::North] {
+                let pp = Player {
+                    seat: Seat::North,
+                    game: &*g,
+                };
+                let msg = format_as!(HTML, "" pp);
+                s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+            }
+            if let PlayerConnection::Human(s) = &p.0[Seat::South] {
+                let pp = Player {
+                    seat: Seat::South,
+                    game: &*g,
+                };
+                let msg = format_as!(HTML, "" pp);
+                s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+            }
+            if let PlayerConnection::Human(s) = &p.0[Seat::East] {
+                let pp = Player {
+                    seat: Seat::East,
+                    game: &*g,
+                };
+                let msg = format_as!(HTML, "" pp);
+                s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+            }
+            if let PlayerConnection::Human(s) = &p.0[Seat::West] {
+                let pp = Player {
+                    seat: Seat::West,
+                    game: &*g,
+                };
+                let msg = format_as!(HTML, "" pp);
+                s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+            }
+        }
+        if let PlayerConnection::Ai { bidder, player } = &mut p.0[turn] {
+            // It's an AI's move!
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if g.bidder().is_some() {
+                let bid = bidder.bid(&g.bids, g.hands[turn]);
+                g.bids.push(bid);
+                if g.bids.len() > 3
+                    && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                {
+                    println!("Bidding is complete");
+                    if let Some(declarer) = g.find_declarer() {
+                        g.lead = Some(declarer.next());
+                    } else {
+                        g.hand_done = true;
+                    }
+                }
+            } else if g.hands[turn].len() > 0 || g.hands[turn + 2].len() > 0 {
+                let seat = turn;
+                let card = player.play(&g);
+                assert!(g.could_be_played().contains(card));
+                if g.played.len() == 4 {
+                    g.played.clear();
+                    // Give players some time to see the finished trick...
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                }
+                g.played.push(card);
+                // Be lazy and don't even bother checking whether we
+                // were playing for dummy, just remove from our hand AND
+                // partner's hand.
+                g.hands[seat] = g.hands[seat] - Cards::singleton(card);
+                g.hands[seat + 2] = g.hands[seat + 2] - Cards::singleton(card);
+                g.trick_finish();
+                if g.ns_tricks + g.ew_tricks == 13 {
+                    g.hand_done = true;
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    if let PlayerConnection::Human(s) = &p.0[Seat::North] {
+        let pp = Player {
+            seat: Seat::North,
+            game: &*g,
+        };
+        let msg = format_as!(HTML, "" pp);
+        s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+    }
+    if let PlayerConnection::Human(s) = &p.0[Seat::South] {
+        let pp = Player {
+            seat: Seat::South,
+            game: &*g,
+        };
+        let msg = format_as!(HTML, "" pp);
+        s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+    }
+    if let PlayerConnection::Human(s) = &p.0[Seat::East] {
+        let pp = Player {
+            seat: Seat::East,
+            game: &*g,
+        };
+        let msg = format_as!(HTML, "" pp);
+        s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+    }
+    if let PlayerConnection::Human(s) = &p.0[Seat::West] {
+        let pp = Player {
+            seat: Seat::West,
+            game: &*g,
+        };
+        let msg = format_as!(HTML, "" pp);
+        s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+    }
+    if let Some(seat) = g.turn() {
+        if let PlayerConnection::WasmAi(s) = &p.0[seat] {
+            println!("FIXME send an appropriate prompt to this robot!");
+            s.send(Ok(warp::ws::Message::text("FIXME your turn"))).ok();
         }
     }
 }
