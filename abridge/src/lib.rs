@@ -83,16 +83,28 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
     );
     let sock = path!("ws" / String)
         .and(warp::ws())
+        .and(game.clone())
+        .and(players.clone())
+        .map(|seat: String, ws: warp::ws::Ws, game, players| {
+            ws.on_upgrade(move |socket| {
+                ws_connected(seat, PlayerConnection::Human, socket, players, game)
+            })
+        });
+    let ai_sock = path!("ai" / String)
+        .and(warp::ws())
         .and(game)
         .and(players)
         .map(|seat: String, ws: warp::ws::Ws, game, players| {
-            ws.on_upgrade(move |socket| ws_connected(seat, socket, players, game))
+            ws.on_upgrade(move |socket| {
+                ws_connected(seat, PlayerConnection::WasmAi, socket, players, game)
+            })
         });
 
     let svc = warp::service(
         style_css
             .or(audio)
             .or(sock)
+            .or(ai_sock)
             .or(seat)
             .or(randomseat)
             .or(index),
@@ -594,6 +606,7 @@ impl PlayableHand {
 #[derive(Debug, Default)]
 enum PlayerConnection {
     Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
+    WasmAi(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
     Ai(BridgeAi),
     #[default]
     None,
@@ -626,6 +639,9 @@ impl Players {
 
 async fn ws_connected(
     seat: String,
+    player_connection_function: fn(
+        mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>,
+    ) -> PlayerConnection,
     ws: warp::ws::WebSocket,
     players: Arc<RwLock<Players>>,
     game: Arc<RwLock<GameState>>,
@@ -646,7 +662,7 @@ async fn ws_connected(
             println!("bad seat");
             return;
         }
-        e.0[myseat] = PlayerConnection::Human(tx);
+        e.0[myseat] = player_connection_function(tx);
     }
     let rx = async_stream::stream! {
         while let Some(item) = rx.recv().await {
@@ -738,7 +754,7 @@ async fn ws_connected(
                     }
                 }
                 g.check_timeout();
-                // Now we need to run any AI that is relevant.
+                // Now we need to run any AI that is relevant if we are using the old in-server AI.
                 while let Some(turn) = g.turn() {
                     if p.0[turn].is_ai() {
                         // Send out an update before we even start thinking.
@@ -848,10 +864,17 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
+                if let Some(seat) = g.turn() {
+                    if let PlayerConnection::WasmAi(s) = &p.0[seat] {
+                        println!("FIXME send an appropriate prompt to this robot!");
+                        s.send(Ok(warp::ws::Message::text("FIXME your turn"))).ok();
+                    }
+                }
             }
         }
     }
 }
+
 struct Index<'a> {
     players: &'a Players,
 }
