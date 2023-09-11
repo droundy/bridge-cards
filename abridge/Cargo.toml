@@ -26,4 +26,4 @@ hyper = "0.14.23"
 http = "0.2.8"
 internment = "0.7.0"
 
-display-as = { path = "../../display-as/display-as", version = "0.7.0", features = ["warp"] }
+display-as = { version = "0.7.0", features = ["warp"] }
