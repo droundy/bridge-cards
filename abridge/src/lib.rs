@@ -21,7 +21,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
     let game = warp::any().map(move || game.clone());
 
     let style_css = path!("style.css").map(|| {
-        const STYLE: &'static str = include_str!("style.css");
+        const STYLE: &str = include_str!("style.css");
         Ok(warp::http::Response::builder()
             .status(200)
             .header("content-length", STYLE.len())
@@ -30,7 +30,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             .unwrap())
     });
     let audio = path!("your-play.mp3").map(|| {
-        const AUDIO: &'static [u8] = include_bytes!("your-play.mp3");
+        const AUDIO: &[u8] = include_bytes!("your-play.mp3");
         Ok(warp::http::Response::builder()
             .status(200)
             .header("content-length", AUDIO.len())
@@ -43,7 +43,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
         .and_then(|players: Arc<RwLock<Players>>| async move {
             let p = players.read().await;
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &Index { players: &*p }).into_response());
+                Ok(display(HTML, &Index { players: &p }).into_response());
             r
         });
     let seat = path!(Seat)
@@ -59,7 +59,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
                     g.names[seat] = PlayerName::Human(memorable_wordlist::camel_case(18));
                 }
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                    Ok(display(HTML, &PlayerPage(Player { seat, game: &*g })).into_response());
+                    Ok(display(HTML, &PlayerPage(Player { seat, game: &g })).into_response());
                 r
             },
         );
@@ -323,7 +323,7 @@ impl GameState {
         self.conventions[0].refine(bids).map(|c| c.description())
     }
     fn bid_convention2(&self, bid: Bid, oldbids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        let mut bids: Vec<_> = oldbids.iter().cloned().collect();
+        let mut bids = oldbids.to_vec();
         bids.push(bid);
         self.bid_convention(&bids)
     }
@@ -348,7 +348,7 @@ impl GameState {
 
     fn bidder(&self) -> Option<Seat> {
         let n = self.bids.len();
-        if n > 3 && &self.bids[n - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass] {
+        if n > 3 && self.bids[n - 3..] == [Bid::Pass, Bid::Pass, Bid::Pass] {
             None
         } else {
             Some(self.dealer + n)
@@ -356,12 +356,7 @@ impl GameState {
     }
 
     fn highest_contract_bid(&self) -> Option<Bid> {
-        for &x in self.bids.iter().rev() {
-            if x.is_contract() {
-                return Some(x);
-            }
-        }
-        None
+        self.bids.iter().rev().find(|x| x.is_contract()).copied()
     }
 
     fn find_declarer(&self) -> Option<Seat> {
@@ -390,7 +385,7 @@ impl GameState {
 
     fn dummy(&self) -> Option<Seat> {
         if self.bids.len() < 4
-            || &self.bids[self.bids.len() - 3..] != &[Bid::Pass, Bid::Pass, Bid::Pass]
+            || self.bids[self.bids.len() - 3..] != [Bid::Pass, Bid::Pass, Bid::Pass]
         {
             return None;
         }
@@ -406,7 +401,7 @@ impl GameState {
                 0 | 4 => lead,
                 n => lead + n,
             };
-            if self.hands[play_seat].len() == 0 {
+            if self.hands[play_seat].is_empty() {
                 None
             } else if play_seat == dummy {
                 Some(declarer)
@@ -444,7 +439,7 @@ impl GameState {
             Bid::Double => {
                 (n >= 1 && self.bids[n - 1].is_contract())
                     || (n >= 3
-                        && &self.bids[n - 2..] == &[Bid::Pass, Bid::Pass]
+                        && self.bids[n - 2..] == [Bid::Pass, Bid::Pass]
                         && self.bids[n - 3].is_contract())
             }
             Bid::Redouble => false,
@@ -493,7 +488,7 @@ impl GameState {
                     if seat == lead + n {
                         let suit = self.played[0].suit();
                         let mysuit = hand.in_suit(suit);
-                        if mysuit.len() == 0 {
+                        if mysuit.is_empty() {
                             hand
                         } else {
                             mysuit
@@ -521,7 +516,7 @@ impl GameState {
                     let seat = lead + n;
                     let suit = self.played[0].suit();
                     let mysuit = self.hands[seat].in_suit(suit);
-                    if mysuit.len() == 0 {
+                    if mysuit.is_empty() {
                         self.hands[seat]
                     } else {
                         mysuit
@@ -596,33 +591,19 @@ impl PlayableHand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum PlayerConnection {
     Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
     Ai(BridgeAi),
+    #[default]
     None,
-}
-impl Default for PlayerConnection {
-    fn default() -> Self {
-        PlayerConnection::None
-    }
 }
 impl PlayerConnection {
     fn is_empty(&self) -> bool {
-        if self.is_ai() {
-            true
-        } else if let PlayerConnection::None = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, PlayerConnection::None)
     }
     fn is_ai(&self) -> bool {
-        if let PlayerConnection::Ai { .. } = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, PlayerConnection::Ai { .. })
     }
 }
 
@@ -690,7 +671,7 @@ async fn ws_connected(
             e.0[myseat] = PlayerConnection::None;
             return;
         }
-        match msg.to_str().map(|s| serde_json::from_str::<Action>(s)) {
+        match msg.to_str().map(serde_json::from_str::<Action>) {
             Err(e) => {
                 eprintln!("Bad UTF8: {:?} {:?}", e, msg);
             }
@@ -723,7 +704,7 @@ async fn ws_connected(
                         if g.turn() == Some(myseat) {
                             g.bids.push(b);
                             if g.bids.len() > 3
-                                && &g.bids[g.bids.len() - 3..] == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                                && g.bids[g.bids.len() - 3..] == [Bid::Pass, Bid::Pass, Bid::Pass]
                             {
                                 println!("Bidding is complete");
                                 if let Some(declarer) = g.find_declarer() {
@@ -743,7 +724,7 @@ async fn ws_connected(
                                         g.played.clear();
                                     }
                                     g.played.push(card);
-                                    g.hands[playing] = g.hands[playing] - Cards::singleton(card);
+                                    g.hands[playing] -= Cards::singleton(card);
                                     g.trick_finish();
                                     if g.ns_tricks + g.ew_tricks == 13 {
                                         g.hand_done = true;
@@ -764,7 +745,7 @@ async fn ws_connected(
                         if let PlayerConnection::Human(s) = &p.0[Seat::North] {
                             let pp = Player {
                                 seat: Seat::North,
-                                game: &*g,
+                                game: &g,
                             };
                             let msg = format_as!(HTML, "" pp);
                             s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -772,7 +753,7 @@ async fn ws_connected(
                         if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                             let pp = Player {
                                 seat: Seat::South,
-                                game: &*g,
+                                game: &g,
                             };
                             let msg = format_as!(HTML, "" pp);
                             s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -780,7 +761,7 @@ async fn ws_connected(
                         if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                             let pp = Player {
                                 seat: Seat::East,
-                                game: &*g,
+                                game: &g,
                             };
                             let msg = format_as!(HTML, "" pp);
                             s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -788,7 +769,7 @@ async fn ws_connected(
                         if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                             let pp = Player {
                                 seat: Seat::West,
-                                game: &*g,
+                                game: &g,
                             };
                             let msg = format_as!(HTML, "" pp);
                             s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -797,12 +778,12 @@ async fn ws_connected(
                     if let PlayerConnection::Ai(ai) = &mut p.0[turn] {
                         // It's an AI's move!
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        match ai.play(&*g) {
+                        match ai.play(&g) {
                             Action::Bid(bid) => {
                                 g.bids.push(bid);
                                 if g.bids.len() > 3
-                                    && &g.bids[g.bids.len() - 3..]
-                                        == &[Bid::Pass, Bid::Pass, Bid::Pass]
+                                    && g.bids[g.bids.len() - 3..]
+                                        == [Bid::Pass, Bid::Pass, Bid::Pass]
                                 {
                                     println!("Bidding is complete");
                                     if let Some(declarer) = g.find_declarer() {
@@ -822,7 +803,7 @@ async fn ws_connected(
                                             .await;
                                     }
                                     g.played.push(card);
-                                    g.hands[seat] = g.hands[seat] - Cards::singleton(card);
+                                    g.hands[seat] -= Cards::singleton(card);
                                     g.trick_finish();
                                     if g.ns_tricks + g.ew_tricks == 13 {
                                         g.hand_done = true;
@@ -838,7 +819,7 @@ async fn ws_connected(
                 if let PlayerConnection::Human(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
-                        game: &*g,
+                        game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -846,7 +827,7 @@ async fn ws_connected(
                 if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                     let pp = Player {
                         seat: Seat::South,
-                        game: &*g,
+                        game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -854,7 +835,7 @@ async fn ws_connected(
                 if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                     let pp = Player {
                         seat: Seat::East,
-                        game: &*g,
+                        game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -862,7 +843,7 @@ async fn ws_connected(
                 if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                     let pp = Player {
                         seat: Seat::West,
-                        game: &*g,
+                        game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
@@ -929,11 +910,11 @@ impl Seat {
     }
     fn name(self) -> &'static str {
         const NAMES: Seated<&'static str> = Seated::new(["S", "W", "N", "E"]);
-        &*NAMES[self]
+        NAMES[self]
     }
     fn long_name(self) -> &'static str {
         const NAMES: Seated<&'static str> = Seated::new(["south", "west", "north", "east"]);
-        &*NAMES[self]
+        NAMES[self]
     }
 }
 

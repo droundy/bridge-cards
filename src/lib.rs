@@ -297,7 +297,7 @@ impl Suit {
             .copied()
     }
     /// All four suits from lowest to highest
-    pub const ALL: &'static [Self] = &[Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
+    pub const ALL: [Self; 4] = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
 }
 
 /// A deck or hand of cards
@@ -747,7 +747,9 @@ impl Iterator for Cards {
             None
         } else {
             let next = self.bits.leading_zeros();
-            Some(Card { offset: (63 - next) as u8 })
+            Some(Card {
+                offset: (63 - next) as u8,
+            })
         }
     }
 
