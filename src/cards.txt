@@ -1,0 +1,12 @@
+♠[% for c in self.spades().rev() {
+    c.rankname()
+} %]
+♥[% for c in self.hearts().rev() {
+  c.rankname()
+} %]
+♦[% for c in self.diamonds().rev() {
+  c.rankname()
+} %]
+♣[% for c in self.clubs().rev() {
+  c.rankname()
+} %]

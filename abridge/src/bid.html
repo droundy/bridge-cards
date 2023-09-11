@@ -1,0 +1,19 @@
+[%
+match self {
+    Bid::Pass => {
+        %]Pass[%
+    }
+    Bid::Double => {
+        %]X[%
+    }
+    Bid::Redouble => {
+        %]XX[%
+    }
+    Bid::Suit(level,suit) => {
+        %]<span class="[% suit.name() %]">[% level %]</span>[% suit
+    }
+    Bid::NT(i) => {
+        i %]NT[%
+    }
+}
+%]

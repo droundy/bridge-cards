@@ -1,0 +1,228 @@
+body {
+    font-size: 24px;
+    font-family: 'Roboto', sans-serif;
+    margin: 0;
+}
+
+#north, #south {
+    margin: auto;
+}
+
+#south {
+    clear: both;
+}
+
+/* #west {
+    clear: left;
+    float: left;
+}
+
+#east {
+    clear: right;
+    float: right;
+} */
+
+.name {
+    display: block;
+    font-size: small;
+}
+.alert {
+    font-size: 9px;
+    display: block;
+    color:darkorange;
+}
+.hand {
+    width: max-content;
+    border-radius: 0.4rem;
+    padding: 0.2rem;
+    min-height: 3rem;
+}
+.hand.dummy {
+    background-color: lightgray;
+    box-shadow: 0.1em 0.2em 0.25em lightgray;
+}
+.hand.turn {
+    box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue,  0.1em 0.2em 0.75em yellow;
+}
+
+.spades {
+    color: black;
+}
+
+.hearts {
+    color: red;
+}
+
+.diamonds {
+    color: transparent;
+    text-shadow: 0 0 0 #dd8800;
+    /* color: #dd8800; */
+    /* color: red; */
+}
+
+.clubs {
+    color: transparent;
+    text-shadow: 0 0 0 green;
+    /* color: green; */
+    /* color: black; */
+}
+
+.playable {
+    transition: all 0.25s ease-in-out;
+    text-shadow: 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+
+.playable:hover {
+    text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    cursor: pointer;
+}
+
+.diamonds .playable {
+    text-shadow: 0 0 0 #dd8800, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+.diamonds .playable:hover {
+    text-shadow: 0 0 0 #dd8800, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+}
+
+.clubs .playable {
+    text-shadow: 0 0 0 green, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+}
+.clubs .playable:hover {
+    text-shadow: 0 0 0 green, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+}
+
+button {
+    width: 3em;
+    margin: 0.25em;
+    margin-bottom: 0;
+    margin-top: 0;
+}
+
+button.pass {
+    width: 10em;
+}
+
+button:disabled {
+   opacity: 0.3;
+}
+
+.bidboard {
+    width: 10em;
+    margin: auto;
+}
+
+.redeal {
+    float: right;
+    width: 5em;
+}
+
+.robots {
+    float: right;
+    width: 5em;
+}
+
+.bidhistory {
+    margin: 0.25rem;
+    font-size: 14px;
+    float: left;
+    border: 0.05em solid black;
+    line-height: 0.5rem;
+}
+
+.bidhistory th, .bidhistory td {
+    width: 2.2em;
+    text-align: center;
+}
+
+.cardinhand {
+    display: inline-block;
+    width: 1.1em;
+    text-align: center;
+    font-size: 18px;
+}
+
+.playedalready {
+    opacity: 0.2;
+}
+
+label {
+    font-size: small;
+}
+table {
+    margin: auto;
+}
+.table {
+    width: 5rem;
+    margin: auto;
+    height: 5rem;
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    position: relative;
+    font-size: 18px;
+    z-index: -1;
+    /* font-size: 36px; */
+    background-color: lightgreen;
+    border-radius: 1em;
+    box-shadow: 0 0 0.2em lightgreen;
+}
+
+/* North */
+.table > span:nth-of-type(1) {
+    position: absolute;
+    top: 0;
+    left: 1rem;
+    text-align: center;
+    width: 3rem;
+}
+.table > span:nth-of-type(2) {
+    position: absolute;
+    top: 1rem;
+    left: 0;
+    line-height: 3rem;
+    height: 3rem;
+}
+.table > span:nth-of-type(3) {
+    position: absolute;
+    top: 1rem;
+    right: 0;
+    line-height: 3rem;
+    height: 3rem;
+}
+.table > span:nth-of-type(4) {
+    position: absolute;
+    bottom: 0;
+    left: 1rem;
+    text-align: center;
+    width: 3rem;
+}
+
+.hastooltip {
+    position: relative;
+    display: inline-block;
+  }
+  
+  /* Tooltip text */
+  .hastooltip .tooltip {
+    visibility: hidden;
+    width: 120px;
+    background-color: white;
+    color: black;
+    box-shadow: 0.05em 0.1em 0.2em black;
+    text-align: center;
+    line-height: 1.1em;
+    padding: 5px 0;
+    border-radius: 6px;
+   
+    /* Position the tooltip text - see examples below! */
+    position: absolute;
+    z-index: 1;
+    top: 1.1em;
+    /* left: 100vw; */
+    /* transition: left 2s; */
+  }
+  
+  /* Show the tooltip text when you mouse over the tooltip container */
+  .hastooltip:hover .tooltip {
+    visibility: visible;
+    left: 3em;
+  }

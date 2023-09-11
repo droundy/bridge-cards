@@ -1,0 +1,43 @@
+[package]
+name = "bridge-deck"
+version = "0.1.1"
+authors = ["David Roundy <daveroundy@gmail.com>"]
+edition = "2018"
+
+keywords = ["card", "deck"]
+
+description = "Yet another library for playing cards and sets of cards"
+repository = "https://github.com/droundy/bridge-cards"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+debug = true
+
+[dependencies]
+
+rand = { version = "0.8", features = ["small_rng"] }
+serde = { version = "1.0", features = ["derive"] }
+
+display-as = { version = "0.7.0", optional = true }
+
+[dev-dependencies]
+
+quickcheck = "^0.9.2"
+easybench = "1.1.0"
+
+cardpack = "0.3.8"
+simple-cards = "1.1.0"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[workspace]
+
+members = [
+    "abridge",
+    "bridge-solver",
+]

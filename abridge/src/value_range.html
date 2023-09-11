@@ -1,0 +1,19 @@
+[%
+
+if self.min == 0 && self.max >= self.theoretical_max {
+    %][%
+} else {
+    if self.max == self.min {
+        self.max
+    } else if self.min > 0 && self.max < self.theoretical_max {
+        self.min %]-[% self.max
+    } else if self.min > 0 {
+        self.min %]+[%
+    } else {
+        self.max %]-[% 
+    }    
+    %] [% self.name as UTF8 %]<br/>[%
+}
+
+
+%]

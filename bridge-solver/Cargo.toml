@@ -1,0 +1,31 @@
+[package]
+name = "bridge-solver"
+version = "0.1.0"
+authors = ["David Roundy <daveroundy@gmail.com>"]
+edition = "2018"
+
+keywords = ["bridge", "game", "solver"]
+
+description = "Solvers for bridge (like double dummy solvers)"
+repository = "https://github.com/droundy/bridge-cards"
+license = "MIT/Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+
+bridge-deck = { version = "0.1.1", path = ".." }
+
+rand = "0.8.0"
+rayon = "1.5.0"
+seahash = "4.1.0"
+dashmap = { version = "4.0.2", features = ["rayon"] }
+
+[dev-dependencies]
+
+scaling = "0.1.3"
+
+[[bench]]
+name = "bench"
+harness = false
