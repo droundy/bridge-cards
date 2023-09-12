@@ -1,6 +1,7 @@
 use crate::{Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
+use wasm_bindgen::prelude::*;
 
 #[derive(Debug)]
 pub struct BridgeAi {
@@ -22,6 +23,13 @@ impl BridgeAi {
             Action::Play(self.player.play(game))
         }
     }
+}
+
+#[wasm_bindgen]
+pub fn choose_play(serialized_game: &str) -> Option<String> {
+    let game = serde_json::from_str::<GameState>(serialized_game).ok()?;
+    let mut ai = BridgeAi::new();
+    serde_json::to_string(&ai.play(&game)).ok()
 }
 
 pub trait BidAI: std::fmt::Debug {
@@ -1743,7 +1751,7 @@ impl Convention {
 
 #[test]
 fn test_bidai() {
-    use crate::Suit::*;
+    use bridge_deck::Suit::*;
     use std::str::FromStr;
     use Bid::*;
 
@@ -1763,7 +1771,7 @@ fn test_bidai() {
 
 #[test]
 fn test_sheets() {
-    use crate::Suit::*;
+    use bridge_deck::Suit::*;
     use Bid::*;
     let sheets = Convention::sheets();
     assert_eq!(None, sheets.refine(&[]).map(|c| c.name()));

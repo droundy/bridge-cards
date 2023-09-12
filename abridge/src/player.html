@@ -126,5 +126,3 @@
 }
 %]
 <input type="checkbox" [% Action::ToggleCountForMe %] id="countforme" name="countforme"[% if self.game.count_for_me[self.seat] { %] checked[% } %]><label for="countforme">Count for me</label><br>
-
-<span class="alert">Using convention [% self.game.conventions[0].name() %]</span><p>
