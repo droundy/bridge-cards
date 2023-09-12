@@ -51,15 +51,6 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             .body(ROBOT_BG_WASM)
             .unwrap())
     });
-    let robot_bg_js = path!("robot_bg.js").map(|| {
-        const ROBOT_BG_JS: &[u8] = include_bytes!("../../robot/pkg/robot_bg.js");
-        Ok(warp::http::Response::builder()
-            .status(200)
-            .header("content-length", ROBOT_BG_JS.len())
-            .header("content-type", "application/javascript")
-            .body(ROBOT_BG_JS)
-            .unwrap())
-    });
     let index = players
         .clone()
         .and_then(|players: Arc<RwLock<Players>>| async move {
@@ -126,7 +117,6 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
         style_css
             .or(audio)
             .or(robot)
-            .or(robot_bg_js)
             .or(robot_bg_wasm)
             .or(sock)
             .or(ai_sock)
