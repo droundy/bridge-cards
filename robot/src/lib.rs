@@ -16,7 +16,6 @@ pub enum Bid {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Redeal,
-    SitAI,
     Bid(Bid),
     Play(Card),
     Name(String),
