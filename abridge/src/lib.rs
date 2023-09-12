@@ -76,6 +76,16 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
                 r
             },
         );
+    let robot_tab = path!("robot" / Seat).and(game.clone()).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+            let mut g = game.write().await;
+            g.check_timeout();
+            g.names[seat] = PlayerName::Robot;
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
+            r
+        },
+    );
 
     let randomseat = path!("random").and(players.clone()).and_then(
         move |players: Arc<RwLock<Players>>| async move {
@@ -116,6 +126,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
     let svc = warp::service(
         style_css
             .or(audio)
+            .or(robot_tab)
             .or(robot)
             .or(robot_bg_wasm)
             .or(sock)
@@ -439,8 +450,10 @@ async fn ws_connected(
                 }
                 if let Some(seat) = g.turn() {
                     if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-                        println!("FIXME send an appropriate prompt to this robot!");
-                        s.send(Ok(warp::ws::Message::text("FIXME your turn"))).ok();
+                        s.send(Ok(warp::ws::Message::text(
+                            &serde_json::to_string(&*g).unwrap(),
+                        )))
+                        .ok();
                     }
                 }
             }
@@ -474,3 +487,11 @@ impl<'a> Player<'a> {
 struct PlayerPage<'a>(Player<'a>);
 #[with_template("[%" "%]" "player-page.html")]
 impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
+
+struct RobotPage<'a> {
+    seat: Seat,
+    game: &'a GameState,
+}
+
+#[with_template("[%" "%]" "robot-page.html")]
+impl<'a> DisplayAs<HTML> for RobotPage<'a> {}
