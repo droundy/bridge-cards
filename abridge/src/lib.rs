@@ -42,13 +42,22 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             .body(ROBOT_JS)
             .unwrap())
     });
-    let robot_wasm = path!("robot_bg.wasm").map(|| {
-        const ROBOT_WASM: &[u8] = include_bytes!("../../robot/pkg/robot_bg.wasm");
+    let robot_bg_wasm = path!("robot_bg.wasm").map(|| {
+        const ROBOT_BG_WASM: &[u8] = include_bytes!("../../robot/pkg/robot_bg.wasm");
         Ok(warp::http::Response::builder()
             .status(200)
-            .header("content-length", ROBOT_WASM.len())
+            .header("content-length", ROBOT_BG_WASM.len())
             .header("content-type", "application/wasm")
-            .body(ROBOT_WASM)
+            .body(ROBOT_BG_WASM)
+            .unwrap())
+    });
+    let robot_bg_js = path!("robot_bg.js").map(|| {
+        const ROBOT_BG_JS: &[u8] = include_bytes!("../../robot/pkg/robot_bg.js");
+        Ok(warp::http::Response::builder()
+            .status(200)
+            .header("content-length", ROBOT_BG_JS.len())
+            .header("content-type", "application/javascript")
+            .body(ROBOT_BG_JS)
             .unwrap())
     });
     let index = players
@@ -117,7 +126,8 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
         style_css
             .or(audio)
             .or(robot)
-            .or(robot_wasm)
+            .or(robot_bg_js)
+            .or(robot_bg_wasm)
             .or(sock)
             .or(ai_sock)
             .or(seat)

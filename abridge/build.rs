@@ -2,7 +2,7 @@ use std::process::Command;
 
 fn main() {
     let status = Command::new("wasm-pack")
-        .args(&["build", "--target", "web", "../robot"])
+        .args(&["build", "--target", "web", "--no-typescript", "--profiling", "../robot"])
         .status()
         .expect("failed to execute wasm-pack");
 
