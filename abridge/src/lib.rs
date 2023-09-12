@@ -1,7 +1,7 @@
 use bridge_deck::{Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
 use futures::StreamExt;
-use robot::{Action, Bid,  GameState, PlayerName, Seat, Seated};
+use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
