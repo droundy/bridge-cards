@@ -20,6 +20,7 @@
         console.log('connected');
     };
     ws.onmessage = function (event) {
+        console.log('got html data');
         document.getElementById('main').innerHTML = event.data;
     };
     ws.onclose = function () {
@@ -41,16 +42,6 @@
 </script>
 
 <body>
-    <script type="module">
-        import init, { choose_play } from './robot.js';
-
-        async function run() {
-            await init();
-            console.log(choose_play("test"));
-        }
-
-        run();
-    </script>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
     <main id="main">[% self.0 %]</main>
 </body>

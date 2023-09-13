@@ -323,6 +323,7 @@ async fn ws_connected(
                     }
                 }
                 g.check_timeout();
+                println!("sending update to each player");
                 if let PlayerConnection::Human(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
@@ -355,6 +356,7 @@ async fn ws_connected(
                     let msg = format_as!(HTML, "" pp);
                     s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
                 }
+                println!("done sending player updates");
                 if let Some(seat) = g.turn() {
                     if let PlayerConnection::WasmAi(s) = &p.0[seat] {
                         s.send(Ok(warp::ws::Message::text(
