@@ -24,10 +24,17 @@
         ws.onopen = function () {
             console.log('connected');
         };
-        ws.onmessage = function (event) {
+        ws.onmessage = async function (event) {
             document.getElementById('main').innerHTML = event.data;
+            const min_play_time = 1000; // Ensure each play takes at least this many ms
+            const start = performance.now();
             let action = choose_play(event.data);
-            console.log("Chose to do", action, 'based on', event.data);
+            const end = performance.now();
+            console.log(`Chose to do ${action} based on ${event.data} which took ${end - start} ms`);
+            if (end - start < min_play_time) {
+                console.log('waiting a bit longer');
+                await new Promise(r => setTimeout(r, min_play_time + start - end));
+            }
             ws.send(action);
         };
         ws.onclose = function () {
