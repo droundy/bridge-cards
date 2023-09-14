@@ -25,8 +25,10 @@
             console.log('connected');
         };
         ws.onmessage = async function (event) {
-            document.getElementById('main').innerHTML = event.data;
+            document.getElementById('main').innerHTML = "Thinking...";
             const min_play_time = 1000; // Ensure each play takes at least this many ms
+            const time_to_load = 100; // Time to wait before using the CPU so that the player UI doesn't get bogged down.
+            await new Promise(r => setTimeout(r, time_to_load));
             const start = performance.now();
             let action = choose_play(event.data);
             const end = performance.now();
@@ -35,6 +37,8 @@
                 console.log('waiting a bit longer');
                 await new Promise(r => setTimeout(r, min_play_time + start - end));
             }
+
+            document.getElementById('main').innerHTML = action;
             ws.send(action);
         };
         ws.onclose = function () {
@@ -43,15 +47,6 @@
         };
         function send_message(action) {
             ws.send(action);
-        }
-        var timer;
-        function sendname() {
-            window.clearTimeout(timer);
-            timer = window.setTimeout(function () {
-                let name = document.getElementById('myname').innerText;
-                document.cookie = "name=" + name;
-                ws.send(JSON.stringify({ "Name": name }));
-            }, 3000);
         }
     </script>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
