@@ -17,9 +17,8 @@ rand = "0.8.0"
 memorable-wordlist = "0.1.7"
 
 warp = "0.3.0"
-tokio = { version = "1.22.0", features = ["full", "time"] }
-async-stream = "0.3.3"
-futures = "0.3.25"
+tokio = { version = "1.32.0", features = ["full", "time"] }
+futures = "0.3.28"
 axum = "0.6.1"
 hyper = "0.14.23"
 http = "0.2.8"

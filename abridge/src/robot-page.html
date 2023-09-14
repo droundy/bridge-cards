@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title> Robot [% format!("{:?}", self.seat) %]</title>
+    <link rel="stylesheet" href="[% self.game.root as URL %]/style.css">
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <script type="module">
+        import init, { choose_play } from '[% self.game.root as URL %]/robot.js';
+        await init();
+    
+        var ws_protocol = 'ws://';
+        if (location.protocol == 'https:') {
+            ws_protocol = 'wss://';
+        }
+        const ws = new WebSocket(ws_protocol + location.host + '[% self.game.root as URL %]/ai/[% format!("{:?}", self.seat).to_lowercase() %]');
+        console.log('did websocket');
+    
+        ws.onopen = function () {
+            console.log('connected');
+        };
+        ws.onmessage = async function (event) {
+            document.getElementById('main').innerHTML = event.data;
+            const min_play_time = 1000; // Ensure each play takes at least this many ms
+            const start = performance.now();
+            let action = choose_play(event.data);
+            const end = performance.now();
+            console.log(`Chose to do ${action} based on ${event.data} which took ${end - start} ms`);
+            if (end - start < min_play_time) {
+                console.log('waiting a bit longer');
+                await new Promise(r => setTimeout(r, min_play_time + start - end));
+            }
+            ws.send(action);
+        };
+        ws.onclose = function () {
+            console.log('disconnected');
+            location.reload();
+        };
+        function send_message(action) {
+            ws.send(action);
+        }
+        var timer;
+        function sendname() {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(function () {
+                let name = document.getElementById('myname').innerText;
+                document.cookie = "name=" + name;
+                ws.send(JSON.stringify({ "Name": name }));
+            }, 3000);
+        }
+    </script>
+    <button class="redeal" [% Action::Redeal %]>Redeal</button>
+    <main id="main">Robot ai stuff here.</main>
+</body>
+
+</html>

@@ -1,13 +1,13 @@
 use bridge_deck::{Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
-use futures::StreamExt;
-use robot::{Action, Bid, BridgeAi, GameState, PlayerName, Seat, Seated};
+use futures::{SinkExt, StreamExt};
+use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
 
-pub async fn serve_abridge(root: &str) -> axum::Router {
+pub async fn serve_abridge(root: &str) {
     let root = internment::Intern::new(root.to_string());
     let players = Arc::new(RwLock::new(Players::default()));
     let game = Arc::new(RwLock::new(GameState::new(root.to_string())));
@@ -76,6 +76,16 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
                 r
             },
         );
+    let robot_tab = path!("robot" / Seat).and(game.clone()).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+            let mut g = game.write().await;
+            g.check_timeout();
+            g.names[seat] = PlayerName::Robot;
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
+            r
+        },
+    );
 
     let randomseat = path!("random").and(players.clone()).and_then(
         move |players: Arc<RwLock<Players>>| async move {
@@ -113,9 +123,10 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             })
         });
 
-    let svc = warp::service(
+    warp::serve(
         style_css
             .or(audio)
+            .or(robot_tab)
             .or(robot)
             .or(robot_bg_wasm)
             .or(sock)
@@ -123,8 +134,9 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             .or(seat)
             .or(randomseat)
             .or(index),
-    );
-    axum::Router::new().nest_service("", svc)
+    )
+    .run(([0, 0, 0, 0], 8087))
+    .await;
 }
 
 static BIDS: &[Bid] = &[
@@ -178,18 +190,14 @@ impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
 #[derive(Debug, Default)]
 enum PlayerConnection {
-    Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
-    WasmAi(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
-    Ai(BridgeAi),
+    Human(mpsc::UnboundedSender<warp::ws::Message>),
+    WasmAi(mpsc::UnboundedSender<warp::ws::Message>),
     #[default]
     None,
 }
 impl PlayerConnection {
     fn is_empty(&self) -> bool {
         matches!(self, PlayerConnection::None)
-    }
-    fn is_ai(&self) -> bool {
-        matches!(self, PlayerConnection::Ai { .. })
     }
 }
 
@@ -212,15 +220,13 @@ impl Players {
 
 async fn ws_connected(
     seat: String,
-    player_connection_function: fn(
-        mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>,
-    ) -> PlayerConnection,
+    player_connection_function: fn(mpsc::UnboundedSender<warp::ws::Message>) -> PlayerConnection,
     ws: warp::ws::WebSocket,
     players: Arc<RwLock<Players>>,
     game: Arc<RwLock<GameState>>,
 ) {
     // Split the socket into a sender and receive of messages.
-    let (user_ws_tx, mut user_ws_rx) = ws.split();
+    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the websocket...
@@ -237,12 +243,15 @@ async fn ws_connected(
         }
         e.0[myseat] = player_connection_function(tx);
     }
-    let rx = async_stream::stream! {
-        while let Some(item) = rx.recv().await {
-            yield item;
+    tokio::task::spawn(async move {
+        while let Some(x) = rx.recv().await {
+            if let Err(e) = user_ws_tx.send(x).await {
+                println!("Got a ws send error: {e}");
+            } else {
+                println!("sent message successfully!");
+            }
         }
-    };
-    tokio::task::spawn(rx.forward(user_ws_tx));
+    });
 
     // Every time the user sends a message, broadcast it to
     // all other users...
@@ -269,7 +278,7 @@ async fn ws_connected(
             }
             Ok(Ok(action)) => {
                 println!("Doing {:?}", action);
-                let mut p = players.write().await;
+                let p = players.read().await;
                 let mut g = game.write().await;
                 match action {
                     Action::ToggleCountForMe => {
@@ -277,17 +286,6 @@ async fn ws_connected(
                     }
                     Action::Redeal => {
                         g.redeal();
-                    }
-                    Action::SitAI => {
-                        for s in [Seat::North, Seat::East, Seat::South, Seat::West]
-                            .iter()
-                            .cloned()
-                        {
-                            if p.0[s].is_empty() {
-                                g.names[s] = PlayerName::Robot;
-                                p.0[s] = PlayerConnection::Ai(BridgeAi::new());
-                            }
-                        }
                     }
                     Action::Bid(b) => {
                         if g.turn() == Some(myseat) {
@@ -327,91 +325,14 @@ async fn ws_connected(
                     }
                 }
                 g.check_timeout();
-                // Now we need to run any AI that is relevant if we are using the old in-server AI.
-                while let Some(turn) = g.turn() {
-                    if p.0[turn].is_ai() {
-                        // Send out an update before we even start thinking.
-                        if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                            let pp = Player {
-                                seat: Seat::North,
-                                game: &g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                            let pp = Player {
-                                seat: Seat::South,
-                                game: &g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                            let pp = Player {
-                                seat: Seat::East,
-                                game: &g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                        if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                            let pp = Player {
-                                seat: Seat::West,
-                                game: &g,
-                            };
-                            let msg = format_as!(HTML, "" pp);
-                            s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
-                        }
-                    }
-                    if let PlayerConnection::Ai(ai) = &mut p.0[turn] {
-                        // It's an AI's move!
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        match ai.play(&g) {
-                            Action::Bid(bid) => {
-                                g.bids.push(bid);
-                                if g.bids.len() > 3
-                                    && g.bids[g.bids.len() - 3..]
-                                        == [Bid::Pass, Bid::Pass, Bid::Pass]
-                                {
-                                    println!("Bidding is complete");
-                                    if let Some(declarer) = g.find_declarer() {
-                                        g.lead = Some(declarer.next());
-                                    } else {
-                                        g.hand_done = true;
-                                    }
-                                }
-                            }
-                            Action::Play(card) => {
-                                if let Some(seat) = g.hand_playing() {
-                                    assert!(g.could_be_played().contains(card));
-                                    if g.played.len() == 4 {
-                                        g.played.clear();
-                                        // Give players some time to see the finished trick...
-                                        tokio::time::sleep(std::time::Duration::from_secs(10))
-                                            .await;
-                                    }
-                                    g.played.push(card);
-                                    g.hands[seat] -= Cards::singleton(card);
-                                    g.trick_finish();
-                                    if g.ns_tricks + g.ew_tricks == 13 {
-                                        g.hand_done = true;
-                                    }
-                                }
-                            }
-                            badaction => panic!("AI should only bid and play! {badaction:?}"),
-                        }
-                    } else {
-                        break;
-                    }
-                }
+                println!("sending update to each player");
                 if let PlayerConnection::Human(s) = &p.0[Seat::North] {
                     let pp = Player {
                         seat: Seat::North,
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                     let pp = Player {
@@ -419,7 +340,7 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                     let pp = Player {
@@ -427,7 +348,7 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                     let pp = Player {
@@ -435,12 +356,15 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
+                println!("done sending player updates");
                 if let Some(seat) = g.turn() {
                     if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-                        println!("FIXME send an appropriate prompt to this robot!");
-                        s.send(Ok(warp::ws::Message::text("FIXME your turn"))).ok();
+                        s.send(warp::ws::Message::text(
+                            &serde_json::to_string(&*g).unwrap(),
+                        ))
+                        .ok();
                     }
                 }
             }
@@ -474,3 +398,11 @@ impl<'a> Player<'a> {
 struct PlayerPage<'a>(Player<'a>);
 #[with_template("[%" "%]" "player-page.html")]
 impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
+
+struct RobotPage<'a> {
+    seat: Seat,
+    game: &'a GameState,
+}
+
+#[with_template("[%" "%]" "robot-page.html")]
+impl<'a> DisplayAs<HTML> for RobotPage<'a> {}
