@@ -76,11 +76,13 @@ pub async fn serve_abridge(root: &str) {
                 r
             },
         );
-    let robot_tab = path!("robot" / Seat).and(game.clone()).and_then(
-        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+    let robot_tab = path!("robot" / Seat).and(game.clone()).and(players.clone()).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>, players: Arc<RwLock<Players>>| async move {
+            let p = players.read().await;
             let mut g = game.write().await;
             g.check_timeout();
             g.names[seat] = PlayerName::Robot(random_name());
+            send_player_updates(&p, &g);
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                 Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
             r
@@ -263,8 +265,6 @@ async fn ws_connected(
         while let Some(x) = rx.recv().await {
             if let Err(e) = user_ws_tx.send(x).await {
                 println!("Got a ws send error: {e}");
-            } else {
-                println!("sent message successfully!");
             }
         }
     });
@@ -341,40 +341,7 @@ async fn ws_connected(
                     }
                 }
                 g.check_timeout();
-                println!("sending update to each player");
-                if let PlayerConnection::Human(s) = &p.0[Seat::North] {
-                    let pp = Player {
-                        seat: Seat::North,
-                        game: &g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(warp::ws::Message::text(msg.into_string())).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::South] {
-                    let pp = Player {
-                        seat: Seat::South,
-                        game: &g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(warp::ws::Message::text(msg.into_string())).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::East] {
-                    let pp = Player {
-                        seat: Seat::East,
-                        game: &g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(warp::ws::Message::text(msg.into_string())).ok();
-                }
-                if let PlayerConnection::Human(s) = &p.0[Seat::West] {
-                    let pp = Player {
-                        seat: Seat::West,
-                        game: &g,
-                    };
-                    let msg = format_as!(HTML, "" pp);
-                    s.send(warp::ws::Message::text(msg.into_string())).ok();
-                }
-                println!("done sending player updates");
+                send_player_updates(&p, &g);
                 if let Some(seat) = g.turn() {
                     if let PlayerConnection::WasmAi(s) = &p.0[seat] {
                         s.send(warp::ws::Message::text(
@@ -384,6 +351,19 @@ async fn ws_connected(
                     }
                 }
             }
+        }
+    }
+}
+
+fn send_player_updates(p: &Players, g: &GameState) {
+    for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
+        if let PlayerConnection::Human(s) = &p.0[seat] {
+            let pp = Player {
+                seat,
+                game: &g,
+            };
+            let msg = format_as!(HTML, "" pp);
+            s.send(warp::ws::Message::text(msg.into_string())).ok();
         }
     }
 }
