@@ -1,13 +1,13 @@
 use bridge_deck::{Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
 
-pub async fn serve_abridge(root: &str) -> axum::Router {
+pub async fn serve_abridge(root: &str) {
     let root = internment::Intern::new(root.to_string());
     let players = Arc::new(RwLock::new(Players::default()));
     let game = Arc::new(RwLock::new(GameState::new(root.to_string())));
@@ -123,7 +123,7 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             })
         });
 
-    let svc = warp::service(
+    warp::serve(
         style_css
             .or(audio)
             .or(robot_tab)
@@ -134,8 +134,9 @@ pub async fn serve_abridge(root: &str) -> axum::Router {
             .or(seat)
             .or(randomseat)
             .or(index),
-    );
-    axum::Router::new().nest_service("", svc)
+    )
+    .run(([0, 0, 0, 0], 8087))
+    .await;
 }
 
 static BIDS: &[Bid] = &[
@@ -189,8 +190,8 @@ impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
 #[derive(Debug, Default)]
 enum PlayerConnection {
-    Human(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
-    WasmAi(mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>),
+    Human(mpsc::UnboundedSender<warp::ws::Message>),
+    WasmAi(mpsc::UnboundedSender<warp::ws::Message>),
     #[default]
     None,
 }
@@ -219,15 +220,13 @@ impl Players {
 
 async fn ws_connected(
     seat: String,
-    player_connection_function: fn(
-        mpsc::UnboundedSender<Result<warp::ws::Message, warp::Error>>,
-    ) -> PlayerConnection,
+    player_connection_function: fn(mpsc::UnboundedSender<warp::ws::Message>) -> PlayerConnection,
     ws: warp::ws::WebSocket,
     players: Arc<RwLock<Players>>,
     game: Arc<RwLock<GameState>>,
 ) {
     // Split the socket into a sender and receive of messages.
-    let (user_ws_tx, mut user_ws_rx) = ws.split();
+    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
 
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the websocket...
@@ -244,12 +243,15 @@ async fn ws_connected(
         }
         e.0[myseat] = player_connection_function(tx);
     }
-    let rx = async_stream::stream! {
-        while let Some(item) = rx.recv().await {
-            yield item;
+    tokio::task::spawn(async move {
+        while let Some(x) = rx.recv().await {
+            if let Err(e) = user_ws_tx.send(x).await {
+                println!("Got a ws send error: {e}");
+            } else {
+                println!("sent message successfully!");
+            }
         }
-    };
-    tokio::task::spawn(rx.forward(user_ws_tx));
+    });
 
     // Every time the user sends a message, broadcast it to
     // all other users...
@@ -330,7 +332,7 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::South] {
                     let pp = Player {
@@ -338,7 +340,7 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::East] {
                     let pp = Player {
@@ -346,7 +348,7 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 if let PlayerConnection::Human(s) = &p.0[Seat::West] {
                     let pp = Player {
@@ -354,14 +356,14 @@ async fn ws_connected(
                         game: &g,
                     };
                     let msg = format_as!(HTML, "" pp);
-                    s.send(Ok(warp::ws::Message::text(msg.into_string()))).ok();
+                    s.send(warp::ws::Message::text(msg.into_string())).ok();
                 }
                 println!("done sending player updates");
                 if let Some(seat) = g.turn() {
                     if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-                        s.send(Ok(warp::ws::Message::text(
+                        s.send(warp::ws::Message::text(
                             &serde_json::to_string(&*g).unwrap(),
-                        )))
+                        ))
                         .ok();
                     }
                 }
