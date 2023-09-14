@@ -76,13 +76,11 @@ pub async fn serve_abridge(root: &str) {
                 r
             },
         );
-    let robot_tab = path!("robot" / Seat).and(game.clone()).and(players.clone()).and_then(
-        |seat: Seat, game: Arc<RwLock<GameState>>, players: Arc<RwLock<Players>>| async move {
-            let p = players.read().await;
+    let robot_tab = path!("robot" / Seat).and(game.clone()).and_then(
+        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
             let mut g = game.write().await;
             g.check_timeout();
             g.names[seat] = PlayerName::Robot(random_name());
-            send_player_updates(&p, &g);
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                 Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
             r
@@ -252,14 +250,18 @@ async fn ws_connected(
     let myseat;
     {
         // Save the sender in our list of connected users.
-        let mut e = players.write().await;
+        let mut p = players.write().await;
         if let Ok(s) = std::str::FromStr::from_str(seat.as_str()) {
             myseat = s;
         } else {
             println!("bad seat");
             return;
         }
-        e.0[myseat] = player_connection_function(tx);
+        p.0[myseat] = player_connection_function(tx);
+        if matches!(&p.0[myseat], PlayerConnection::WasmAi(_)) {
+            let g = game.read().await;
+            send_player_updates(&p, &g);
+        }
     }
     tokio::task::spawn(async move {
         while let Some(x) = rx.recv().await {
@@ -342,14 +344,6 @@ async fn ws_connected(
                 }
                 g.check_timeout();
                 send_player_updates(&p, &g);
-                if let Some(seat) = g.turn() {
-                    if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-                        s.send(warp::ws::Message::text(
-                            &serde_json::to_string(&*g).unwrap(),
-                        ))
-                        .ok();
-                    }
-                }
             }
         }
     }
@@ -364,6 +358,14 @@ fn send_player_updates(p: &Players, g: &GameState) {
             };
             let msg = format_as!(HTML, "" pp);
             s.send(warp::ws::Message::text(msg.into_string())).ok();
+        }
+    }
+    if let Some(seat) = g.turn() {
+        if let PlayerConnection::WasmAi(s) = &p.0[seat] {
+            s.send(warp::ws::Message::text(
+                &serde_json::to_string(&*g).unwrap(),
+            ))
+            .ok();
         }
     }
 }
