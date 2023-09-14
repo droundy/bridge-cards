@@ -1021,7 +1021,7 @@ impl Convention {
             };
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)])
+                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
@@ -1030,7 +1030,7 @@ impl Convention {
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)])
+                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
@@ -1047,7 +1047,7 @@ impl Convention {
             };
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor weak raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}", opening, opening)])
+                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
@@ -1057,7 +1057,7 @@ impl Convention {
             min_support.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor limit raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}", opening, opening)])
+                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
@@ -1082,7 +1082,7 @@ impl Convention {
                 sheets.add(Convention::Simple {
                     the_name: "Splinter",
                     regex: RegexSet::new([&format!(
-                        "^(P )*1{:?} [PX] {}{:?}",
+                        "^(P )*1{:?} [PX] {}{:?}$",
                         opening, splinterbid, response
                     )])
                     .unwrap(),
@@ -1113,7 +1113,7 @@ impl Convention {
             min_jacobi.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Jacobi 2NT",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N", opening)]).unwrap(),
+                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
                 the_description: format_as!(HTML, ""),
                 max,
                 min: min_jacobi.with_shcp(13),
