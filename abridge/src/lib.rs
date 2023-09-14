@@ -69,7 +69,7 @@ pub async fn serve_abridge(root: &str) {
                 if let Some(name) = name {
                     g.names[seat] = PlayerName::Human(name);
                 } else {
-                    g.names[seat] = PlayerName::Human(memorable_wordlist::camel_case(18));
+                    g.names[seat] = PlayerName::Human(random_name());
                 }
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                     Ok(display(HTML, &PlayerPage(Player { seat, game: &g })).into_response());
@@ -80,7 +80,7 @@ pub async fn serve_abridge(root: &str) {
         |seat: Seat, game: Arc<RwLock<GameState>>| async move {
             let mut g = game.write().await;
             g.check_timeout();
-            g.names[seat] = PlayerName::Robot;
+            g.names[seat] = PlayerName::Robot(random_name());
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                 Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
             r
@@ -137,6 +137,22 @@ pub async fn serve_abridge(root: &str) {
     )
     .run(([0, 0, 0, 0], 8087))
     .await;
+}
+
+fn random_name() -> String {
+    let name = memorable_wordlist::space_delimited(18);
+    let mut out = String::with_capacity(name.len());
+    let mut needs_cap = true;
+    for c in name.chars() {
+        if needs_cap {
+            out.extend(c.to_uppercase());
+            needs_cap = false;
+        } else {
+            out.push(c);
+            needs_cap = c == ' ';
+        }
+    }
+    out
 }
 
 static BIDS: &[Bid] = &[

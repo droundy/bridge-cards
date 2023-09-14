@@ -94,7 +94,7 @@ pub enum PlayerName {
     #[default]
     None,
     Human(String),
-    Robot,
+    Robot(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
