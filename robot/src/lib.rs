@@ -426,6 +426,19 @@ impl GameState {
             }
         }
     }
+
+    pub fn most_recent_bid(&self, seat: Seat) -> Option<Bid> {
+        let mut my_bid = None;
+
+        let mut s = self.dealer;
+        for &bid in self.bids.iter() {
+            if s == seat {
+                my_bid = Some(bid);
+            }
+            s = s.next();
+        }
+        my_bid
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
