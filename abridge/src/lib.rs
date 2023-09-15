@@ -7,8 +7,25 @@ use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
 
-pub async fn serve_abridge(root: &str) {
-    let root = internment::Intern::new(root.to_string());
+/// The configuration for running the server
+#[derive(clap::Parser)]
+pub struct Config {
+    /// The root at which the pages are served
+    #[arg(long, default_value = "")]
+    root: String,
+    /// The email associated with the domain (if using let's encrypt)
+    #[arg(long)]
+    email: Option<String>,
+    /// The domain (if using let's encrypt)
+    #[arg(long)]
+    domain: Option<String>,
+    /// The port (if not using let's encrypt)
+    #[arg(long, default_value = "8087")]
+    port: u16,
+}
+
+pub async fn serve_abridge(config: Config) {
+    let root = internment::Intern::new(config.root.clone());
     let players = Arc::new(RwLock::new(Players::default()));
     let game = Arc::new(RwLock::new(GameState::new(root.to_string())));
     // Turns our "state" into a new filter.

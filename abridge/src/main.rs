@@ -1,4 +1,7 @@
+use clap::Parser;
+
 #[tokio::main]
 async fn main() {
-    abridge::serve_abridge("").await;
+    let config = abridge::Config::parse();
+    abridge::serve_abridge(config).await;
 }

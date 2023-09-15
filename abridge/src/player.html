@@ -62,14 +62,22 @@
 <td>
 <div class="table">
     [% if let Some(lead) = self.game.lead {
-        let s = (4 + Seat::North as usize - self.game.lead.unwrap() as usize) % 4;
-    if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
-        let s = (4 + Seat::West as usize - self.game.lead.unwrap() as usize) % 4;
-        if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
-        let s = (4 + Seat::East as usize - self.game.lead.unwrap() as usize) % 4;
-        if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
-        let s = (4 + Seat::South as usize - self.game.lead.unwrap() as usize) % 4;
-        if s < self.game.played.len() { self.game.played[s] } else { %] <span></span> [% }
+        for seat in [Seat::North, Seat::West, Seat::East, Seat::South] {
+            let s = (4 + seat as usize - self.game.lead.unwrap() as usize) % 4;
+            if s < self.game.played.len() {
+                self.game.played[s]
+            } else {
+                %] <span></span> [%
+            }
+        }
+     } else {
+        for seat in [Seat::North, Seat::West, Seat::East, Seat::South] {
+            if let Some(bid) = self.game.most_recent_bid(seat) {
+                %] <span>[% bid %]</span> [%
+            } else {
+                %] <span></span> [%
+            }
+        }
      } %]
 </div></td>
 <td>
