@@ -16,8 +16,8 @@ pub enum Bid {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Redeal,
-    Bid(Bid),
-    Play(Card),
+    Bid(Seat, Bid),
+    Play(Seat, Card),
     Name(String),
     ToggleCountForMe,
 }
@@ -323,6 +323,7 @@ impl GameState {
         };
         if !self.hand_visible_to(seat, player) {
             return PlayableHand {
+                seat,
                 hand: Cards::EMPTY,
                 playable: Cards::EMPTY,
                 played_already,
@@ -332,6 +333,7 @@ impl GameState {
             let declarer = dummy.next().next();
             if (player != seat && seat != dummy) || (seat == dummy && player != declarer) {
                 return PlayableHand {
+                    seat,
                     hand,
                     playable: Cards::EMPTY,
                     played_already,
@@ -363,6 +365,7 @@ impl GameState {
             Cards::EMPTY
         };
         PlayableHand {
+            seat,
             hand,
             playable,
             played_already,
@@ -443,6 +446,7 @@ impl GameState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayableHand {
+    seat: Seat,
     pub hand: Cards,
     pub playable: Cards,
     played_already: Cards,

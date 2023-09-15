@@ -1,15 +1,13 @@
 [%
 match self {
     IsMe::Other(PlayerName::None, seat) => {
-        %]<span class="name">None<br/>
-            <button onclick="window.open('/robot/[% seat.long_name() %]','_blank')">Start robot</button></span>[%
+        %]<span class="name">None</span>[%
     }
     IsMe::Other(PlayerName::Robot(name), seat) => {
         %]<span class="name">🤖 [% name %]</span>[%
     }
     IsMe::Other(PlayerName::Human(name), seat) => {
-        %]<span class="name">[% name %]
-            <button onclick="window.open('/robot/[% seat.long_name() %]','_blank')">Replace with robot</button></span>[%
+        %]<span class="name">[% name %]</span>[%
     }
     IsMe::Me(PlayerName::Human(name)) => {
         %]<span class="name" id="myname" contenteditable="True" oninput="sendname()">[% name %]</span>[%

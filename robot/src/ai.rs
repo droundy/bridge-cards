@@ -18,9 +18,9 @@ impl BridgeAi {
     /// Decide which play to make.
     pub fn play(&mut self, game: &GameState) -> Action {
         if let Some(seat) = game.bidder() {
-            Action::Bid(self.bidder.bid(&game.bids, game.hands[seat]))
+            Action::Bid(seat, self.bidder.bid(&game.bids, game.hands[seat]))
         } else {
-            Action::Play(self.player.play(game))
+            Action::Play(game.hand_playing().unwrap(), self.player.play(game))
         }
     }
 }

@@ -110,7 +110,7 @@
                   %] class="pass"[%
               } %]>[% b %]</button>[%
             } else {
-                Action::Bid(b)
+                Action::Bid(self.seat, b)
                 %]class="[%
                 if self.game.bid_understood2(b, &self.game.bids) {
                   %]hastooltip[%
