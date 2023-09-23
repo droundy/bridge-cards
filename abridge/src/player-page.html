@@ -8,7 +8,19 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
+<script src='https://meet.jit.si/external_api.js'></script>
 <script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", () => {
+        const options = {
+            roomName: 'ABridgeGame',
+            width: "100%",
+            height: 700,
+            parentNode: document.querySelector('body'),
+            lang: 'en'
+        };
+        const api = new JitsiMeetExternalAPI('8x8.vc', options);
+    });
+
     var ws_protocol = 'ws://';
     if (location.protocol == 'https:') {
         ws_protocol = 'wss://';
