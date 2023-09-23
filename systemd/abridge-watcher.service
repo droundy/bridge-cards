@@ -1,0 +1,11 @@
+[Unit]
+Description=abridge restarter
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart abridge.service
+User=root
+
+[Install]
+WantedBy=multi-user.target

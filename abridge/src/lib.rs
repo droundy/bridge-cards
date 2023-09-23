@@ -138,21 +138,25 @@ pub async fn serve_abridge(config: Config) {
                 ws_connected(seat, WhichWebsocket::Robot, socket, players, game)
             })
         });
+    let filter = style_css
+        .or(audio)
+        .or(robot_tab)
+        .or(robot)
+        .or(robot_bg_wasm)
+        .or(sock)
+        .or(ai_sock)
+        .or(seat)
+        .or(randomseat)
+        .or(index);
 
-    warp::serve(
-        style_css
-            .or(audio)
-            .or(robot_tab)
-            .or(robot)
-            .or(robot_bg_wasm)
-            .or(sock)
-            .or(ai_sock)
-            .or(seat)
-            .or(randomseat)
-            .or(index),
-    )
-    .run(([0, 0, 0, 0], 8087))
-    .await;
+    if let Some(domain) = config.domain {
+        println!("Using lets encrypt for {domain}...");
+        lets_encrypt_warp::lets_encrypt(filter, &config.email.unwrap(), &domain)
+            .await
+            .unwrap();
+    } else {
+        warp::serve(filter).run(([0, 0, 0, 0], config.port)).await;
+    }
 }
 
 fn random_name() -> String {

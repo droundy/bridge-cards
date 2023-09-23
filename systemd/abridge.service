@@ -1,0 +1,15 @@
+[Unit]
+Description=abridge server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+User=root
+ExecStart=/home/droundy/abridge --domain abridgegame.com --email daveroundy@gmail.com
+WorkingDirectory=/root/lists
+
+[Install]
+WantedBy=multi-user.target
