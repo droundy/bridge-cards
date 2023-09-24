@@ -26,3 +26,6 @@ http = "0.2.8"
 internment = "0.7.0"
 
 display-as = { version = "0.7.0", features = ["warp"] }
+
+[profile.release]
+lto = true

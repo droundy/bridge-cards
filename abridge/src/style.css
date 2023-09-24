@@ -101,6 +101,10 @@ button {
     margin-top: 0;
 }
 
+summary {
+    font-size: xx-small;
+}
+
 button.pass {
     width: 10em;
 }
