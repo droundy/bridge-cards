@@ -4,7 +4,8 @@ body {
     margin: 0;
 }
 
-#north, #south {
+#north,
+#south {
     margin: auto;
 }
 
@@ -26,26 +27,31 @@ body {
     display: block;
     font-size: small;
 }
+
 .name button {
     width: 5em;
 }
+
 .alert {
     font-size: 9px;
     display: block;
-    color:darkorange;
+    color: darkorange;
 }
+
 .hand {
     width: max-content;
     border-radius: 0.4rem;
     padding: 0.2rem;
     min-height: 3rem;
 }
+
 .hand.dummy {
     background-color: lightgray;
     box-shadow: 0.1em 0.2em 0.25em lightgray;
 }
+
 .hand.turn {
-    box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue,  0.1em 0.2em 0.75em yellow;
+    box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue, 0.1em 0.2em 0.75em yellow;
 }
 
 .spades {
@@ -83,6 +89,7 @@ body {
 .diamonds .playable {
     text-shadow: 0 0 0 #dd8800, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
 }
+
 .diamonds .playable:hover {
     text-shadow: 0 0 0 #dd8800, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
 }
@@ -90,6 +97,7 @@ body {
 .clubs .playable {
     text-shadow: 0 0 0 green, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
 }
+
 .clubs .playable:hover {
     text-shadow: 0 0 0 green, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
 }
@@ -101,16 +109,24 @@ button {
     margin-top: 0;
 }
 
-summary {
-    font-size: xx-small;
-}
+/* details {
+    width: 100%;
+    height: 240px;
+    resize: vertical;
+    overflow: hidden;
+    border: 10px;
+} */
+
+/* summary {
+    font-size: small;
+} */
 
 button.pass {
     width: 10em;
 }
 
 button:disabled {
-   opacity: 0.3;
+    opacity: 0.3;
 }
 
 .bidboard {
@@ -136,7 +152,8 @@ button:disabled {
     line-height: 0.5rem;
 }
 
-.bidhistory th, .bidhistory td {
+.bidhistory th,
+.bidhistory td {
     width: 2.2em;
     text-align: center;
 }
@@ -155,9 +172,11 @@ button:disabled {
 label {
     font-size: small;
 }
+
 table {
     margin: auto;
 }
+
 .table {
     width: 5rem;
     margin: auto;
@@ -174,28 +193,31 @@ table {
 }
 
 /* North */
-.table > span:nth-of-type(1) {
+.table>span:nth-of-type(1) {
     position: absolute;
     top: 0;
     left: 1rem;
     text-align: center;
     width: 3rem;
 }
-.table > span:nth-of-type(2) {
+
+.table>span:nth-of-type(2) {
     position: absolute;
     top: 1rem;
     left: 0;
     line-height: 3rem;
     height: 3rem;
 }
-.table > span:nth-of-type(3) {
+
+.table>span:nth-of-type(3) {
     position: absolute;
     top: 1rem;
     right: 0;
     line-height: 3rem;
     height: 3rem;
 }
-.table > span:nth-of-type(4) {
+
+.table>span:nth-of-type(4) {
     position: absolute;
     bottom: 0;
     left: 1rem;
@@ -206,10 +228,10 @@ table {
 .hastooltip {
     position: relative;
     display: inline-block;
-  }
-  
-  /* Tooltip text */
-  .hastooltip .tooltip {
+}
+
+/* Tooltip text */
+.hastooltip .tooltip {
     visibility: hidden;
     width: 120px;
     background-color: white;
@@ -219,17 +241,17 @@ table {
     line-height: 1.1em;
     padding: 5px 0;
     border-radius: 6px;
-   
+
     /* Position the tooltip text - see examples below! */
     position: absolute;
     z-index: 1;
     top: 1.1em;
     /* left: 100vw; */
     /* transition: left 2s; */
-  }
-  
-  /* Show the tooltip text when you mouse over the tooltip container */
-  .hastooltip:hover .tooltip {
+}
+
+/* Show the tooltip text when you mouse over the tooltip container */
+.hastooltip:hover .tooltip {
     visibility: visible;
     left: 3em;
-  }
+}

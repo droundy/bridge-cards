@@ -10,18 +10,29 @@
 </head>
 <script src='https://meet.jit.si/external_api.js'></script>
 <script type="text/javascript">
+    var api;
     document.addEventListener("DOMContentLoaded", () => {
         const options = {
             roomName: 'ABridgeGame',
             width: "100%",
-            height: 150,
+            height: 218,
             parentNode: document.querySelector('#meet'),
             userInfo: {
                 displayName: '[% format!("{:?}", self.0.seat) %]'
             },
             configOverwrite: {
                 prejoinPageEnabled: false,
-                toolbarButtons: ['microphone', 'camera', 'filmstrip', 'tileview', 'settings', 'hangup'],
+                toolbarButtons: ['microphone', 'camera', 'hangup'],
+            },
+            interfaceConfigOverwrite: {
+                DISABLE_DOMINANT_SPEAKER_INDICATOR: true,
+                DISABLE_JOIN_LEAVE_NOTIFICATIONS: true,
+                INITIAL_TOOLBAR_TIMEOUT: 500,
+                SHOW_CHROME_EXTENSION_BANNER: false,
+                MOBILE_APP_PROMO: false,
+                TOOLBAR_TIMEOUT: 250,
+                VIDEO_LAYOUT_FIT: 'nocrop',
+                VERTICAL_FILMSTRIP: false
             },
             resolution: 240,
             constraints: {
@@ -35,7 +46,8 @@
             },
             lang: 'en'
         };
-        const api = new JitsiMeetExternalAPI('8x8.vc', options);
+        api = new JitsiMeetExternalAPI('8x8.vc', options);
+        api.executeCommand('setTileView', true);
     });
 
     var ws_protocol = 'ws://';
@@ -65,13 +77,14 @@
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
             document.cookie = "name=" + name;
+            api.executeCommand('displayName', name);
             ws.send(JSON.stringify({ "Name": name }));
         }, 3000);
     }
 </script>
 
 <body>
-    <details id="meet" open><summary>Jitsi meet</summary></details>
+    <details id="meet" open><summary>Video chat</summary></details>
     <button class="robots" onclick="window.open('/robot/south','newwindow', 'width=300,height=250')">Robots</button>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
     <main id="main">[% self.0 %]</main>
