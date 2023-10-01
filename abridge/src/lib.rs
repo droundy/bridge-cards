@@ -228,9 +228,6 @@ enum PlayerConnection {
     None,
 }
 impl PlayerConnection {
-    fn is_empty(&self) -> bool {
-        matches!(self, PlayerConnection::None)
-    }
     fn not_human(&self) -> bool {
         !matches!(self, PlayerConnection::Human(_))
     }
@@ -251,7 +248,7 @@ impl Players {
         let mut rng = rand::thread_rng();
         for _ in 0..30 {
             let seat: Seat = rng.gen::<usize>().into();
-            if self.0[seat].is_empty() {
+            if self.0[seat].not_human() {
                 return Some(seat);
             }
         }
@@ -385,7 +382,7 @@ async fn ws_connected(
                 }
                 g.check_timeout();
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-                    if g.names[seat] == PlayerName::None && !p.0[seat].is_empty() {
+                    if g.names[seat] == PlayerName::None && matches!(&p.0[seat], PlayerConnection::WasmAi(_)) {
                         g.names[seat] = PlayerName::Robot(random_name());
                     }
                 }
