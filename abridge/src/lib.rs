@@ -34,39 +34,35 @@ pub async fn serve_abridge(config: Config) {
 
     let style_css = path!("style.css").map(|| {
         const STYLE: &str = include_str!("style.css");
-        Ok(warp::http::Response::builder()
+        warp::http::Response::builder()
             .status(200)
             .header("content-length", STYLE.len())
             .header("content-type", "text/css")
             .body(STYLE)
-            .unwrap())
     });
     let audio = path!("your-play.mp3").map(|| {
         const AUDIO: &[u8] = include_bytes!("your-play.mp3");
-        Ok(warp::http::Response::builder()
+        warp::http::Response::builder()
             .status(200)
             .header("content-length", AUDIO.len())
             .header("content-type", "audio/mpeg")
             .body(AUDIO)
-            .unwrap())
     });
     let robot = path!("robot.js").map(|| {
         const ROBOT_JS: &[u8] = include_bytes!("../../robot/pkg/robot.js");
-        Ok(warp::http::Response::builder()
+        warp::http::Response::builder()
             .status(200)
             .header("content-length", ROBOT_JS.len())
             .header("content-type", "text/javascript")
             .body(ROBOT_JS)
-            .unwrap())
     });
     let robot_bg_wasm = path!("robot_bg.wasm").map(|| {
         const ROBOT_BG_WASM: &[u8] = include_bytes!("../../robot/pkg/robot_bg.wasm");
-        Ok(warp::http::Response::builder()
+        warp::http::Response::builder()
             .status(200)
             .header("content-length", ROBOT_BG_WASM.len())
             .header("content-type", "application/wasm")
             .body(ROBOT_BG_WASM)
-            .unwrap())
     });
     let index = players
         .clone()
