@@ -89,7 +89,7 @@ pub async fn serve_abridge(config: Config) {
                 r
             },
         );
-    let robot_tab = path!("robot" / Seat).and(game.clone()).and_then(
+    let robot_tab = path!(Seat / "robot").and(game.clone()).and_then(
         |seat: Seat, game: Arc<RwLock<GameState>>| async move {
             let mut g = game.write().await;
             g.check_timeout();
@@ -116,20 +116,20 @@ pub async fn serve_abridge(config: Config) {
             r
         },
     );
-    let sock = path!("ws" / String)
+    let sock = path!(Seat/ "ws")
         .and(warp::ws())
         .and(game.clone())
         .and(players.clone())
-        .map(|seat: String, ws: warp::ws::Ws, game, players| {
+        .map(|seat: Seat, ws: warp::ws::Ws, game, players| {
             ws.on_upgrade(move |socket| {
                 ws_connected(seat, WhichWebsocket::Human, socket, players, game)
             })
         });
-    let ai_sock = path!("ai" / String)
+    let ai_sock = path!(Seat / "ai")
         .and(warp::ws())
         .and(game)
         .and(players)
-        .map(|seat: String, ws: warp::ws::Ws, game, players| {
+        .map(|seat: Seat, ws: warp::ws::Ws, game, players| {
             ws.on_upgrade(move |socket| {
                 ws_connected(seat, WhichWebsocket::Robot, socket, players, game)
             })
@@ -257,7 +257,7 @@ impl Players {
 }
 
 async fn ws_connected(
-    seat: String,
+    myseat: Seat,
     which_websocket: WhichWebsocket,
     ws: warp::ws::WebSocket,
     players: Arc<RwLock<Players>>,
@@ -269,16 +269,9 @@ async fn ws_connected(
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the websocket...
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let myseat;
     {
         // Save the sender in our list of connected users.
         let mut p = players.write().await;
-        if let Ok(s) = std::str::FromStr::from_str(seat.as_str()) {
-            myseat = s;
-        } else {
-            println!("bad seat");
-            return;
-        }
         match which_websocket {
             WhichWebsocket::Human => {
                 p.0[myseat] = PlayerConnection::Human(tx);

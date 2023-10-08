@@ -54,7 +54,7 @@
     if (location.protocol == 'https:') {
         ws_protocol = 'wss://';
     }
-    const ws = new WebSocket(ws_protocol + location.host + '[% self.0.game.root as URL %]/ws/[% format!("{:?}", self.0.seat).to_lowercase() %]');
+    const ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
     console.log('did websocket');
 
     ws.onopen = function () {
@@ -85,7 +85,7 @@
 
 <body>
     <details id="meet" open><summary>Video chat</summary></details>
-    <button class="robots" onclick="window.open('/robot/south','newwindow', 'width=300,height=250')">Robots</button>
+    <button class="robots" onclick="window.open(window.location + '/robot','newwindow', 'width=300,height=250')">Robots</button>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
     <main id="main">[% self.0 %]</main>
 </body>
