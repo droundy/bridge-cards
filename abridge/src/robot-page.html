@@ -18,7 +18,7 @@
         if (location.protocol == 'https:') {
             ws_protocol = 'wss://';
         }
-        const ws = new WebSocket(ws_protocol + location.host + '[% self.game.root as URL %]/ai/[% format!("{:?}", self.seat).to_lowercase() %]');
+        const ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
         console.log('did websocket');
     
         ws.onopen = function () {

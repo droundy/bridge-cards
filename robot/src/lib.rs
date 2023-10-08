@@ -98,9 +98,13 @@ pub enum PlayerName {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct GameState {
+pub struct GameState<C> {
     pub root: String,
     pub names: Seated<PlayerName>,
+    #[serde(skip)]
+    pub connections: Seated<Option<C>>,
+    #[serde(skip)]
+    pub ai: Option<C>,
     pub hands: Seated<Cards>,
     pub original_hands: Seated<Cards>,
 
@@ -123,8 +127,8 @@ pub struct GameState {
     conventions: Vec<Convention>,
 }
 
-impl GameState {
-    pub fn new(root: String) -> GameState {
+impl<C> GameState<C> {
+    pub fn new(root: String) -> GameState<C> {
         let mut deck = Cards::ALL;
         let north = deck.pick(13).unwrap();
         let south = deck.pick(13).unwrap();
@@ -132,6 +136,8 @@ impl GameState {
         let west = deck;
         GameState {
             root,
+            connections: Default::default(),
+            ai: Default::default(),
             names: [
                 PlayerName::None,
                 PlayerName::None,
@@ -194,12 +200,14 @@ impl GameState {
         if let Some(last_action) = self.last_action {
             if now.duration_since(last_action) > std::time::Duration::from_secs(60 * 60) {
                 *self = GameState::new(self.root.clone());
-                 true
+                true
             } else {
                 self.last_action = Some(now);
                 false
             }
-        } else { false}
+        } else {
+            false
+        }
     }
     pub fn redeal(&mut self) {
         let dealer = self.dealer.next();

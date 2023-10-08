@@ -16,13 +16,13 @@
             Please play.
         </p>
         <ul>
-            [% if self.players.0[Seat::North].not_human() { %]<li><a href="north">Sit North</a></li>[% } %]
-            [% if self.players.0[Seat::South].not_human() { %]<li><a href="south">Sit South</a></li>[% } %]
-            [% if self.players.0[Seat::East].not_human() { %]<li><a href="east">Sit East</a></li>[% } %]
-            [% if self.players.0[Seat::West].not_human() { %]<li><a href="west">Sit West</a></li>[% } %]
-            [% if self.players.0[Seat::West].not_human() ||
-            self.players.0[Seat::East].not_human() ||
-            self.players.0[Seat::North].not_human() || self.players.0[Seat::South].not_human() { %]<li><a
+            [% if self.game.connections[Seat::North].is_none() { %]<li><a href="north">Sit North</a></li>[% } %]
+            [% if self.game.connections[Seat::South].is_none() { %]<li><a href="south">Sit South</a></li>[% } %]
+            [% if self.game.connections[Seat::East].is_none() { %]<li><a href="east">Sit East</a></li>[% } %]
+            [% if self.game.connections[Seat::West].is_none() { %]<li><a href="west">Sit West</a></li>[% } %]
+            [% if self.game.connections[Seat::West].is_none() ||
+            self.game.connections[Seat::East].is_none() ||
+            self.game.connections[Seat::North].is_none() || self.game.connections[Seat::South].is_none() { %]<li><a
             href="random">Sit randomly</a></li>[% } %]
         </ul>
     </main>

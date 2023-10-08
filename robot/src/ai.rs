@@ -16,7 +16,7 @@ impl BridgeAi {
         BridgeAi { bidder, player }
     }
     /// Decide which play to make.
-    pub fn play(&mut self, game: &GameState) -> Action {
+    pub fn play<C>(&mut self, game: &GameState<C>) -> Action {
         if let Some(seat) = game.bidder() {
             Action::Bid(seat, self.bidder.bid(&game.bids, game.hands[seat]))
         } else {
@@ -27,7 +27,7 @@ impl BridgeAi {
 
 #[wasm_bindgen]
 pub fn choose_play(serialized_game: &str) -> Option<String> {
-    let game = serde_json::from_str::<GameState>(serialized_game).ok()?;
+    let game = serde_json::from_str::<GameState<()>>(serialized_game).ok()?;
     let mut ai = BridgeAi::new();
     serde_json::to_string(&ai.play(&game)).ok()
 }
@@ -36,7 +36,7 @@ pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid;
 }
 pub trait PlayAI: std::fmt::Debug {
-    fn play(&mut self, game: &GameState) -> Card;
+    fn play<C>(&mut self, game: &GameState<C>) -> Card;
 }
 
 #[derive(Debug)]
@@ -238,7 +238,7 @@ fn test_opening_lead() {
 #[derive(Debug)]
 pub struct RandomPlay;
 impl PlayAI for RandomPlay {
-    fn play(&mut self, game: &GameState) -> Card {
+    fn play<C>(&mut self, game: &GameState<C>) -> Card {
         let starting = game.starting().expect("playing at the wrong time");
         let nt_or_trump = if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {
             Some(trump)

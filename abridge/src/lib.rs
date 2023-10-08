@@ -1,7 +1,7 @@
 use bridge_deck::{Cards, Suit};
 use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
 use futures::{SinkExt, StreamExt};
-use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
+use robot::{Action, Bid, GameState, PlayerName, Seat, };
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -26,10 +26,8 @@ pub struct Config {
 
 pub async fn serve_abridge(config: Config) {
     let root = internment::Intern::new(config.root.clone());
-    let players = Arc::new(RwLock::new(Players::default()));
     let game = Arc::new(RwLock::new(GameState::new(root.to_string())));
     // Turns our "state" into a new filter.
-    let players = warp::any().map(move || players.clone());
     let game = warp::any().map(move || game.clone());
 
     let style_css = path!("style.css").map(|| {
@@ -64,19 +62,19 @@ pub async fn serve_abridge(config: Config) {
             .header("content-type", "application/wasm")
             .body(ROBOT_BG_WASM)
     });
-    let index = players
+    let index = game
         .clone()
-        .and_then(|players: Arc<RwLock<Players>>| async move {
-            let p = players.read().await;
+        .and_then(|game: Arc<RwLock<GameState<WsSender>>>| async move {
+            let g = game.read().await;
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &Index { players: &p }).into_response());
+                Ok(display(HTML, &Index { game: &g }).into_response());
             r
         });
     let seat = path!(Seat)
         .and(game.clone())
         .and(warp::filters::cookie::optional("name"))
         .and_then(
-            |seat: Seat, game: Arc<RwLock<GameState>>, name: Option<String>| async move {
+            |seat: Seat, game: Arc<RwLock<GameState<WsSender>>>, name: Option<String>| async move {
                 let mut g = game.write().await;
                 g.check_timeout();
                 if let Some(name) = name {
@@ -90,7 +88,7 @@ pub async fn serve_abridge(config: Config) {
             },
         );
     let robot_tab = path!(Seat / "robot").and(game.clone()).and_then(
-        |seat: Seat, game: Arc<RwLock<GameState>>| async move {
+        |seat: Seat, game: Arc<RwLock<GameState<WsSender>>>| async move {
             let mut g = game.write().await;
             g.check_timeout();
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
@@ -99,10 +97,10 @@ pub async fn serve_abridge(config: Config) {
         },
     );
 
-    let randomseat = path!("random").and(players.clone()).and_then(
-        move |players: Arc<RwLock<Players>>| async move {
-            let p = players.read().await;
-            let uri = if let Some(seat) = p.randomseat() {
+    let randomseat = path!("random").and(game.clone()).and_then(
+        move |game: Arc<RwLock<GameState<WsSender>>>| async move {
+            let g = game.read().await;
+            let uri = if let Some(seat) = randomseat(&g) {
                 format!("{root}/{}", seat.long_name())
             } else {
                 format!("{root}/")
@@ -116,24 +114,18 @@ pub async fn serve_abridge(config: Config) {
             r
         },
     );
-    let sock = path!(Seat/ "ws")
-        .and(warp::ws())
-        .and(game.clone())
-        .and(players.clone())
-        .map(|seat: Seat, ws: warp::ws::Ws, game, players| {
-            ws.on_upgrade(move |socket| {
-                ws_connected(seat, WhichWebsocket::Human, socket, players, game)
-            })
-        });
-    let ai_sock = path!(Seat / "ai")
-        .and(warp::ws())
-        .and(game)
-        .and(players)
-        .map(|seat: Seat, ws: warp::ws::Ws, game, players| {
-            ws.on_upgrade(move |socket| {
-                ws_connected(seat, WhichWebsocket::Robot, socket, players, game)
-            })
-        });
+    let sock = path!(Seat / "ws").and(warp::ws()).and(game.clone()).map(
+        |seat: Seat, ws: warp::ws::Ws, game| {
+            ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
+        },
+    );
+    let ai_sock =
+        path!(Seat / "robot" / "ws")
+            .and(warp::ws())
+            .and(game)
+            .map(|_seat: Seat, ws: warp::ws::Ws, game| {
+                ws.on_upgrade(move |socket| ws_connected(None, socket, game))
+            });
     let filter = style_css
         .or(audio)
         .or(robot_tab)
@@ -220,48 +212,24 @@ enum IsMe<T> {
 #[with_template("[%" "%]" "player-name.html")]
 impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
-#[derive(Debug, Default)]
-enum PlayerConnection {
-    Human(mpsc::UnboundedSender<warp::ws::Message>),
-    WasmAi(mpsc::UnboundedSender<warp::ws::Message>),
-    #[default]
-    None,
-}
-impl PlayerConnection {
-    fn not_human(&self) -> bool {
-        !matches!(self, PlayerConnection::Human(_))
-    }
-}
+type WsSender = mpsc::UnboundedSender<warp::ws::Message>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum WhichWebsocket {
-    Human,
-    Robot,
-}
-
-#[derive(Default, Debug)]
-struct Players(Seated<PlayerConnection>);
-
-impl Players {
-    fn randomseat(&self) -> Option<Seat> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        for _ in 0..30 {
-            let seat: Seat = rng.gen::<usize>().into();
-            if self.0[seat].not_human() {
-                return Some(seat);
-            }
+fn randomseat(game: &GameState<WsSender>) -> Option<Seat> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    for _ in 0..30 {
+        let seat: Seat = rng.gen::<usize>().into();
+        if game.connections[seat].is_none() {
+            return Some(seat);
         }
-        None
     }
+    None
 }
 
 async fn ws_connected(
-    myseat: Seat,
-    which_websocket: WhichWebsocket,
+    myseat: Option<Seat>,
     ws: warp::ws::WebSocket,
-    players: Arc<RwLock<Players>>,
-    game: Arc<RwLock<GameState>>,
+    game: Arc<RwLock<GameState<WsSender>>>,
 ) {
     // Split the socket into a sender and receive of messages.
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
@@ -271,22 +239,12 @@ async fn ws_connected(
     let (tx, mut rx) = mpsc::unbounded_channel();
     {
         // Save the sender in our list of connected users.
-        let mut p = players.write().await;
-        match which_websocket {
-            WhichWebsocket::Human => {
-                p.0[myseat] = PlayerConnection::Human(tx);
-            }
-            WhichWebsocket::Robot => {
-                for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-                    if p.0[seat].not_human() {
-                        p.0[seat] = PlayerConnection::WasmAi(tx.clone());
-                    }
-                }
-            }
-        }
-        if matches!(&p.0[myseat], PlayerConnection::WasmAi(_)) {
-            let g = game.read().await;
-            send_player_updates(&p, &g);
+        let mut g = game.write().await;
+        if let Some(seat) = myseat {
+            g.connections[seat] = Some(tx);
+        } else {
+            g.ai = Some(tx);
+            send_player_updates(&g);
         }
     }
     tokio::task::spawn(async move {
@@ -309,11 +267,15 @@ async fn ws_connected(
         };
         if msg.is_close() {
             println!("got a close");
-            let mut p = players.write().await;
-            if !p.0[myseat].not_human() {
-                let g = game.read().await;
-                p.0[myseat] = PlayerConnection::None;
-                send_player_updates(&p, &g);
+            let mut g = game.write().await;
+            if !myseat.is_none() {
+                g.ai = None;
+                for s in [Seat::North, Seat::East, Seat::South, Seat::West] {
+                    if g.connections[s].is_none() {
+                        g.names[s] = PlayerName::None;
+                    }
+                }
+                send_player_updates(&g);
             }
             return;
         }
@@ -326,11 +288,12 @@ async fn ws_connected(
             }
             Ok(Ok(action)) => {
                 println!("Doing {:?}", action);
-                let p = players.read().await;
                 let mut g = game.write().await;
                 match action {
                     Action::ToggleCountForMe => {
-                        g.count_for_me[myseat] = !g.count_for_me[myseat];
+                        if let Some(myseat) = myseat {
+                            g.count_for_me[myseat] = !g.count_for_me[myseat];
+                        }
                     }
                     Action::Redeal => {
                         g.redeal();
@@ -370,48 +333,52 @@ async fn ws_connected(
                         }
                     }
                     Action::Name(name) => {
-                        g.names[myseat] = PlayerName::Human(name);
+                        if let Some(myseat) = myseat {
+                            g.names[myseat] = PlayerName::Human(name);
+                        }
                     }
                 }
                 g.check_timeout();
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-                    if g.names[seat] == PlayerName::None && matches!(&p.0[seat], PlayerConnection::WasmAi(_)) {
+                    if g.names[seat] == PlayerName::None && g.connections[seat].is_none() {
                         g.names[seat] = PlayerName::Robot(random_name());
                     }
                 }
-                send_player_updates(&p, &g);
+                send_player_updates(&g);
             }
         }
     }
 }
 
-fn send_player_updates(p: &Players, g: &GameState) {
+fn send_player_updates(g: &GameState<WsSender>) {
     for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-        if let PlayerConnection::Human(s) = &p.0[seat] {
+        if let Some(s) = &g.connections[seat] {
             let pp = Player { seat, game: &g };
             let msg = format_as!(HTML, "" pp);
             s.send(warp::ws::Message::text(msg.into_string())).ok();
         }
     }
     if let Some(seat) = g.turn() {
-        if let PlayerConnection::WasmAi(s) = &p.0[seat] {
-            s.send(warp::ws::Message::text(
-                &serde_json::to_string(&*g).unwrap(),
-            ))
-            .ok();
+        if g.connections[seat].is_none() {
+            if let Some(s) = &g.ai {
+                s.send(warp::ws::Message::text(
+                    &serde_json::to_string(&*g).unwrap(),
+                ))
+                .ok();
+            }
         }
     }
 }
 
 struct Index<'a> {
-    players: &'a Players,
+    game: &'a GameState<WsSender>,
 }
 #[with_template("[%" "%]" "index.html")]
 impl<'a> DisplayAs<HTML> for Index<'a> {}
 
 struct Player<'a> {
     seat: Seat,
-    game: &'a GameState,
+    game: &'a GameState<WsSender>,
 }
 #[with_template("[%" "%]" "player.html")]
 impl<'a> DisplayAs<HTML> for Player<'a> {}
@@ -432,7 +399,7 @@ impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
 
 struct RobotPage<'a> {
     seat: Seat,
-    game: &'a GameState,
+    game: &'a GameState<WsSender>,
 }
 
 #[with_template("[%" "%]" "robot-page.html")]
