@@ -22,8 +22,9 @@ pub struct Config {
     port: u16,
 }
 
+type TableMap = Arc<DashMap<String, Arc<RwLock<GameState<WsSender>>>>>;
+
 pub async fn serve_abridge(config: Config) {
-    type TableMap = Arc<DashMap<String, GameState<WsSender>>>;
     let tables: TableMap = Arc::new(DashMap::new());
     let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
@@ -75,7 +76,8 @@ pub async fn serve_abridge(config: Config) {
         .and(warp::filters::cookie::optional("name"))
         .and_then(
             |table: String, seat: Seat, tables: TableMap, name: Option<String>| async move {
-                let mut g = tables.entry(table).or_default();
+                let g = tables.entry(table).or_default();
+                let mut g = g.write().await;
                 g.check_timeout();
                 if let Some(name) = name {
                     g.names[seat] = PlayerName::Human(name);
@@ -113,11 +115,39 @@ pub async fn serve_abridge(config: Config) {
             r
         },
     );
+    let table_robot_tab = path!(String / Seat / "robot").and(game.clone()).and_then(
+        |_table: String, seat: Seat, game: Arc<RwLock<GameState<WsSender>>>| async move {
+            let mut g = game.write().await;
+            g.check_timeout();
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                Ok(display(HTML, &RobotPage { seat }).into_response());
+            r
+        },
+    );
 
     let randomseat = path!("random").and(game.clone()).and_then(
         move |game: Arc<RwLock<GameState<WsSender>>>| async move {
             let g = game.read().await;
-            let uri = if let Some(seat) = randomseat(&g) {
+            let uri = if let Some(seat) = g.randomseat() {
+                format!("/{}", seat.long_name())
+            } else {
+                format!("/")
+            };
+            let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
+                Ok(warp::reply::with_header(
+                    warp::http::StatusCode::TEMPORARY_REDIRECT,
+                    warp::http::header::LOCATION,
+                    uri,
+                ));
+            r
+        },
+    );
+
+    let table_randomseat = path!(String / "random").and(tables.clone()).and_then(
+        move |table: String, tables: TableMap| async move {
+            let g = tables.entry(table).or_default();
+            let g = g.read().await;
+            let uri = if let Some(seat) = g.randomseat() {
                 format!("/{}", seat.long_name())
             } else {
                 format!("/")
@@ -136,11 +166,29 @@ pub async fn serve_abridge(config: Config) {
             ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
         },
     );
+    let table_sock = path!(String / Seat / "ws")
+        .and(warp::ws())
+        .and(tables.clone())
+        .map(
+            |table: String, seat: Seat, ws: warp::ws::Ws, tables: TableMap| {
+                let game = Arc::clone(&tables.entry(table).or_default());
+                ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
+            },
+        );
     let ai_sock = path!(Seat / "robot" / "ws").and(warp::ws()).and(game).map(
         |_seat: Seat, ws: warp::ws::Ws, game| {
             ws.on_upgrade(move |socket| ws_connected(None, socket, game))
         },
     );
+    let tabl_ai_sock = path!(String / Seat / "robot" / "ws")
+        .and(warp::ws())
+        .and(tables)
+        .map(
+            |table: String, _seat: Seat, ws: warp::ws::Ws, tables: TableMap| {
+                let game = Arc::clone(&tables.entry(table).or_default());
+                ws.on_upgrade(move |socket| ws_connected(None, socket, game))
+            },
+        );
     let filter = style_css
         .or(audio)
         .or(robot_tab)
@@ -150,8 +198,12 @@ pub async fn serve_abridge(config: Config) {
         .or(ai_sock)
         .or(seat)
         .or(randomseat)
-        .or(index)
-        .or(table_seat);
+        .or(table_seat)
+        .or(table_robot_tab)
+        .or(table_randomseat)
+        .or(table_sock)
+        .or(tabl_ai_sock)
+        .or(index);
 
     if let Some(domain) = config.domain {
         println!("Using lets encrypt for {domain}...");
@@ -229,18 +281,6 @@ enum IsMe<T> {
 impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
 type WsSender = mpsc::UnboundedSender<warp::ws::Message>;
-
-fn randomseat(game: &GameState<WsSender>) -> Option<Seat> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    for _ in 0..30 {
-        let seat: Seat = rng.gen::<usize>().into();
-        if game.connections[seat].is_none() {
-            return Some(seat);
-        }
-    }
-    None
-}
 
 async fn ws_connected(
     myseat: Option<Seat>,

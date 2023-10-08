@@ -163,6 +163,18 @@ impl<C> GameState<C> {
             conventions: vec![Convention::sheets()],
         }
     }
+
+    pub fn randomseat(&self) -> Option<Seat> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        for _ in 0..30 {
+            let seat: Seat = rng.gen::<usize>().into();
+            if self.connections[seat].is_none() {
+                return Some(seat);
+            }
+        }
+        None
+    }
     fn starting(&self) -> Option<bridge_solver::Starting> {
         let lead = self.lead?;
         let playing = self.turn()?;
