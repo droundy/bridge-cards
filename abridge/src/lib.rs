@@ -1,7 +1,8 @@
 use bridge_deck::{Cards, Suit};
-use display_as::{display, format_as, with_template, DisplayAs, HTML, URL};
+use dashmap::DashMap;
+use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
-use robot::{Action, Bid, GameState, PlayerName, Seat, };
+use robot::{Action, Bid, GameState, PlayerName, Seat};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -10,9 +11,6 @@ use warp::{path, Filter};
 /// The configuration for running the server
 #[derive(clap::Parser)]
 pub struct Config {
-    /// The root at which the pages are served
-    #[arg(long, default_value = "")]
-    root: String,
     /// The email associated with the domain (if using let's encrypt)
     #[arg(long)]
     email: Option<String>,
@@ -25,9 +23,11 @@ pub struct Config {
 }
 
 pub async fn serve_abridge(config: Config) {
-    let root = internment::Intern::new(config.root.clone());
-    let game = Arc::new(RwLock::new(GameState::new(root.to_string())));
+    type TableMap = Arc<DashMap<String, GameState<WsSender>>>;
+    let tables: TableMap = Arc::new(DashMap::new());
+    let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
+    let tables = warp::any().map(move || tables.clone());
     let game = warp::any().map(move || game.clone());
 
     let style_css = path!("style.css").map(|| {
@@ -70,6 +70,23 @@ pub async fn serve_abridge(config: Config) {
                 Ok(display(HTML, &Index { game: &g }).into_response());
             r
         });
+    let table_seat = path!(String / Seat)
+        .and(tables.clone())
+        .and(warp::filters::cookie::optional("name"))
+        .and_then(
+            |table: String, seat: Seat, tables: TableMap, name: Option<String>| async move {
+                let mut g = tables.entry(table).or_default();
+                g.check_timeout();
+                if let Some(name) = name {
+                    g.names[seat] = PlayerName::Human(name);
+                } else {
+                    g.names[seat] = PlayerName::Human(random_name());
+                }
+                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                    Ok(display(HTML, &PlayerPage(Player { seat, game: &g })).into_response());
+                r
+            },
+        );
     let seat = path!(Seat)
         .and(game.clone())
         .and(warp::filters::cookie::optional("name"))
@@ -92,7 +109,7 @@ pub async fn serve_abridge(config: Config) {
             let mut g = game.write().await;
             g.check_timeout();
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &RobotPage { seat, game: &g }).into_response());
+                Ok(display(HTML, &RobotPage { seat }).into_response());
             r
         },
     );
@@ -101,9 +118,9 @@ pub async fn serve_abridge(config: Config) {
         move |game: Arc<RwLock<GameState<WsSender>>>| async move {
             let g = game.read().await;
             let uri = if let Some(seat) = randomseat(&g) {
-                format!("{root}/{}", seat.long_name())
+                format!("/{}", seat.long_name())
             } else {
-                format!("{root}/")
+                format!("/")
             };
             let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
                 Ok(warp::reply::with_header(
@@ -119,13 +136,11 @@ pub async fn serve_abridge(config: Config) {
             ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
         },
     );
-    let ai_sock =
-        path!(Seat / "robot" / "ws")
-            .and(warp::ws())
-            .and(game)
-            .map(|_seat: Seat, ws: warp::ws::Ws, game| {
-                ws.on_upgrade(move |socket| ws_connected(None, socket, game))
-            });
+    let ai_sock = path!(Seat / "robot" / "ws").and(warp::ws()).and(game).map(
+        |_seat: Seat, ws: warp::ws::Ws, game| {
+            ws.on_upgrade(move |socket| ws_connected(None, socket, game))
+        },
+    );
     let filter = style_css
         .or(audio)
         .or(robot_tab)
@@ -135,7 +150,8 @@ pub async fn serve_abridge(config: Config) {
         .or(ai_sock)
         .or(seat)
         .or(randomseat)
-        .or(index);
+        .or(index)
+        .or(table_seat);
 
     if let Some(domain) = config.domain {
         println!("Using lets encrypt for {domain}...");
@@ -397,10 +413,9 @@ struct PlayerPage<'a>(Player<'a>);
 #[with_template("[%" "%]" "player-page.html")]
 impl<'a> DisplayAs<HTML> for PlayerPage<'a> {}
 
-struct RobotPage<'a> {
+struct RobotPage {
     seat: Seat,
-    game: &'a GameState<WsSender>,
 }
 
 #[with_template("[%" "%]" "robot-page.html")]
-impl<'a> DisplayAs<HTML> for RobotPage<'a> {}
+impl<'a> DisplayAs<HTML> for RobotPage {}
