@@ -24,8 +24,31 @@ pub struct Config {
 
 type TableMap = Arc<DashMap<String, Arc<RwLock<GameState<WsSender>>>>>;
 
+async fn clean_tables(tables: TableMap) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60*10)).await;
+        let keys = tables.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
+        for k in keys {
+            if let Some(g) = tables.get(&k) {
+                let g = g.read().await;
+                if g.connections.iter().all(Option::is_none) {
+                    println!("Cleaning up table {k} where no one is sitting.");
+                    tables.remove(&k);
+                } else if let Some(t) = g.last_action {
+                    if t.elapsed() > std::time::Duration::from_secs(60*60) {
+                        println!("Cleaning up table {k} where no one has played recently.");
+                    tables.remove(&k);
+                    }
+                }
+            }
+        }
+        // tables.retain(|_, t| t.read().await.connections.any(|c| c.is_some()));
+    }
+}
+
 pub async fn serve_abridge(config: Config) {
     let tables: TableMap = Arc::new(DashMap::new());
+    tokio::spawn(clean_tables(tables.clone()));
     let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
     let tables = warp::any().map(move || tables.clone());
