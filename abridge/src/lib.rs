@@ -2,7 +2,7 @@ use bridge_deck::{Cards, Suit};
 use dashmap::DashMap;
 use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
-use robot::{Action, Bid, GameState, PlayerName, Seat};
+use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -26,7 +26,7 @@ type TableMap = Arc<DashMap<String, Arc<RwLock<GameState<WsSender>>>>>;
 
 async fn clean_tables(tables: TableMap) {
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60*10)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(60 * 10)).await;
         let keys = tables.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
         for k in keys {
             if let Some(g) = tables.get(&k) {
@@ -35,9 +35,9 @@ async fn clean_tables(tables: TableMap) {
                     println!("Cleaning up table {k} where no one is sitting.");
                     tables.remove(&k);
                 } else if let Some(t) = g.last_action {
-                    if t.elapsed() > std::time::Duration::from_secs(60*60) {
+                    if t.elapsed() > std::time::Duration::from_secs(60 * 60) {
                         println!("Cleaning up table {k} where no one has played recently.");
-                    tables.remove(&k);
+                        tables.remove(&k);
                     }
                 }
             }
@@ -90,8 +90,13 @@ pub async fn serve_abridge(config: Config) {
         .clone()
         .and_then(|game: Arc<RwLock<GameState<WsSender>>>| async move {
             let g = game.read().await;
-            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &Index { game: &g }).into_response());
+            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> = Ok(display(
+                HTML,
+                &Index {
+                    table: TableToJoin::new("".to_string(), &g),
+                },
+            )
+            .into_response());
             r
         });
     let table_seat = path!(String / Seat)
@@ -221,11 +226,11 @@ pub async fn serve_abridge(config: Config) {
         .or(ai_sock)
         .or(seat)
         .or(randomseat)
-        .or(table_seat)
         .or(table_robot_tab)
         .or(table_randomseat)
         .or(table_sock)
         .or(tabl_ai_sock)
+        .or(table_seat)
         .or(index);
 
     if let Some(domain) = config.domain {
@@ -449,11 +454,11 @@ fn send_player_updates(g: &GameState<WsSender>) {
     }
 }
 
-struct Index<'a> {
-    game: &'a GameState<WsSender>,
+struct Index {
+    table: TableToJoin,
 }
 #[with_template("[%" "%]" "index.html")]
-impl<'a> DisplayAs<HTML> for Index<'a> {}
+impl<'a> DisplayAs<HTML> for Index {}
 
 struct Player<'a> {
     seat: Seat,
@@ -481,4 +486,25 @@ struct RobotPage {
 }
 
 #[with_template("[%" "%]" "robot-page.html")]
-impl<'a> DisplayAs<HTML> for RobotPage {}
+impl DisplayAs<HTML> for RobotPage {}
+
+struct TableToJoin {
+    table: String,
+    dealer: Seat,
+    names: Seated<PlayerName>,
+    pub bids: Vec<Bid>,
+}
+
+#[with_template("[%" "%]" "table-to-join.html")]
+impl DisplayAs<HTML> for TableToJoin {}
+
+impl TableToJoin {
+    fn new(table: String, game: &GameState<WsSender>) -> Self {
+        TableToJoin {
+            table,
+            dealer: game.dealer,
+            names: game.names.clone(),
+            bids: game.bids.clone(),
+        }
+    }
+}

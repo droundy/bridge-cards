@@ -85,7 +85,7 @@
 
 <body>
     <details id="meet" open><summary>Video chat</summary></details>
-    <button class="robots" onclick="window.open(window.location + '/robot','newwindow', 'width=300,height=250')">Robots</button>
+    <button class="robots" onclick="window.open(window.location.origin + window.location.pathname + '/robot','newwindow', 'width=300,height=250')">Robots</button>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
     <main id="main">[% self.0 %]</main>
 </body>

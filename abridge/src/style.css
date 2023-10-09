@@ -23,6 +23,40 @@ body {
     float: right;
 } */
 
+.tabletosit {
+    max-width: 20em;
+    margin: 0.25em;
+    border-radius: 1em;
+    border-color: black;
+    border-width: 0.2em;
+    border-style: solid;
+}
+
+.tabletosit .seat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.joinname {
+    width: 10em;
+}
+
+.table a.button {
+    vertical-align: middle;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+a.button {
+    -webkit-appearance: button;
+    -moz-appearance: button;
+    appearance: button;
+
+    text-decoration: none;
+    color: initial;
+}
+
 .name {
     display: block;
     font-size: small;

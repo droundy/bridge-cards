@@ -12,19 +12,9 @@
         <header>
             <h1> Abridge Game </h1>
         </header>
-        <p>
-            Please play.
-        </p>
-        <ul>
-            [% if self.game.connections[Seat::North].is_none() { %]<li><a href="north">Sit North</a></li>[% } %]
-            [% if self.game.connections[Seat::South].is_none() { %]<li><a href="south">Sit South</a></li>[% } %]
-            [% if self.game.connections[Seat::East].is_none() { %]<li><a href="east">Sit East</a></li>[% } %]
-            [% if self.game.connections[Seat::West].is_none() { %]<li><a href="west">Sit West</a></li>[% } %]
-            [% if self.game.connections[Seat::West].is_none() ||
-            self.game.connections[Seat::East].is_none() ||
-            self.game.connections[Seat::North].is_none() || self.game.connections[Seat::South].is_none() { %]<li><a
-            href="random">Sit randomly</a></li>[% } %]
-        </ul>
+        <div class="tabletosit">
+            [% self.table %]
+        </div>
     </main>
 </body>
 

@@ -1,0 +1,59 @@
+[% use Seat::*; %]
+<table class="bidhistory">
+    <tr>[% let who = self.dealer; %]
+        <th>[% who.name() %]</th>
+        <th>[% who.next().name() %]</th>
+        <th>[% who.next().next().name() %]</th>
+        <th>[% who.next().next().next().name() %]</th></tr>
+    [% for row in (0..self.bids.len()).collect::<Vec<_>>().chunks(4) {
+        %]<tr>[% for &i in row.iter() {
+            %]<td>[% self.bids[i] %]</td>[%
+        } %]</tr>[%
+    } %]
+</table>
+<table>
+<tr><td></td><td><div class="seat">
+    [%  match &self.names[North] {
+        PlayerName::Human(name) => {
+            %]<span class="name">[% name %]</span>[%
+        }
+        PlayerName::None | PlayerName::Robot(_) => {
+            %] <form class="name" action="north"><input type="submit" value="Sit" /></form> [%
+        }
+        } %]
+</div></td></tr>
+<tr>
+<td><div class="seat">[%  match &self.names[West] {
+        PlayerName::Human(name) => {
+            %]<span class="name">[% name %]</span>[%
+        }
+        PlayerName::None | PlayerName::Robot(_) => {
+            %] <form class="name" action="west"><input type="submit" value="Sit" /></form> [%
+        }
+     } %]
+    </div></td>
+    <td><div class="table">[% self.table %]
+    </div></td>
+    <td><div class="seat">[%  match &self.names[East] {
+            PlayerName::Human(name) => {
+                %]<span class="name">[% name %]</span>[%
+            }
+            PlayerName::None | PlayerName::Robot(_) => {
+                %] <form class="name" action="east"><input type="submit" value="Sit" /></form> [%
+            }
+         } %]
+        </div></td>
+</tr>
+<tr><td></td><td><div class="seat">
+    [%  match &self.names[South] {
+        PlayerName::Human(name) => {
+            %]<span class="name">[% name %]</span>[%
+        }
+        PlayerName::None | PlayerName::Robot(_) => {
+            %] <form class="name" action="south"><input type="submit" value="Sit" /></form> [%
+        }
+     } %]
+</div></td>
+<tr><td></td><td><form action="random"><input type="submit" value="Join table" /></form>
+</td></tr>
+</table>

@@ -97,6 +97,12 @@ pub enum PlayerName {
     Robot(String),
 }
 
+impl PlayerName {
+    pub fn not_human(&self) -> bool {
+        !matches!(self, PlayerName::Human(_))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GameState<C> {
     pub names: Seated<PlayerName>,
