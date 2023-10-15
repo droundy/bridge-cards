@@ -233,10 +233,16 @@ impl<C> GameState<C> {
     }
     pub fn redeal(&mut self) {
         let dealer = self.dealer.next();
-        let oldnames = self.names.clone();
-        *self = GameState::new();
-        self.names = oldnames;
-        self.dealer = dealer;
+        let names = self.names.clone();
+        let connections = std::mem::take(&mut self.connections);
+        let count_for_me = self.count_for_me;
+        *self = Self {
+            names,
+            dealer,
+            connections,
+            count_for_me,
+            ..GameState::new()
+        }
     }
 
     pub fn bidder(&self) -> Option<Seat> {
