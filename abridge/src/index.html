@@ -7,6 +7,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 
+<script type="text/javascript">
+    var timer;
+    function sendname() {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(function () {
+            let name = document.getElementById('myname').innerText;
+            document.cookie = "name=" + name;
+            api.executeCommand('displayName', name);
+            ws.send(JSON.stringify({ "Name": name }));
+        }, 3000);
+    }
+    async function subscribe() {
+        let response = await fetch("/index.html?update=true");
+
+        if (response.status == 502) {
+            // Status 502 is a connection timeout error,
+            // may happen when the connection was pending for too long,
+            // and the remote server or a proxy closed it
+            // let's reconnect
+            await subscribe();
+        } else if (response.status != 200) {
+            // An error - let's show it
+            showMessage(response.statusText);
+            // Reconnect in one second
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await subscribe();
+        } else {
+            // Get and show the message
+            let message = await response.text();
+            showMessage(message);
+            // Call subscribe() again to get the next message
+            await subscribe();
+        }
+    }
+
+    subscribe();
+</script>
 <body>
     <main>
         <header>

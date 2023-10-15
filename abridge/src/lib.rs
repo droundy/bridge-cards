@@ -4,6 +4,7 @@ use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
 use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
+use tokio::sync::broadcast::Sender;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
@@ -47,11 +48,13 @@ async fn clean_tables(tables: TableMap) {
 }
 
 pub async fn serve_abridge(config: Config) {
+    let (table_updates, _) = tokio::sync::broadcast::channel::<()>(1);
     let tables: TableMap = Arc::new(DashMap::new());
     tokio::spawn(clean_tables(tables.clone()));
     let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
     let tables = warp::any().map(move || tables.clone());
+    let table_updates = warp::any().map(move || table_updates.clone());
     let game = warp::any().map(move || game.clone());
 
     let style_css = path!("style.css").map(|| {
@@ -88,17 +91,32 @@ pub async fn serve_abridge(config: Config) {
     });
     let index = game
         .clone()
-        .and_then(|game: Arc<RwLock<GameState<WsSender>>>| async move {
-            let g = game.read().await;
-            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> = Ok(display(
-                HTML,
-                &Index {
-                    table: TableToJoin::new("".to_string(), &g),
-                },
-            )
-            .into_response());
-            r
-        });
+        .and(warp::query::<Vec<(String, String)>>())
+        .and(table_updates.clone())
+        .and_then(
+            |game: Arc<RwLock<GameState<WsSender>>>,
+             query: Vec<(String, String)>,
+             table_updates: Sender<()>| async move {
+                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
+                    if query.is_empty() {
+                        let g = game.read().await;
+                        Ok(display(
+                            HTML,
+                            &Index {
+                                table: TableToJoin::new("".to_string(), &g),
+                            },
+                        )
+                        .into_response())
+                    } else {
+                        println!("Someone is long polling");
+                        table_updates.subscribe().recv().await.ok();
+                        println!("Got a change.");
+                        let g = game.read().await;
+                        Ok(display(HTML, &TableToJoin::new("".to_string(), &g)).into_response())
+                    };
+                r
+            },
+        );
     let table_seat = path!(String / Seat)
         .and(tables.clone())
         .and(warp::filters::cookie::optional("name"))
@@ -189,32 +207,46 @@ pub async fn serve_abridge(config: Config) {
             r
         },
     );
-    let sock = path!(Seat / "ws").and(warp::ws()).and(game.clone()).map(
-        |seat: Seat, ws: warp::ws::Ws, game| {
-            ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
-        },
-    );
+    let sock = path!(Seat / "ws")
+        .and(warp::ws())
+        .and(game.clone())
+        .and(table_updates.clone())
+        .map(|seat: Seat, ws: warp::ws::Ws, game, table_updates| {
+            ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, table_updates))
+        });
     let table_sock = path!(String / Seat / "ws")
         .and(warp::ws())
         .and(tables.clone())
+        .and(table_updates.clone())
         .map(
-            |table: String, seat: Seat, ws: warp::ws::Ws, tables: TableMap| {
+            |table: String,
+             seat: Seat,
+             ws: warp::ws::Ws,
+             tables: TableMap,
+             table_updates: Sender<()>| {
                 let game = Arc::clone(&tables.entry(table).or_default());
-                ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game))
+                ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, table_updates))
             },
         );
-    let ai_sock = path!(Seat / "robot" / "ws").and(warp::ws()).and(game).map(
-        |_seat: Seat, ws: warp::ws::Ws, game| {
-            ws.on_upgrade(move |socket| ws_connected(None, socket, game))
-        },
-    );
+    let ai_sock = path!(Seat / "robot" / "ws")
+        .and(warp::ws())
+        .and(game)
+        .and(table_updates.clone())
+        .map(|_seat: Seat, ws: warp::ws::Ws, game, table_updates| {
+            ws.on_upgrade(move |socket| ws_connected(None, socket, game, table_updates))
+        });
     let tabl_ai_sock = path!(String / Seat / "robot" / "ws")
         .and(warp::ws())
         .and(tables)
+        .and(table_updates)
         .map(
-            |table: String, _seat: Seat, ws: warp::ws::Ws, tables: TableMap| {
+            |table: String,
+             _seat: Seat,
+             ws: warp::ws::Ws,
+             tables: TableMap,
+             table_updates: Sender<()>| {
                 let game = Arc::clone(&tables.entry(table).or_default());
-                ws.on_upgrade(move |socket| ws_connected(None, socket, game))
+                ws.on_upgrade(move |socket| ws_connected(None, socket, game, table_updates))
             },
         );
     let filter = style_css
@@ -314,6 +346,7 @@ async fn ws_connected(
     myseat: Option<Seat>,
     ws: warp::ws::WebSocket,
     game: Arc<RwLock<GameState<WsSender>>>,
+    table_updates: Sender<()>,
 ) {
     // Split the socket into a sender and receive of messages.
     let (mut user_ws_tx, mut user_ws_rx) = ws.split();
@@ -359,6 +392,7 @@ async fn ws_connected(
                         g.names[s] = PlayerName::None;
                     }
                 }
+                table_updates.send(()).ok();
                 send_player_updates(&g);
             }
             return;
@@ -381,6 +415,7 @@ async fn ws_connected(
                     }
                     Action::Redeal => {
                         g.redeal();
+                        table_updates.send(()).ok();
                     }
                     Action::Bid(myseat, b) => {
                         if g.turn() == Some(myseat) {
@@ -395,6 +430,7 @@ async fn ws_connected(
                                     g.hand_done = true;
                                 }
                             }
+                            table_updates.send(()).ok();
                         } else {
                             println!("We got a message from {myseat:?} but it is not playing");
                         }
@@ -419,6 +455,7 @@ async fn ws_connected(
                     Action::Name(name) => {
                         if let Some(myseat) = myseat {
                             g.names[myseat] = PlayerName::Human(name);
+                            table_updates.send(()).ok();
                         }
                     }
                 }
@@ -426,6 +463,7 @@ async fn ws_connected(
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
                     if g.names[seat] == PlayerName::None && g.connections[seat].is_none() {
                         g.names[seat] = PlayerName::Robot(random_name());
+                        table_updates.send(()).ok();
                     }
                 }
                 send_player_updates(&g);
