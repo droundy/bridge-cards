@@ -361,9 +361,10 @@ async fn ws_connected(
             g.connections[seat] = Some(tx);
         } else {
             g.ai = Some(tx);
-            send_player_updates(&g);
         }
-    }
+        send_player_updates(&g);
+        println!("sending table update: {:?}", table_updates.send(()).is_ok());
+}
     tokio::task::spawn(async move {
         while let Some(x) = rx.recv().await {
             if let Err(e) = user_ws_tx.send(x).await {
@@ -385,16 +386,25 @@ async fn ws_connected(
         if msg.is_close() {
             println!("got a close");
             let mut g = game.write().await;
-            if !myseat.is_none() {
+            if let Some(seat) = myseat {
+                println!("A human closed!");
+                g.connections[seat] = None;
+                if g.ai.is_some() {
+                    g.names[seat] = PlayerName::Robot(random_name());
+                } else {
+                    g.names[seat] = PlayerName::None;
+                }
+            } else {
+                println!("An ai closed!");
                 g.ai = None;
                 for s in [Seat::North, Seat::East, Seat::South, Seat::West] {
                     if g.connections[s].is_none() {
                         g.names[s] = PlayerName::None;
                     }
                 }
-                table_updates.send(()).ok();
-                send_player_updates(&g);
             }
+            println!("sending table update: {:?}", table_updates.send(()).is_ok());
+            send_player_updates(&g);
             return;
         }
         match msg.to_str().map(serde_json::from_str::<Action>) {
@@ -415,7 +425,7 @@ async fn ws_connected(
                     }
                     Action::Redeal => {
                         g.redeal();
-                        table_updates.send(()).ok();
+                        println!("sending table update: {:?}", table_updates.send(()).is_ok());
                     }
                     Action::Bid(myseat, b) => {
                         if g.turn() == Some(myseat) {
@@ -430,7 +440,7 @@ async fn ws_connected(
                                     g.hand_done = true;
                                 }
                             }
-                            table_updates.send(()).ok();
+                            println!("sending table update: {:?}", table_updates.send(()).is_ok());
                         } else {
                             println!("We got a message from {myseat:?} but it is not playing");
                         }
@@ -455,7 +465,7 @@ async fn ws_connected(
                     Action::Name(name) => {
                         if let Some(myseat) = myseat {
                             g.names[myseat] = PlayerName::Human(name);
-                            table_updates.send(()).ok();
+                            println!("sending table update: {:?}", table_updates.send(()).is_ok());
                         }
                     }
                 }
@@ -463,7 +473,7 @@ async fn ws_connected(
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
                     if g.names[seat] == PlayerName::None && g.connections[seat].is_none() {
                         g.names[seat] = PlayerName::Robot(random_name());
-                        table_updates.send(()).ok();
+                        println!("sending table update: {:?}", table_updates.send(()).is_ok());
                     }
                 }
                 send_player_updates(&g);

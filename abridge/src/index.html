@@ -29,14 +29,14 @@
             await subscribe();
         } else if (response.status != 200) {
             // An error - let's show it
-            showMessage(response.statusText);
+            console.log('Got an error!', response.statusText);
             // Reconnect in one second
             await new Promise(resolve => setTimeout(resolve, 1000));
             await subscribe();
         } else {
             // Get and show the message
             let message = await response.text();
-            showMessage(message);
+            document.getElementById('tables').innerHTML = message;
             // Call subscribe() again to get the next message
             await subscribe();
         }
@@ -49,7 +49,7 @@
         <header>
             <h1> Abridge Game </h1>
         </header>
-        <div class="tabletosit">
+        <div id="tables" class="tabletosit">
             [% self.table %]
         </div>
     </main>
