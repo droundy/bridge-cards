@@ -234,12 +234,14 @@ impl<C> GameState<C> {
     pub fn redeal(&mut self) {
         let dealer = self.dealer.next();
         let names = self.names.clone();
+        let ai = std::mem::take(&mut self.ai);
         let connections = std::mem::take(&mut self.connections);
         let count_for_me = self.count_for_me;
         *self = Self {
             names,
             dealer,
             connections,
+            ai,
             count_for_me,
             ..GameState::new()
         }
