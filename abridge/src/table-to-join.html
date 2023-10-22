@@ -1,5 +1,6 @@
 [% use Seat::*; %]
 <div id="tables" class="tabletosit">
+    <h1><a href="[% self.table %]/random">[% self.table as HTML %]</a></h1>
     <table class="bidhistory">
     <tr>[% let who = self.dealer; %]
         <th>[% who.name() %]</th>
@@ -33,7 +34,7 @@
         }
      } %]
     </div></td>
-    <td><div class="table">[% self.table as HTML %]
+    <td><div class="table">
     </div></td>
     <td><div class="seat">[%  match &self.names[East] {
             PlayerName::Human(name) => {
@@ -55,8 +56,5 @@
         }
      } %]
 </div></td>
-<tr><td></td><td>
-    <a href="[% self.table %]/random">Sit randomly</a>
-</td></tr>
 </table>
 </div>

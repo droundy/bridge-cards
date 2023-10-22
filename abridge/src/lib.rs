@@ -70,11 +70,9 @@ pub async fn serve_abridge(config: Config) {
     let (table_updates, _) = tokio::sync::broadcast::channel::<()>(1);
     let tables: TableMap = TableMap::default();
     tokio::spawn(clean_tables(tables.clone()));
-    let game = Arc::new(RwLock::new(GameState::new()));
     // Turns our "state" into a new filter.
     let tables = warp::any().map(move || tables.clone());
     let table_updates = warp::any().map(move || table_updates.clone());
-    let game = warp::any().map(move || game.clone());
 
     let style_css = path!("style.css").map(|| {
         const STYLE: &str = include_str!("style.css");
@@ -108,20 +106,16 @@ pub async fn serve_abridge(config: Config) {
             .header("content-type", "application/wasm")
             .body(ROBOT_BG_WASM)
     });
-    let index = game
-        .clone()
-        .and(tables.clone())
+    let index = tables.clone()
         .and(warp::query::<Vec<(String, String)>>())
         .and(table_updates.clone())
         .and_then(
-            |game: Arc<RwLock<GameState<WsSender>>>,
-             table_map: TableMap,
+            |table_map: TableMap,
              query: Vec<(String, String)>,
              table_updates: Sender<()>| async move {
                 let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
                     if query.is_empty() {
-                        let g = game.read().await;
-                        let mut tables = vec![TableToJoin::new("".to_string(), &g)];
+                        let mut tables = Vec::new();
                         let first_guards = table_map.0.iter().collect::<Vec<_>>();
                         let mut guards = Vec::new();
                         for guard in first_guards.iter() {
@@ -142,8 +136,7 @@ pub async fn serve_abridge(config: Config) {
                         table_updates.subscribe().recv().await.ok();
                         println!("Got a change.");
 
-                        let g = game.read().await;
-                        let mut tables = vec![TableToJoin::new("".to_string(), &g)];
+                        let mut tables = Vec::new();
                         let first_guards = table_map.0.iter().collect::<Vec<_>>();
                         let mut guards = Vec::new();
                         for guard in first_guards.iter() {
@@ -178,54 +171,40 @@ pub async fn serve_abridge(config: Config) {
                 r
             },
         );
-    let seat = path!(Seat)
-        .and(game.clone())
-        .and(warp::filters::cookie::optional("name"))
-        .and_then(
-            |seat: Seat, game: Arc<RwLock<GameState<WsSender>>>, name: Option<String>| async move {
-                let mut g = game.write().await;
-                g.check_timeout();
-                if let Some(name) = name {
-                    g.names[seat] = PlayerName::Human(name);
-                } else {
-                    g.names[seat] = PlayerName::Human(random_name());
-                }
-                let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                    Ok(display(HTML, &PlayerPage(Player { seat, game: &g })).into_response());
-                r
-            },
-        );
-    let robot_tab = path!(Seat / "robot").and_then(
-        |_seat: Seat| async move {
-            let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &RobotPage ).into_response());
-            r
-        },
-    );
     let table_robot_tab =
         path!(String / Seat / "robot").and_then(|_table: String, _seat: Seat| async move {
             let r: Result<warp::http::Response<warp::hyper::Body>, warp::Rejection> =
-                Ok(display(HTML, &RobotPage ).into_response());
+                Ok(display(HTML, &RobotPage).into_response());
             r
         });
 
-    let randomseat = path!("random").and(game.clone()).and_then(
-        move |game: Arc<RwLock<GameState<WsSender>>>| async move {
-            let g = game.read().await;
-            let uri = if let Some(seat) = g.randomseat() {
-                format!("/{}", seat.long_name())
-            } else {
-                format!("/")
-            };
-            let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
-                Ok(warp::reply::with_header(
-                    warp::http::StatusCode::TEMPORARY_REDIRECT,
-                    warp::http::header::LOCATION,
-                    uri,
-                ));
-            r
-        },
-    );
+    let randomseat =
+        path!("random")
+            .and(tables.clone())
+            .and_then(move |tables: TableMap| async move {
+                for t in tables.0.iter() {
+                    let g = t.value().read().await;
+                    if let Some(seat) = g.randomseat() {
+                        let uri = format!("/{}/{}", t.key(), seat.long_name());
+                        let r: Result<
+                            warp::reply::WithHeader<warp::http::StatusCode>,
+                            warp::Rejection,
+                        > = Ok(warp::reply::with_header(
+                            warp::http::StatusCode::TEMPORARY_REDIRECT,
+                            warp::http::header::LOCATION,
+                            uri,
+                        ));
+                        return r;
+                    }
+                }
+                let r: Result<warp::reply::WithHeader<warp::http::StatusCode>, warp::Rejection> =
+                    Ok(warp::reply::with_header(
+                        warp::http::StatusCode::TEMPORARY_REDIRECT,
+                        warp::http::header::LOCATION,
+                        format!("/{}/random", random_name()),
+                    ));
+                r
+            });
 
     let table_randomseat = path!(String / "random").and(tables.clone()).and_then(
         move |table: String, tables: TableMap| async move {
@@ -249,13 +228,6 @@ pub async fn serve_abridge(config: Config) {
             r
         },
     );
-    let sock = path!(Seat / "ws")
-        .and(warp::ws())
-        .and(game.clone())
-        .and(table_updates.clone())
-        .map(|seat: Seat, ws: warp::ws::Ws, game, table_updates| {
-            ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, table_updates))
-        });
     let table_sock = path!(String / Seat / "ws")
         .and(warp::ws())
         .and(tables.clone())
@@ -273,13 +245,6 @@ pub async fn serve_abridge(config: Config) {
                 ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, table_updates))
             },
         );
-    let ai_sock = path!(Seat / "robot" / "ws")
-        .and(warp::ws())
-        .and(game)
-        .and(table_updates.clone())
-        .map(|_seat: Seat, ws: warp::ws::Ws, game, table_updates| {
-            ws.on_upgrade(move |socket| ws_connected(None, socket, game, table_updates))
-        });
     let tabl_ai_sock = path!(String / Seat / "robot" / "ws")
         .and(warp::ws())
         .and(tables)
@@ -299,12 +264,8 @@ pub async fn serve_abridge(config: Config) {
         );
     let filter = style_css
         .or(audio)
-        .or(robot_tab)
         .or(robot)
         .or(robot_bg_wasm)
-        .or(sock)
-        .or(ai_sock)
-        .or(seat)
         .or(randomseat)
         .or(table_robot_tab)
         .or(table_randomseat)
