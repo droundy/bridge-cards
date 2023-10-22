@@ -1,5 +1,6 @@
 [% use Seat::*; %]
-<table class="bidhistory">
+<div id="tables" class="tabletosit">
+    <table class="bidhistory">
     <tr>[% let who = self.dealer; %]
         <th>[% who.name() %]</th>
         <th>[% who.next().name() %]</th>
@@ -18,7 +19,7 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <form class="name" action="north"><input type="submit" value="Sit" /></form> [%
+            %] <a href="[% self.table %]/north">Sit</a> [%
         }
         } %]
 </div></td></tr>
@@ -28,18 +29,18 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <form class="name" action="west"><input type="submit" value="Sit" /></form> [%
+            %] <a href="[% self.table %]/west">Sit</a> [%
         }
      } %]
     </div></td>
-    <td><div class="table">[% self.table %]
+    <td><div class="table">[% self.table as HTML %]
     </div></td>
     <td><div class="seat">[%  match &self.names[East] {
             PlayerName::Human(name) => {
                 %]<span class="name">[% name %]</span>[%
             }
             PlayerName::None | PlayerName::Robot(_) => {
-                %] <form class="name" action="east"><input type="submit" value="Sit" /></form> [%
+                %] <a href="[% self.table %]/east">Sit</a> [%
             }
          } %]
         </div></td>
@@ -50,10 +51,12 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <form class="name" action="south"><input type="submit" value="Sit" /></form> [%
+            %] <a href="[% self.table %]/south">Sit</a> [%
         }
      } %]
 </div></td>
-<tr><td></td><td><form action="random"><input type="submit" value="Join table" /></form>
+<tr><td></td><td>
+    <a href="[% self.table %]/random">Sit randomly</a>
 </td></tr>
 </table>
+</div>

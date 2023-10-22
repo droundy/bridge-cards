@@ -173,6 +173,10 @@ button:disabled {
     width: 5em;
 }
 
+.leave {
+    float: right;
+}
+
 .robots {
     float: right;
     width: 5em;

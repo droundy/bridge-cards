@@ -66,7 +66,7 @@
     };
     ws.onclose = function () {
         console.log('disconnected');
-        location.reload();
+        // location.reload();
     };
     function send_message(action) {
         ws.send(action);
@@ -87,6 +87,7 @@
     <details id="meet" open><summary>Video chat</summary></details>
     <button class="robots" onclick="window.open(window.location.origin + window.location.pathname + '/robot','newwindow', 'width=300,height=250')">Robots</button>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
+    <a class="leave" href="/">Leave table</a>
     <main id="main">[% self.0 %]</main>
 </body>
 
