@@ -54,7 +54,7 @@
     if (location.protocol == 'https:') {
         ws_protocol = 'wss://';
     }
-    const ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
+    var ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
     console.log('did websocket');
 
     ws.onopen = function () {
@@ -67,6 +67,7 @@
     ws.onclose = function () {
         console.log('disconnected');
         // location.reload();
+        ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
     };
     function send_message(action) {
         ws.send(action);
