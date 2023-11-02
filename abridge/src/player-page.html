@@ -21,7 +21,7 @@
                 displayName: '[% format!("{:?}", self.0.seat) %]'
             },
             configOverwrite: {
-                prejoinPageEnabled: false,
+                prejoinPageEnabled: true,
                 toolbarButtons: ['microphone', 'camera', 'tileview', 'settings', 'hangup'],
             },
             interfaceConfigOverwrite: {
@@ -85,7 +85,7 @@
 </script>
 
 <body>
-    <details id="meet" open><summary>Video chat</summary></details>
+    <details id="meet"><summary>Video chat</summary></details>
     <button class="robots" onclick="window.open(window.location.origin + window.location.pathname + '/robot','newwindow', 'width=300,height=250')">Robots</button>
     <button class="redeal" [% Action::Redeal %]>Redeal</button>
     <a class="leave" href="/">Leave table</a>
