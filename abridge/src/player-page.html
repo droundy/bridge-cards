@@ -66,8 +66,7 @@
     };
     ws.onclose = function () {
         console.log('disconnected');
-        // location.reload();
-        ws = new WebSocket(ws_protocol + location.host + location.pathname + '/ws');
+        location.reload();
     };
     function send_message(action) {
         ws.send(action);
