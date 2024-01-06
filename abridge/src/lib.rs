@@ -484,7 +484,7 @@ async fn ws_connected(
                 }
                 g.check_timeout();
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-                    if g.names[seat] == PlayerName::None && g.connections[seat].is_none() {
+                    if g.names[seat] == PlayerName::None && g.connections[seat].is_none() && g.ai.is_some() {
                         g.names[seat] = PlayerName::Robot(random_name());
                         println!("sending table update: {:?}", table_updates.send(()).is_ok());
                     }
