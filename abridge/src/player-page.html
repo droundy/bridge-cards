@@ -35,8 +35,7 @@
         window.clearTimeout(timer);
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
-            document.cookie = "name=" + name;
-            api.executeCommand('displayName', name);
+            document.cookie = "name=" + name + ";SameSite=Strict";
             ws.send(JSON.stringify({ "Name": name }));
         }, 3000);
     }
