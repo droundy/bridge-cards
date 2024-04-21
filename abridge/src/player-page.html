@@ -37,7 +37,7 @@
             let name = document.getElementById('myname').innerText;
             document.cookie = "name=" + name + ";SameSite=Strict";
             ws.send(JSON.stringify({ "Name": name }));
-        }, 3000);
+        }, 1000);
     }
 </script>
 
