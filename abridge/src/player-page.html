@@ -35,7 +35,7 @@
         window.clearTimeout(timer);
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
-            document.cookie = "name=" + name + ";SameSite=Strict";
+            document.cookie = "name=" + name + ";SameSite=Strict;Max-Age=22896000";
             ws.send(JSON.stringify({ "Name": name }));
         }, 1000);
     }
