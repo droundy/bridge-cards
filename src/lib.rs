@@ -4,7 +4,7 @@
 
 // pub mod simd;
 
-use rand::{rngs::SmallRng, seq::SliceRandom, Rng};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 /// A single card
@@ -718,15 +718,6 @@ impl std::ops::BitAnd for Cards {
     type Output = Self;
     fn bitand(self, rhs: Self) -> Self {
         self.intersection(rhs)
-    }
-}
-
-impl Cards {
-    /// Iterate over the cards in a random order
-    pub fn shuffle(self, rng: &mut SmallRng) -> impl Iterator<Item = Card> {
-        let mut cards: Vec<Card> = self.collect();
-        cards.shuffle(rng);
-        cards.into_iter()
     }
 }
 

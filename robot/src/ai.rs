@@ -1,13 +1,7 @@
-use std::cell::RefCell;
-
 use crate::{Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
 use wasm_bindgen::prelude::*;
-
-thread_local! {
-    static GLOBAL_AI: RefCell<BridgeAi> = BridgeAi::new().into();
-}
 
 #[derive(Debug)]
 pub struct BridgeAi {
@@ -244,60 +238,6 @@ fn test_opening_lead() {
 #[derive(Debug)]
 pub struct RandomPlay;
 impl PlayAI for RandomPlay {
-    fn play<C>(&mut self, game: &GameState<C>) -> Card {
-        let starting = game.starting().expect("playing at the wrong time");
-        let nt_or_trump = if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {
-            Some(trump)
-        } else {
-            None
-        };
-        println!("trump is {:?}", nt_or_trump);
-        let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
-        if game.played.len() % 4 == 0 && starting.hands[0].len() == 13 {
-            opening_lead(nt_or_trump, starting.hands[0])
-        } else if tricks_left < 14 && game.could_be_played().clone().len() > 1 {
-            let cards_played: &[Card] = if game.played.len() == 4 {
-                &[]
-            } else {
-                &game.played
-            };
-            let starting = game.starting().unwrap();
-            for i in 0..4 {
-                println!("   {}: {}", i, starting.hands[i]);
-            }
-            println!("   extra: {}", starting.unknown);
-            starting.check();
-            let mut solver = if tricks_left < 5 {
-                bridge_solver::Naive::statistical(nt_or_trump, 16)
-            } else if tricks_left < 6 {
-                bridge_solver::Naive::statistical(nt_or_trump, 4)
-            } else if tricks_left < 7 {
-                bridge_solver::Naive::statistical(nt_or_trump, 2)
-            } else if tricks_left < 8 {
-                bridge_solver::Naive::statistical(nt_or_trump, 1)
-                // bridge_solver::Naive::high_low(nt_or_trump)
-            } else {
-                // bridge_solver::Naive::statistical(nt_or_trump, 1)
-                bridge_solver::Naive::oneround(nt_or_trump)
-            };
-            solver.score_after(starting, cards_played).1
-        } else {
-            // The follwoing should just unwrap, since there should always be a card to pick
-            println!("could be played: {}", game.could_be_played());
-            game.could_be_played()
-                .pick(1)
-                .unwrap()
-                .next()
-                .unwrap_or(Card::S2)
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct CachedPlay {
-    four_samples: bridge_solver::Naive,
-}
-impl PlayAI for CachedPlay {
     fn play<C>(&mut self, game: &GameState<C>) -> Card {
         let starting = game.starting().expect("playing at the wrong time");
         let nt_or_trump = if let Some(Bid::Suit(_, trump)) = game.highest_contract_bid() {

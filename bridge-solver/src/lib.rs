@@ -483,14 +483,6 @@ pub struct Naive {
     trump: Option<Suit>,
     rng: SmallRng,
     care: Thoroughness,
-    compute_so_far: u64,
-    compute_limit: u64,
-}
-
-impl std::fmt::Debug for Naive {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Naive {{ cache_size: {} }}", self.cache.len())
-    }
 }
 
 impl Naive {
@@ -505,9 +497,6 @@ impl Naive {
     }
     pub fn oneround(trump: Option<Suit>) -> Self {
         Naive::with_thoroughness(trump, Thoroughness::OneRound)
-    }
-    pub fn with_compute_limit(self, compute_limit: u64) -> Self {
-        Self { compute_limit, ..self }
     }
     fn with_thoroughness(trump: Option<Suit>, care: Thoroughness) -> Self {
         let mut cache = std::collections::HashMap::new();
@@ -528,8 +517,6 @@ impl Naive {
             trump,
             rng: SmallRng::from_entropy(),
             care,
-            compute_so_far: 0,
-            compute_limit: u64::MAX,
         }
     }
 
@@ -592,7 +579,6 @@ impl Naive {
                                         num: 1,
                                     }
                                 } else {
-                                    self.compute_so_far += 1;
                                     self.score(trick_taken.starting())
                                 };
                                 let mysc = if self.care != Thoroughness::OneRound {
@@ -643,7 +629,6 @@ impl Naive {
     }
 
     pub fn score_after(&mut self, mut starting: Starting, plays: &[Card]) -> (Score, Card) {
-        self.compute_so_far = 0; // because this is not called internally.
         // First update the hands to ensure that the plays correspond to cards
         // in the various hands.
         for (i, card) in plays.iter().cloned().enumerate() {
