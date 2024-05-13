@@ -35,7 +35,7 @@
         window.clearTimeout(timer);
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
-            let value = "name=" + name + "; SameSite=Strict; Max-Age=22896000";
+            let value = "name=" + name + "; SameSite=Strict; Max-Age=22896000; path=/";
             document.cookie = value;
             console.log('setting cookie to', document.cookie, value);
             ws.send(JSON.stringify({ "Name": name }));
