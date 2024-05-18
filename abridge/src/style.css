@@ -22,12 +22,12 @@
     --turn2: yellow;
 }
 
-/* @media (prefers-color-scheme: dark) { */
+@media (prefers-color-scheme: dark) {
     :root {
-    --background: black;
-    --text: white;
+    --background: #111;
+    --text: #eec;
     --alert: darkorange;
-    --dummy-background: #333333;
+    --dummy-background: #444;
     --table: forestgreen;
 
     --spades: white;
@@ -46,7 +46,7 @@
     --turn1: green;
     --turn2: blue;
     }
-/* } */
+}
 
 .hand.turn {
     box-shadow: 0.05em 0.1em 0.2em var(--text), 0.1em 0.2em 0.5em var(--turn1), 0.1em 0.2em 0.75em var(--turn2);
