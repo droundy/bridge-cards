@@ -1,7 +1,63 @@
+:root {
+    --background: white;
+    --text: black;
+    --alert: darkorange;
+    --dummy-background: lightgray;
+    --table: lightgreen;
+
+    --spades: black;
+    --hearts: red;
+    --diamonds: #dd8800;
+    --clubs: green;
+
+    --playable1: white;
+    --playable2: gold;
+    --playable3: red;
+
+    --hover1: gold;
+    --hover2: orange;
+    --hover3: darkred;
+
+    --turn1: lightskyblue;
+    --turn2: yellow;
+}
+
+/* @media (prefers-color-scheme: dark) { */
+    :root {
+    --background: black;
+    --text: white;
+    --alert: darkorange;
+    --dummy-background: #333333;
+    --table: forestgreen;
+
+    --spades: white;
+    --hearts: red;
+    --diamonds: #dd8800;
+    --clubs: lightgreen;
+
+    --playable1: #666;
+    --playable2: #aaa;
+    --playable3: #ddd;
+
+    --hover1: gold;
+    --hover2: yellow;
+    --hover3: white;
+
+    --turn1: green;
+    --turn2: blue;
+    }
+/* } */
+
+.hand.turn {
+    box-shadow: 0.05em 0.1em 0.2em var(--text), 0.1em 0.2em 0.5em var(--turn1), 0.1em 0.2em 0.75em var(--turn2);
+}
+
 body {
     font-size: 24px;
     font-family: 'Roboto', sans-serif;
     margin: 0;
+    background-color: var(--background);
+    color: var(--text);
 }
 
 #north,
@@ -27,7 +83,7 @@ body {
     max-width: 20em;
     margin: 0.25em;
     border-radius: 1em;
-    border-color: black;
+    border-color: var(--text);
     border-width: 0.2em;
     border-style: solid;
 }
@@ -75,7 +131,7 @@ a.button {
 .alert {
     font-size: 9px;
     display: block;
-    color: darkorange;
+    color: var(--alert);
 }
 
 .hand {
@@ -86,60 +142,52 @@ a.button {
 }
 
 .hand.dummy {
-    background-color: lightgray;
-    box-shadow: 0.1em 0.2em 0.25em lightgray;
-}
-
-.hand.turn {
-    box-shadow: 0.05em 0.1em 0.2em black, 0.1em 0.2em 0.5em lightskyblue, 0.1em 0.2em 0.75em yellow;
+    background-color: var(--dummy-background);
+    box-shadow: 0.1em 0.2em 0.25em var(--dummy-background);
 }
 
 .spades {
-    color: black;
+    color: var(--spades);
 }
 
 .hearts {
-    color: red;
+    color: var(--hearts);
 }
 
 .diamonds {
     color: transparent;
-    text-shadow: 0 0 0 #dd8800;
-    /* color: #dd8800; */
-    /* color: red; */
+    text-shadow: 0 0 0 var(--diamonds);
 }
 
 .clubs {
     color: transparent;
-    text-shadow: 0 0 0 green;
-    /* color: green; */
-    /* color: black; */
+    text-shadow: 0 0 0 var(--clubs);
 }
 
 .playable {
     transition: all 0.25s ease-in-out;
-    text-shadow: 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+    text-shadow: 1px 1px 1px var(--playable1), -1px -1px 1px var(--playable1), 1px -1px 1px var(--playable1), -1px 1px 1px var(--playable1), 0em 0em 5px var(--playable2), 0px 0px 10px var(--playable3);
 }
 
 .playable:hover {
-    text-shadow: 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    text-shadow: 1px 1px 1px var(--hover1), -1px -1px 1px var(--hover1), 1px -1px 1px var(--hover1), -1px 1px 1px var(--hover1), 0em 0em 5px var(--hover2), 0px 0px 10px var(--hover3);
     cursor: pointer;
 }
 
 .diamonds .playable {
-    text-shadow: 0 0 0 #dd8800, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+    text-shadow: 0 0 0 var(--diamonds), 1px 1px 1px var(--playable1), -1px -1px 1px var(--playable1), 1px -1px 1px var(--playable1), -1px 1px 1px var(--playable1), 0em 0em 5px var(--playable2), 0px 0px 10px var(--playable3);
 }
 
 .diamonds .playable:hover {
-    text-shadow: 0 0 0 #dd8800, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    text-shadow: 0 0 0 var(--diamonds), 1px 1px 1px var(--hover1), -1px -1px 1px var(--hover1), 1px -1px 1px var(--hover1), -1px 1px 1px var(--hover1), 0em 0em 5px var(--hover2), 0px 0px 10px var(--hover3);
 }
 
 .clubs .playable {
-    text-shadow: 0 0 0 green, 1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white, 0em 0em 5px gold, 0px 0px 10px red;
+    text-shadow: 0 0 0 var(--clubs), 1px 1px 1px var(--playable1), -1px -1px 1px var(--playable1), 1px -1px 1px var(--playable1), -1px 1px 1px var(--playable1), 0em 0em 5px var(--playable2), 0px 0px 10px var(--playable3);
 }
 
 .clubs .playable:hover {
-    text-shadow: 0 0 0 green, 1px 1px 1px gold, -1px -1px 1px gold, 1px -1px 1px gold, -1px 1px 1px gold, 0em 0em 5px orange, 0px 0px 10px darkred;
+    text-shadow: 0 0 0 var(--clubs), 1px 1px 1px var(--hover1), -1px -1px 1px var(--hover1), 1px -1px 1px var(--hover1), -1px 1px 1px var(--hover1), 0em 0em 5px var(--hover2), 0px 0px 10px var(--hover3);
 }
 
 button {
@@ -192,7 +240,7 @@ button:disabled {
     margin: 0.25rem;
     font-size: 14px;
     float: left;
-    border: 0.05em solid black;
+    border: 0.05em solid var(--text);
     line-height: 0.5rem;
 }
 
@@ -231,9 +279,9 @@ table {
     font-size: 18px;
     z-index: -1;
     /* font-size: 36px; */
-    background-color: lightgreen;
+    background-color: var(--table);
     border-radius: 1em;
-    box-shadow: 0 0 0.2em lightgreen;
+    box-shadow: 0 0 0.2em var(--table);
 }
 
 /* North */
@@ -278,9 +326,9 @@ table {
 .hastooltip .tooltip {
     visibility: hidden;
     width: 120px;
-    background-color: white;
+    background-color: var(--background);
     color: black;
-    box-shadow: 0.05em 0.1em 0.2em black;
+    box-shadow: 0.05em 0.1em 0.2em var(--text);
     text-align: center;
     line-height: 1.1em;
     padding: 5px 0;
