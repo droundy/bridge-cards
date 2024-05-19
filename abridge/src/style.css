@@ -2,7 +2,7 @@
     --background: white;
     --text: black;
     --alert: darkorange;
-    --dummy-background: lightgray;
+    --dummy-background: #d3d3d3;
     --table: lightgreen;
 
     --spades: black;
@@ -24,14 +24,14 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-    --background: #111;
+    --background: #1A120B;
     --text: #eec;
-    --alert: darkorange;
-    --dummy-background: #444;
-    --table: forestgreen;
+    --alert: #d5cea3;
+    --dummy-background: #3C2A21;
+    --table: #3C2A21;
 
-    --spades: white;
-    --hearts: red;
+    --spades: #eeeeee;
+    --hearts: #ee3333;
     --diamonds: #dd8800;
     --clubs: lightgreen;
 
@@ -191,10 +191,42 @@ a.button {
 }
 
 button {
+    color: var(--text);
+    background-image: linear-gradient(var(--background), var(--dummy-background));
+    border-style: solid;
+    border-color:
+        var(--dummy-background)
+        var(--dummy-background)
+        color-mix(in srgb, var(--dummy-background) 80%, var(--text));
+    border-width: 1px;
+    border-radius: 3px;
+    /* box-shadow: rgba(255,255,255,.6) 0 1px 0 inset; */
+    box-sizing: border-box;  
     width: 3em;
     margin: 0.25em;
     margin-bottom: 0;
     margin-top: 0;
+    display: inline-block;
+}
+button:hover {
+    border-color:
+        color-mix(in srgb, var(--dummy-background) 80%, var(--text))
+        color-mix(in srgb, var(--dummy-background) 80%, var(--text))
+        color-mix(in srgb, var(--dummy-background) 60%, var(--text));
+}
+
+@media (prefers-color-scheme: dark) {
+    button {
+        border-color:
+            color-mix(in srgb, var(--dummy-background) 80%, var(--background));
+        background-color: color-mix(in srgb, var(--dummy-background) 90%, var(--text));
+        background-image: none;
+    }
+    button:hover {
+        border-color:
+            color-mix(in srgb, var(--dummy-background) 80%, var(--background));
+        background-color: color-mix(in srgb, var(--dummy-background) 80%, var(--text));
+    }
 }
 
 /* details {
@@ -327,7 +359,7 @@ table {
     visibility: hidden;
     width: 120px;
     background-color: var(--background);
-    color: black;
+    color: var(--text);
     box-shadow: 0.05em 0.1em 0.2em var(--text);
     text-align: center;
     line-height: 1.1em;
