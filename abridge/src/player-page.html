@@ -35,6 +35,7 @@
         window.clearTimeout(timer);
         timer = window.setTimeout(function () {
             let name = document.getElementById('myname').innerText;
+            if (name.trim().length == 0) { return; } // avoid accidentally saving a blank name
             let value = "name=" + name + "; SameSite=Strict; Max-Age=22896000; path=/";
             document.cookie = value;
             console.log('setting cookie to', document.cookie, value);
