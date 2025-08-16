@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-wasm-bindgen = "0.2.84"
+wasm-bindgen = "0.2.88"
 bridge-deck = { version = "0.1.1", path = "..", features = ["display-as"] }
 bridge-solver = { version = "0.1.0", path = "../bridge-solver" }
 regex = "1.4.3"
