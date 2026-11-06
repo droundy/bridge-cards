@@ -2,9 +2,9 @@
 # `benchmarks` feature, from both the working tree and the committed main
 # branch, so that each is compared with its older self.
 #
-# This is its own workspace so that the baseline packages, which have the same
-# names as the ones they are compared with, do not make `cargo -p bridge-deck`
-# ambiguous in the main workspace.
+# This is its own workspace so that the main workspace does not resolve
+# against GitHub's main branch: without the `benchmarks` feature there, nothing
+# in it would build.  `cargo bench` at the top of the repository runs this.
 [package]
 name = "benchmarks"
 version = "0.0.0"
