@@ -966,6 +966,93 @@ fn naive_score() {
     );
 }
 
+/// The most tricks the side on lead can take when every hand is known, found
+/// by trying every way to play out the hand (or just its first trick).
+#[cfg(test)]
+fn plain_minimax(hands: [Cards; 4], trump: Option<Suit>, one_trick: bool) -> usize {
+    fn best(
+        hands: [Cards; 4],
+        plays: &mut Vec<Card>,
+        trump: Option<Suit>,
+        one_trick: bool,
+    ) -> usize {
+        let seat = plays.len();
+        if seat == 4 {
+            // The highest trump wins, or else the highest card of the suit led.
+            let led = plays[0].suit();
+            let winner = (0..4)
+                .max_by_key(|&i| {
+                    let card = plays[i];
+                    (Some(card.suit()) == trump, card.suit() == led, card.rank())
+                })
+                .unwrap();
+            let ours = winner & 1 == 0;
+            let mut left = hands;
+            for (hand, &card) in left.iter_mut().zip(plays.iter()) {
+                *hand -= Cards::singleton(card);
+            }
+            if one_trick || left[winner].is_empty() {
+                return ours as usize;
+            }
+            let left = [0, 1, 2, 3].map(|i| left[(winner + i) % 4]);
+            let later = best(left, &mut Vec::new(), trump, one_trick);
+            return if ours {
+                1 + later
+            } else {
+                left[0].len() - later
+            };
+        }
+        let choices = if seat == 0 {
+            hands[0]
+        } else {
+            hands[seat].following_suit(plays[0].suit())
+        };
+        let mut tricks = Vec::new();
+        for card in choices {
+            plays.push(card);
+            tricks.push(best(hands, plays, trump, one_trick));
+            plays.pop();
+        }
+        if seat & 1 == 0 {
+            tricks.into_iter().max().unwrap()
+        } else {
+            tricks.into_iter().min().unwrap()
+        }
+    }
+    best(hands, &mut Vec::new(), trump, one_trick)
+}
+
+#[test]
+fn score_matches_plain_minimax() {
+    let mut rng = SmallRng::seed_from_u64(0);
+    for n in 1..=4 {
+        for _ in 0..25 {
+            let mut deck = Cards::ALL;
+            let hands = [(); 4].map(|_| deck.pick_rng(&mut rng, n).unwrap());
+            let starting = Starting {
+                hands,
+                unknown: Cards::EMPTY,
+            };
+            for trump in [None, Some(Suit::Hearts)] {
+                assert_eq!(
+                    plain_minimax(hands, trump, false) as f64,
+                    Naive::new(trump).score(starting).mean(),
+                    "{:?} with {:?} trump",
+                    hands,
+                    trump
+                );
+                assert_eq!(
+                    plain_minimax(hands, trump, true) as f64,
+                    Naive::oneround(trump).score(starting).mean(),
+                    "first trick of {:?} with {:?} trump",
+                    hands,
+                    trump
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn test_ruffing() {
     use std::str::FromStr;
