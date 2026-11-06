@@ -1,6 +1,7 @@
 pub use bridge_deck::{Card, CardMap, Cards, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use std::hash::{BuildHasherDefault, Hasher};
 
 pub fn normalize_create_map(all: Cards) -> CardMap {
     let mut map = CardMap::default();
@@ -59,6 +60,35 @@ pub struct Starting {
     pub hands: [Cards; 4],
     /// The cards that I don't know who has
     pub unknown: Cards,
+}
+
+/// Which of these plays wins the trick, counting from the leader
+fn trick_winner(plays: [Card; 4], trump: Option<Suit>) -> usize {
+    let played = Cards::singleton(plays[0])
+        + Cards::singleton(plays[1])
+        + Cards::singleton(plays[2])
+        + Cards::singleton(plays[3]);
+    let mut winning_suit = plays[0].suit();
+    if let Some(t) = trump {
+        if !played.in_suit(t).is_empty() {
+            winning_suit = t;
+        }
+    }
+    // println!("Winning suit is {:?}", winning_suit);
+    let mut winner = 0;
+    let mut best_rank = 0;
+    for i in plays
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.suit() == winning_suit)
+        .map(|(i, _)| i)
+    {
+        if plays[i].rank() > best_rank {
+            best_rank = plays[i].rank();
+            winner = i;
+        }
+    }
+    winner
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -193,26 +223,7 @@ impl Starting {
             + Cards::singleton(plays[1])
             + Cards::singleton(plays[2])
             + Cards::singleton(plays[3]);
-        let mut winning_suit = plays[0].suit();
-        if let Some(t) = trump {
-            if !played.in_suit(t).is_empty() {
-                winning_suit = t;
-            }
-        }
-        // println!("Winning suit is {:?}", winning_suit);
-        let mut winner = 0;
-        let mut best_rank = 0;
-        for i in plays
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.suit() == winning_suit)
-            .map(|(i, _)| i)
-        {
-            if plays[i].rank() > best_rank {
-                best_rank = plays[i].rank();
-                winner = i;
-            }
-        }
+        let winner = trick_winner(plays, trump);
         let tricks_left = self.tricks_remaining();
         let unknown_in_suit = self.unknown.in_suit(plays[0].suit());
         if !unknown_in_suit.is_empty() {
@@ -472,12 +483,48 @@ enum Thoroughness {
     OneRound,
 }
 
+/// The scores of positions we have already solved
+///
+/// Looking positions up here is the solver's most common operation, so we
+/// use a much faster hash than the default SipHash, whose protection against
+/// hash flooding we do not need.
+type Cache = std::collections::HashMap<Starting, Score, BuildHasherDefault<PositionHasher>>;
+
+/// A fast hash for the few `u64`s that make up a `Starting`
+///
+/// FxHash combines the words, and then the MurmurHash3 finalizer mixes every
+/// bit into the low bits that `HashMap` uses to pick a bucket.
+#[derive(Default)]
+struct PositionHasher(u64);
+
+impl Hasher for PositionHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b.into());
+        }
+    }
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_usize(&mut self, word: usize) {
+        self.write_u64(word as u64);
+    }
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h ^ (h >> 33)
+    }
+}
+
 /// The Naive solver assumes no knowledge from the bidding.
 //  It's really only suitable for declarer play when opponents did not bid, and
 //  even then is suboptimal on weak partnerships.
 #[derive(Clone)]
 pub struct Naive {
-    cache: std::collections::HashMap<Starting, Score>,
+    cache: Cache,
     // cache: dashmap::DashMap<Starting, Score>,
     /// What is trump?
     trump: Option<Suit>,
@@ -499,7 +546,7 @@ impl Naive {
         Naive::with_thoroughness(trump, Thoroughness::OneRound)
     }
     fn with_thoroughness(trump: Option<Suit>, care: Thoroughness) -> Self {
-        let mut cache = std::collections::HashMap::new();
+        let mut cache = Cache::default();
         // let cache = dashmap::DashMap::new();
         // Prepopulate cache with stopping point of no cards->no points.
         cache.insert(
@@ -548,6 +595,22 @@ impl Naive {
         }
     }
 
+    /// Score the hand from the start of this trick, given its plays
+    fn score_trick(&mut self, starting: Starting, plays: [Card; 4]) -> Score {
+        if self.care == Thoroughness::OneRound {
+            // We only count this trick, so all we need is who won it.
+            let tot_score = if trick_winner(plays, self.trump) & 1 == 1 {
+                0
+            } else {
+                1
+            };
+            Score { tot_score, num: 1 }
+        } else {
+            let trick_taken = starting.after(plays, self.trump);
+            self.score(trick_taken.starting()) + trick_taken
+        }
+    }
+
     pub fn score(&mut self, starting: Starting) -> Score {
         if let Some(score) = self.cache.get(&starting) {
             // println!("found score {:?}", score);
@@ -564,64 +627,50 @@ impl Naive {
         };
         for _ in 0..num_stats {
             for hands in starting.random_hands(&mut self.rng).into_iter() {
-                let mut best = Score::MIN;
+                // We pick the plays that are best for us (c0 and c2) and
+                // worst for us (c1 and c3).  As soon as a play can no longer
+                // be strictly better for whoever chooses it than what they
+                // already have, we skip that play's remaining responses.
+                // Since we only ever replace a choice by a strictly better
+                // one, this finds exactly the scores we would get by trying
+                // every response.
+                let mut best0 = Score::MIN;
                 for c0 in self.thorough_plays(hands[0]) {
-                    let mut worst = Score::MAX;
+                    let mut worst1 = Score::MAX;
                     for c1 in self.thorough_plays(hands[1].following_suit(c0.suit())) {
-                        let mut best = Score::MIN;
+                        let mut best2 = Score::MIN;
                         for c2 in self.thorough_plays(hands[2].following_suit(c0.suit())) {
-                            let mut worst = Score::MAX;
+                            let mut worst3 = Score::MAX;
                             for c3 in self.thorough_plays(hands[3].following_suit(c0.suit())) {
-                                let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
-                                let sc = if self.care == Thoroughness::OneRound {
-                                    Score {
-                                        tot_score: 0,
-                                        num: 1,
-                                    }
-                                } else {
-                                    self.score(trick_taken.starting())
-                                };
-                                let mysc = if self.care != Thoroughness::OneRound {
-                                    sc + trick_taken
-                                } else if let TrickTaken::Them(_) = trick_taken {
-                                    sc
-                                } else {
-                                    Score {
-                                        tot_score: 1,
-                                        num: 1,
-                                    }
-                                };
-                                // println!(
-                                //     " {} {} {} {} -> {} from {:?} and {:?}",
-                                //     c0,
-                                //     c1,
-                                //     c2,
-                                //     c3,
-                                //     mysc.mean(),
-                                //     sc,
-                                //     trick_taken
-                                // );
-                                if mysc < worst {
-                                    worst = mysc;
-                                // println!("worst = {}", worst.mean());
-                                } else {
-                                    // println!("worst = {} but sc = {}", worst.mean(), sc.mean());
+                                let mysc = self.score_trick(starting, [c0, c1, c2, c3]);
+                                // println!(" {} {} {} {} -> {}", c0, c1, c2, c3, mysc.mean());
+                                if mysc < worst3 {
+                                    worst3 = mysc;
+                                }
+                                if worst3 <= best2 || worst3 <= best0 {
+                                    break;
                                 }
                             }
-                            if worst > best {
-                                best = worst;
+                            if worst3 > best2 {
+                                best2 = worst3;
+                            }
+                            if best2 >= worst1 {
+                                break;
                             }
                         }
-                        if worst > best {
-                            worst = best;
+                        if worst1 > best2 {
+                            worst1 = best2;
+                        }
+                        if worst1 <= best0 {
+                            break;
                         }
                     }
-                    if worst > best {
-                        best = worst;
-                        // println!("Move {} gives {}", c0, best.mean());
+                    if worst1 > best0 {
+                        best0 = worst1;
+                        // println!("Move {} gives {}", c0, best0.mean());
                     }
                 }
-                score = score + best;
+                score = score + best0;
             }
         }
         self.cache.insert(starting, score);
@@ -668,32 +717,8 @@ impl Naive {
                             let mut worst = Score::MAX;
                             for c3 in possible_plays[3].following_suit(c0.suit()) {
                                 // println!("considering playing fourth {}", c3);
-                                let trick_taken = starting.after([c0, c1, c2, c3], self.trump);
-                                // println!("{} {} {} {} => {:?}", c0, c1, c2, c3, trick_taken);
-                                let sc = if self.care == Thoroughness::OneRound {
-                                    Score {
-                                        tot_score: 0,
-                                        num: 1,
-                                    }
-                                } else {
-                                    self.score(trick_taken.starting())
-                                };
-                                // println!("score is {:?}", sc);
-                                // println!("trick taken is {:?}", trick_taken);
-                                let mysc = if self.care != Thoroughness::OneRound {
-                                    sc + trick_taken
-                                } else if let TrickTaken::Them(_) = trick_taken {
-                                    sc
-                                } else {
-                                    Score {
-                                        tot_score: 1,
-                                        num: 1,
-                                    }
-                                };
-                                // println!(
-                                //     " {} {} {} {} -> {} from {:?} and {:?}",
-                                //     c0, c1, c2, c3, mysc.mean(), sc, trick_taken
-                                // );
+                                let mysc = self.score_trick(starting, [c0, c1, c2, c3]);
+                                // println!(" {} {} {} {} -> {}", c0, c1, c2, c3, mysc.mean());
                                 if plays.len() == 3 {
                                     let s = *play_result.get(&c3).unwrap_or(&Score {
                                         tot_score: 0,
@@ -964,6 +989,93 @@ fn naive_score() {
         })
         .mean()
     );
+}
+
+/// The most tricks the side on lead can take when every hand is known, found
+/// by trying every way to play out the hand (or just its first trick).
+#[cfg(test)]
+fn plain_minimax(hands: [Cards; 4], trump: Option<Suit>, one_trick: bool) -> usize {
+    fn best(
+        hands: [Cards; 4],
+        plays: &mut Vec<Card>,
+        trump: Option<Suit>,
+        one_trick: bool,
+    ) -> usize {
+        let seat = plays.len();
+        if seat == 4 {
+            // The highest trump wins, or else the highest card of the suit led.
+            let led = plays[0].suit();
+            let winner = (0..4)
+                .max_by_key(|&i| {
+                    let card = plays[i];
+                    (Some(card.suit()) == trump, card.suit() == led, card.rank())
+                })
+                .unwrap();
+            let ours = winner & 1 == 0;
+            let mut left = hands;
+            for (hand, &card) in left.iter_mut().zip(plays.iter()) {
+                *hand -= Cards::singleton(card);
+            }
+            if one_trick || left[winner].is_empty() {
+                return ours as usize;
+            }
+            let left = [0, 1, 2, 3].map(|i| left[(winner + i) % 4]);
+            let later = best(left, &mut Vec::new(), trump, one_trick);
+            return if ours {
+                1 + later
+            } else {
+                left[0].len() - later
+            };
+        }
+        let choices = if seat == 0 {
+            hands[0]
+        } else {
+            hands[seat].following_suit(plays[0].suit())
+        };
+        let mut tricks = Vec::new();
+        for card in choices {
+            plays.push(card);
+            tricks.push(best(hands, plays, trump, one_trick));
+            plays.pop();
+        }
+        if seat & 1 == 0 {
+            tricks.into_iter().max().unwrap()
+        } else {
+            tricks.into_iter().min().unwrap()
+        }
+    }
+    best(hands, &mut Vec::new(), trump, one_trick)
+}
+
+#[test]
+fn score_matches_plain_minimax() {
+    let mut rng = SmallRng::seed_from_u64(0);
+    for n in 1..=4 {
+        for _ in 0..25 {
+            let mut deck = Cards::ALL;
+            let hands = [(); 4].map(|_| deck.pick_rng(&mut rng, n).unwrap());
+            let starting = Starting {
+                hands,
+                unknown: Cards::EMPTY,
+            };
+            for trump in [None, Some(Suit::Hearts)] {
+                assert_eq!(
+                    plain_minimax(hands, trump, false) as f64,
+                    Naive::new(trump).score(starting).mean(),
+                    "{:?} with {:?} trump",
+                    hands,
+                    trump
+                );
+                assert_eq!(
+                    plain_minimax(hands, trump, true) as f64,
+                    Naive::oneround(trump).score(starting).mean(),
+                    "first trick of {:?} with {:?} trump",
+                    hands,
+                    trump
+                );
+            }
+        }
+    }
 }
 
 #[test]
