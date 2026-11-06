@@ -368,6 +368,15 @@ fn bids_string(bids: &[Bid]) -> String {
     s
 }
 
+/// The auction as it stood at each earlier bid by the same player (`skip` =
+/// 4) or by their partner (`skip` = 2), most recent first.  Each prefix ends
+/// with that earlier bid.
+fn earlier_auctions(actual_bids: &[Bid], skip: usize) -> impl Iterator<Item = &[Bid]> {
+    (skip..actual_bids.len())
+        .step_by(4)
+        .map(move |i| &actual_bids[..actual_bids.len() - i])
+}
+
 struct ValueRange {
     min: u8,
     max: u8,
@@ -387,6 +396,34 @@ impl ValueRange {
             name: name.to_string(),
         }
     }
+}
+
+/// The length, hcp in suit, and hcp outside suit ranges for every suit.
+fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML> {
+    format_as!(HTML,
+        for suit in Suit::ALL.iter().cloned() {
+            ValueRange::new(
+                min.length[suit],
+                max.length[suit],
+                13,
+                &format_as!(HTML, suit).into_string(),
+            )
+            ""
+            ValueRange::new(
+                min.hcp_in_suit[suit],
+                max.hcp_in_suit[suit],
+                10,
+                &format_as!(HTML, "hcp in " suit).into_string(),
+            )
+            ""
+            ValueRange::new(
+                min.hcp_outside_suit[suit],
+                max.hcp_outside_suit[suit],
+                30,
+                &format_as!(HTML, "hcp outside" suit).into_string(),
+            )
+        }
+    )
 }
 
 impl Convention {
@@ -414,21 +451,9 @@ impl Convention {
     }
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         match self {
-            Convention::Simple { regex, .. } => {
-                if regex.is_match(&bids_string(actual_bids)) {
-                    Some(self.clone())
-                } else {
-                    None
-                }
-            }
-            Convention::Natural { regex, .. } => {
-                if regex.is_match(&bids_string(actual_bids)) {
-                    Some(self.clone())
-                } else {
-                    None
-                }
-            }
-            Convention::Forced { regex, .. } => {
+            Convention::Simple { regex, .. }
+            | Convention::Natural { regex, .. }
+            | Convention::Forced { regex, .. } => {
                 if regex.is_match(&bids_string(actual_bids)) {
                     Some(self.clone())
                 } else {
@@ -443,47 +468,10 @@ impl Convention {
                         min,
                         max,
                     }) => {
-                        let mut partner = HandValuation::MIN;
-                        let mut partner_max = HandValuation::MAX;
-                        let mut max = *max;
-                        for i in (2..actual_bids.len()).step_by(4) {
-                            let bids = &actual_bids[0..actual_bids.len() - i];
-                            partner = partner.max(self.min_valuation(bids));
-                            partner_max = partner_max.min(self.max_valuation(bids));
-                        }
-                        let mut myself = HandValuation::MIN;
-                        for i in (4..actual_bids.len()).step_by(4) {
-                            let bids = &actual_bids[0..actual_bids.len() - i];
-                            myself = myself.max(self.min_valuation(bids));
-                        }
-                        let mut min = *min;
-                        let regex = regex.clone();
-                        if min.hcp > 0 {
-                            let partner_hcp = std::cmp::max(partner.lhcp, partner.hcp);
-                            if partner_hcp < HandValuation::MAX.hcp {
-                                max.hcp = (min.hcp + 2).saturating_sub(partner_hcp);
-                            }
-                            min.hcp = min.hcp.saturating_sub(partner_hcp);
-                        }
-                        for suit in Suit::ALL.iter().cloned() {
-                            // If partner hasn't said anything about
-                            let partner_length = if partner.length[suit] == 0
-                                && partner_max.length[suit] == 13
-                            {
-                                // Assume equally divided suits by partner if they haven't mentioned a suit
-                                (13 - partner.length.sum())
-                                    / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
-                            } else {
-                                partner.length[suit]
-                            };
-                            min.length[suit] = min.length[suit].saturating_sub(partner_length);
-                            if myself.length[suit] >= min.length[suit] {
-                                min.length[suit] = 0;
-                            }
-                        }
+                        let (min, max) = self.adjust_for_earlier_bids(actual_bids, *min, *max);
                         Some(Convention::Natural {
                             the_name,
-                            regex,
+                            regex: regex.clone(),
                             min,
                             max,
                         })
@@ -494,54 +482,13 @@ impl Convention {
                         min,
                         max,
                     }) => {
-                        let mut partner = HandValuation::MIN;
-                        let mut partner_max = HandValuation::MAX;
-                        let mut max = *max;
-                        let mut is_forcing = Forcing::Passable;
-                        for i in (2..actual_bids.len()).step_by(4) {
-                            let bids = &actual_bids[0..actual_bids.len() - i];
-                            if is_forcing != Forcing::GameForcing {
-                                is_forcing = self.check_forcing(bids);
-                            }
-                            partner = partner.max(self.min_valuation(bids));
-                            partner_max = partner_max.min(self.max_valuation(bids));
-                        }
-                        if is_forcing == Forcing::Passable {
+                        if self.partner_forcing(actual_bids) == Forcing::Passable {
                             return None;
                         }
-                        let mut myself = HandValuation::MIN;
-                        for i in (4..actual_bids.len()).step_by(4) {
-                            let bids = &actual_bids[0..actual_bids.len() - i];
-                            myself = myself.max(self.min_valuation(bids));
-                        }
-                        let mut min = *min;
-                        let regex = regex.clone();
-                        if min.hcp > 0 {
-                            let partner_hcp = std::cmp::max(partner.lhcp, partner.hcp);
-                            if partner_hcp < HandValuation::MAX.hcp {
-                                max.hcp = (min.hcp + 2).saturating_sub(partner_hcp);
-                            }
-                            min.hcp = min.hcp.saturating_sub(partner_hcp);
-                        }
-                        for suit in Suit::ALL.iter().cloned() {
-                            // If partner hasn't said anything about
-                            let partner_length = if partner.length[suit] == 0
-                                && partner_max.length[suit] == 13
-                            {
-                                // Assume equally divided suits by partner if they haven't mentioned a suit
-                                (13 - partner.length.sum())
-                                    / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
-                            } else {
-                                partner.length[suit]
-                            };
-                            min.length[suit] = min.length[suit].saturating_sub(partner_length);
-                            if myself.length[suit] >= min.length[suit] {
-                                min.length[suit] = 0;
-                            }
-                        }
+                        let (min, max) = self.adjust_for_earlier_bids(actual_bids, *min, *max);
                         Some(Convention::Forced {
                             the_name,
-                            regex,
+                            regex: regex.clone(),
                             min,
                             max,
                         })
@@ -550,6 +497,61 @@ impl Convention {
                 }
             }
         }
+    }
+    /// How forcing partner's earlier bids were. A game force sticks once
+    /// seen; otherwise the result is the forcing level of partner's first bid.
+    fn partner_forcing(&self, actual_bids: &[Bid]) -> Forcing {
+        let mut forcing = Forcing::Passable;
+        for bids in earlier_auctions(actual_bids, 2) {
+            if forcing != Forcing::GameForcing {
+                forcing = self.check_forcing(bids);
+            }
+        }
+        forcing
+    }
+    /// Reduce the `min` and `max` of a `Natural` or `Forced` bid by what
+    /// partner and the bidder have already shown earlier in the auction.
+    fn adjust_for_earlier_bids(
+        &self,
+        actual_bids: &[Bid],
+        mut min: HandValuation,
+        mut max: HandValuation,
+    ) -> (HandValuation, HandValuation) {
+        let mut partner = HandValuation::MIN;
+        let mut partner_max = HandValuation::MAX;
+        for bids in earlier_auctions(actual_bids, 2) {
+            partner = partner.max(self.min_valuation(bids));
+            partner_max = partner_max.min(self.max_valuation(bids));
+        }
+        let mut myself = HandValuation::MIN;
+        for bids in earlier_auctions(actual_bids, 4) {
+            myself = myself.max(self.min_valuation(bids));
+        }
+        // Partner's points count toward the requirement, and we bid this
+        // with at most 2 hcp more than the reduced requirement.
+        if min.hcp > 0 {
+            let partner_hcp = std::cmp::max(partner.lhcp, partner.hcp);
+            if partner_hcp < HandValuation::MAX.hcp {
+                max.hcp = (min.hcp + 2).saturating_sub(partner_hcp);
+            }
+            min.hcp = min.hcp.saturating_sub(partner_hcp);
+        }
+        for suit in Suit::ALL.iter().cloned() {
+            let partner_length = if partner.length[suit] == 0 && partner_max.length[suit] == 13 {
+                // Partner has said nothing about this suit, so assume their
+                // remaining cards are split evenly among the unmentioned suits.
+                (13 - partner.length.sum())
+                    / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
+            } else {
+                partner.length[suit]
+            };
+            min.length[suit] = min.length[suit].saturating_sub(partner_length);
+            // We need no more length than we have already shown.
+            if myself.length[suit] >= min.length[suit] {
+                min.length[suit] = 0;
+            }
+        }
+        (min, max)
     }
     pub fn refine2(&self, bid: Bid, otherbids: &[Bid]) -> Option<Convention> {
         let mut bids = otherbids.to_vec();
@@ -576,28 +578,7 @@ impl Convention {
                 ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
                 ValueRange::new(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
                 ValueRange::new(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
-                for suit in Suit::ALL.iter().cloned() {
-                    ValueRange::new(
-                        min.length[suit],
-                        max.length[suit],
-                        13,
-                        &format_as!(HTML, suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_in_suit[suit],
-                        max.hcp_in_suit[suit],
-                        10,
-                        &format_as!(HTML, "hcp in " suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_outside_suit[suit],
-                        max.hcp_outside_suit[suit],
-                        30,
-                        &format_as!(HTML, "hcp outside" suit).into_string(),
-                    )
-                }
+                suit_ranges(min, max)
                 ""
                 the_description
                 ""
@@ -610,28 +591,7 @@ impl Convention {
                 format_as!(HTML,
                     "<strong>" the_name "</strong><br/>"
                     ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
-                for suit in Suit::ALL.iter().cloned() {
-                    ValueRange::new(
-                        min.length[suit],
-                        max.length[suit],
-                        13,
-                        &format_as!(HTML, suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_in_suit[suit],
-                        max.hcp_in_suit[suit],
-                        10,
-                        &format_as!(HTML, "hcp in " suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_outside_suit[suit],
-                        max.hcp_outside_suit[suit],
-                        30,
-                        &format_as!(HTML, "hcp outside" suit).into_string(),
-                    )
-                }
+                    suit_ranges(min, max)
                 )
             }
             Convention::Forced {
@@ -640,28 +600,7 @@ impl Convention {
                 format_as!(HTML,
                     "<strong><i>" the_name "</i></strong><br/>"
                     ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
-                for suit in Suit::ALL.iter().cloned() {
-                    ValueRange::new(
-                        min.length[suit],
-                        max.length[suit],
-                        13,
-                        &format_as!(HTML, suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_in_suit[suit],
-                        max.hcp_in_suit[suit],
-                        10,
-                        &format_as!(HTML, "hcp in " suit).into_string(),
-                    )
-                    ""
-                    ValueRange::new(
-                        min.hcp_outside_suit[suit],
-                        max.hcp_outside_suit[suit],
-                        30,
-                        &format_as!(HTML, "hcp outside" suit).into_string(),
-                    )
-                }
+                    suit_ranges(min, max)
                 )
             }
             Convention::Ordered { the_name, .. } => {
