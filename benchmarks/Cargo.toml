@@ -21,7 +21,7 @@ bridge-solver = { path = "../bridge-solver", features = ["benchmarks"] }
 bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
 bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
 
-scaling = "0.10.0"
+scaling = "0.10.1"
 
 cardpack = "0.3.8"
 simple-cards = "1.1.0"
