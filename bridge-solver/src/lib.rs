@@ -1,6 +1,7 @@
 pub use bridge_deck::{Card, CardMap, Cards, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
+use std::hash::{BuildHasherDefault, Hasher};
 
 pub fn normalize_create_map(all: Cards) -> CardMap {
     let mut map = CardMap::default();
@@ -482,12 +483,48 @@ enum Thoroughness {
     OneRound,
 }
 
+/// The scores of positions we have already solved
+///
+/// Looking positions up here is the solver's most common operation, so we
+/// use a much faster hash than the default SipHash, whose protection against
+/// hash flooding we do not need.
+type Cache = std::collections::HashMap<Starting, Score, BuildHasherDefault<PositionHasher>>;
+
+/// A fast hash for the few `u64`s that make up a `Starting`
+///
+/// FxHash combines the words, and then the MurmurHash3 finalizer mixes every
+/// bit into the low bits that `HashMap` uses to pick a bucket.
+#[derive(Default)]
+struct PositionHasher(u64);
+
+impl Hasher for PositionHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b.into());
+        }
+    }
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_usize(&mut self, word: usize) {
+        self.write_u64(word as u64);
+    }
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h ^ (h >> 33)
+    }
+}
+
 /// The Naive solver assumes no knowledge from the bidding.
 //  It's really only suitable for declarer play when opponents did not bid, and
 //  even then is suboptimal on weak partnerships.
 #[derive(Clone)]
 pub struct Naive {
-    cache: std::collections::HashMap<Starting, Score>,
+    cache: Cache,
     // cache: dashmap::DashMap<Starting, Score>,
     /// What is trump?
     trump: Option<Suit>,
@@ -509,7 +546,7 @@ impl Naive {
         Naive::with_thoroughness(trump, Thoroughness::OneRound)
     }
     fn with_thoroughness(trump: Option<Suit>, care: Thoroughness) -> Self {
-        let mut cache = std::collections::HashMap::new();
+        let mut cache = Cache::default();
         // let cache = dashmap::DashMap::new();
         // Prepopulate cache with stopping point of no cards->no points.
         cache.insert(
