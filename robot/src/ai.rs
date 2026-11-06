@@ -140,6 +140,11 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
         {
             let cards = hand.in_suit(suit);
             suits_to_consider[i] = cards;
+            if cards.is_empty() {
+                // We can't lead a suit we don't have.
+                goodness[i] = 0;
+                continue;
+            }
 
             if cards.len() == 1 {
                 goodness[i] += 100;
@@ -172,7 +177,7 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
         }
         let best_goodness = goodness.iter().cloned().max().unwrap();
         for i in (0..3).rev() {
-            if goodness[i] == best_goodness {
+            if goodness[i] == best_goodness && suits_to_consider[i].non_empty() {
                 let cards = suits_to_consider[i];
                 let have_ace = cards.aces().non_empty();
                 let have_king = cards.kings().non_empty();
@@ -233,6 +238,21 @@ fn test_opening_lead() {
             Cards::from_str("C: AKQ32 D: 234 H: 234 S: 23").unwrap()
         )
     );
+}
+
+#[test]
+fn opening_lead_with_a_void() {
+    use std::str::FromStr;
+    // Leading away from an ace is penalized, so the club void used to look
+    // like the best suit to lead.
+    let hand = Cards::from_str("S: 65432 H: A43 D: A5432").unwrap();
+    let lead = opening_lead(Some(Suit::Spades), hand);
+    assert!(hand.contains(lead));
+    assert_eq!(Suit::Diamonds, lead.suit());
+
+    // With nothing outside trumps, we have to lead a trump.
+    let lead = opening_lead(Some(Suit::Spades), Cards::SPADES);
+    assert!(Cards::SPADES.contains(lead));
 }
 
 #[derive(Debug)]
