@@ -975,7 +975,7 @@ impl HandValuation {
     pub fn exceeds(self, upper: HandValuation) -> bool {
         self.hcp > upper.hcp
             || self.lhcp > upper.lhcp
-            || self.shcp > upper.lhcp
+            || self.shcp > upper.shcp
             || self.nltc2 > upper.nltc2
             || self.length.exceeds(upper.length)
             || self.hcp_in_suit.exceeds(upper.hcp_in_suit)
@@ -1146,4 +1146,41 @@ impl PerSuit<u8> {
             ],
         }
     }
+}
+
+#[test]
+fn exceeds_compares_each_field_with_itself() {
+    let upper = HandValuation {
+        shcp: 20,
+        lhcp: 10,
+        ..HandValuation::MAX
+    };
+    let lhcp_only = HandValuation {
+        shcp: 15,
+        lhcp: 5,
+        ..HandValuation::MIN
+    };
+    assert!(!lhcp_only.exceeds(upper));
+    assert!(HandValuation {
+        shcp: 21,
+        ..lhcp_only
+    }
+    .exceeds(upper));
+    assert!(HandValuation {
+        lhcp: 11,
+        ..lhcp_only
+    }
+    .exceeds(upper));
+    // The lower bound check used by bidding is `min.exceeds(hand)`.
+    let lower = HandValuation {
+        shcp: 13,
+        ..HandValuation::MIN
+    };
+    let hand = HandValuation {
+        shcp: 14,
+        lhcp: 8,
+        ..HandValuation::MIN
+    };
+    assert!(!lower.exceeds(hand));
+    assert!(HandValuation { shcp: 15, ..lower }.exceeds(hand));
 }
