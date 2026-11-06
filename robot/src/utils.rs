@@ -5,6 +5,10 @@ pub fn set_panic_hook() {
     //
     // For more details see
     // https://github.com/rustwasm/console_error_panic_hook#readme
-    #[cfg(feature = "console_error_panic_hook")]
+    //
+    // Off wasm the hook would only print the panic to stderr, replacing the
+    // standard hook (which also names the thread and honors RUST_BACKTRACE),
+    // so we install it only on wasm.
+    #[cfg(all(feature = "console_error_panic_hook", target_arch = "wasm32"))]
     console_error_panic_hook::set_once();
 }

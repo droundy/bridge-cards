@@ -27,6 +27,7 @@ impl BridgeAi {
 
 #[wasm_bindgen]
 pub fn choose_play(serialized_game: &str) -> Option<String> {
+    crate::utils::set_panic_hook();
     let game = serde_json::from_str::<GameState<()>>(serialized_game).ok()?;
     let mut ai = BridgeAi::new();
     serde_json::to_string(&ai.play(&game)).ok()
