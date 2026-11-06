@@ -371,9 +371,9 @@ async fn ws_connected(
         // Save the sender in our list of connected users.
         let mut g = game.write().await;
         if let Some(seat) = myseat {
-            g.connections[seat] = Some(tx);
+            g.connections[seat] = Some(tx.clone());
         } else {
-            g.ai = Some(tx);
+            g.ai = Some(tx.clone());
         }
         send_player_updates(&g);
         println!("sending table update: {:?}", table_updates.send(()).is_ok());
@@ -398,27 +398,7 @@ async fn ws_connected(
         };
         if msg.is_close() {
             println!("got a close");
-            let mut g = game.write().await;
-            if let Some(seat) = myseat {
-                println!("A human closed!");
-                g.connections[seat] = None;
-                if g.ai.is_some() {
-                    g.names[seat] = PlayerName::Robot(random_name());
-                } else {
-                    g.names[seat] = PlayerName::None;
-                }
-            } else {
-                println!("An ai closed!");
-                g.ai = None;
-                for s in [Seat::North, Seat::East, Seat::South, Seat::West] {
-                    if g.connections[s].is_none() {
-                        g.names[s] = PlayerName::None;
-                    }
-                }
-            }
-            println!("sending table update: {:?}", table_updates.send(()).is_ok());
-            send_player_updates(&g);
-            return;
+            break;
         }
         match msg.to_str().map(serde_json::from_str::<Action>) {
             Err(e) => {
@@ -493,6 +473,36 @@ async fn ws_connected(
             }
         }
     }
+
+    // The socket is gone, whether or not it closed cleanly, so give up our
+    // place at the table, unless a newer connection has already taken it.
+    let mut g = game.write().await;
+    let ours = |c: &Option<WsSender>| c.as_ref().is_some_and(|c| c.same_channel(&tx));
+    if let Some(seat) = myseat {
+        if !ours(&g.connections[seat]) {
+            return;
+        }
+        println!("A human closed!");
+        g.connections[seat] = None;
+        if g.ai.is_some() {
+            g.names[seat] = PlayerName::Robot(random_name());
+        } else {
+            g.names[seat] = PlayerName::None;
+        }
+    } else {
+        if !ours(&g.ai) {
+            return;
+        }
+        println!("An ai closed!");
+        g.ai = None;
+        for s in [Seat::North, Seat::East, Seat::South, Seat::West] {
+            if g.connections[s].is_none() {
+                g.names[s] = PlayerName::None;
+            }
+        }
+    }
+    println!("sending table update: {:?}", table_updates.send(()).is_ok());
+    send_player_updates(&g);
 }
 
 fn send_player_updates(g: &GameState<WsSender>) {
@@ -571,5 +581,86 @@ impl TableToJoin {
             names: game.names.clone(),
             bids: game.bids.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    /// The websocket for one seat at this table, or for its robot if `seat`
+    /// is `None`.
+    fn socket(
+        seat: Option<Seat>,
+        game: Arc<RwLock<GameState<WsSender>>>,
+    ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+        let (table_updates, _) = tokio::sync::broadcast::channel(1);
+        warp::ws().map(move |ws: warp::ws::Ws| {
+            let game = game.clone();
+            let table_updates = table_updates.clone();
+            ws.on_upgrade(move |socket| ws_connected(seat, socket, game, table_updates))
+        })
+    }
+
+    /// Whether `ready` becomes true of the game within a few seconds.
+    async fn eventually(
+        game: &RwLock<GameState<WsSender>>,
+        ready: impl Fn(&GameState<WsSender>) -> bool,
+    ) -> bool {
+        for _ in 0..300 {
+            if ready(&*game.read().await) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn closing_an_old_connection_keeps_the_new_one() {
+        for seat in [Some(Seat::South), None] {
+            let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+            let socket = socket(seat, game.clone());
+            // The same player opens the table twice, and then closes the
+            // first one.
+            let mut old = warp::test::ws().handshake(socket.clone()).await.unwrap();
+            old.recv().await.unwrap();
+            let mut new = warp::test::ws().handshake(socket).await.unwrap();
+            new.recv().await.unwrap();
+            old.send(warp::ws::Message::close()).await;
+            old.recv_closed().await.unwrap();
+
+            let g = game.read().await;
+            if let Some(seat) = seat {
+                assert!(g.connections[seat].is_some(), "{seat:?} lost its seat");
+            } else {
+                assert!(g.ai.is_some(), "the robot lost its seat");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_gives_up_its_seat() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let (addr, server) = warp::serve(socket(Some(Seat::South), game.clone()))
+            .bind_ephemeral(([127, 0, 0, 1], 0));
+        tokio::spawn(server);
+        let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        tcp.write_all(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: websocket\r\n\
+              Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        assert!(eventually(&game, |g| g.connections[Seat::South].is_some()).await);
+
+        // Hang up without the websocket's closing handshake, as when a
+        // connection drops.
+        drop(tcp);
+        assert!(
+            eventually(&game, |g| g.connections[Seat::South].is_none()).await,
+            "a dead connection kept its seat"
+        );
     }
 }
