@@ -16,11 +16,18 @@ A Cargo workspace with four crates, layered bottom to top:
 ```bash
 cargo test -p bridge-deck -p bridge-solver -p robot   # all real tests (avoid --workspace, see below)
 cargo test -p robot test_sheets                        # single test by name filter
-cargo bench                                            # bridge-deck benches (benches/bench.rs)
-cargo bench -p bridge-solver                           # solver benches
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
 ```
+
+Benchmarks live in `benchmarks/`, a separate crate with its own `[workspace]`. Run them from inside that directory so that its `.cargo/config.toml` (function alignment) applies:
+
+```bash
+cd benchmarks && cargo bench                              # every benchmark
+cd benchmarks && cargo bench --bench solver -- "full deal"  # groups whose names contain "full deal"
+```
+
+Every group compares the working tree (`current`) with the committed `main` branch on GitHub (`main`), which comes in through the `bridge-deck-main` and `bridge-solver-main` git dev-dependencies. `benchmarks/Cargo.lock` pins which commit of `main` is used. Run `cargo update` in `benchmarks/` after pushing to `main` to move the baseline. The benchmarks are kept out of the main workspace because those dependencies are also named `bridge-deck` and `bridge-solver`, which would make `cargo -p bridge-deck` ambiguous there. Both versions of each benchmark come from one `benchmarks!` macro, so they always run the same code. Inputs that are shared between the versions are built in both versions' types (`on_main` converts them). Don't use `#[scaling::bench_scaling]` on the solver. It picks its own sizes with no upper limit, and solver cost is exponential in the number of cards, so it ends up in calls that take hours. List explicit `sizes(..)` instead.
 
 `abridge` embeds `robot/pkg/robot.js` and `robot/pkg/robot_bg.wasm` with `include_bytes!`. That directory is gitignored and only exists after you run `wasm-pack build --target web --no-typescript --release` in `robot/`, which `run.sh` does. Until it exists, any build of `abridge` (including `cargo test --workspace`) fails. After starting the server, open `http://localhost:8087/random`.
 

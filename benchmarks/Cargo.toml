@@ -1,0 +1,35 @@
+# The benchmarks for bridge-deck and bridge-solver.  Each one compares the
+# working tree against the committed main branch.
+#
+# This is its own workspace so that the baseline packages, which have the same
+# names as the ones they are compared with, do not make `cargo -p bridge-deck`
+# ambiguous in the main workspace.
+[package]
+name = "benchmarks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+
+bridge-deck = { path = ".." }
+bridge-solver = { path = "../bridge-solver" }
+
+bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main" }
+bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main" }
+
+rand = { version = "0.8", features = ["small_rng"] }
+scaling = "0.10.0"
+
+cardpack = "0.3.8"
+simple-cards = "1.1.0"
+
+[[bench]]
+name = "deck"
+harness = false
+
+[[bench]]
+name = "solver"
+harness = false
