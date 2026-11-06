@@ -119,7 +119,7 @@ impl Starting {
         //     );
         // }
         // println!("  extra: {} ({})", self.unknown, self.unknown.len());
-        let mut needs_least = 0; // = hands.iter().cloned().map(|h| n - h.len()).min().unwrap();
+        let mut needs_least = n;
         let mut need_cards = [0, 0, 0, 0];
         let mut num_needs = 0;
         for (seat, hand) in hands.iter().enumerate() {
@@ -160,7 +160,7 @@ impl Starting {
                 vec![hands1, hands2]
             }
             3 => {
-                for seat in need_cards[..2].iter().cloned() {
+                for seat in need_cards[..3].iter().cloned() {
                     if hands[seat].len() < n - needs_least {
                         let extra = unknown
                             .pick_rng(rng, n - needs_least - self.hands[seat].len())
@@ -288,6 +288,54 @@ impl Starting {
             + self.hands[2].len()
             + self.hands[3].len())
             / 4
+    }
+}
+
+#[test]
+fn test_random_hands() {
+    use std::str::FromStr;
+    let mut rng = SmallRng::seed_from_u64(0);
+    let two_unknown = Starting {
+        hands: [
+            Cards::from_str("S AKQ H AKQ").unwrap(),
+            Cards::EMPTY,
+            Cards::from_str("S JT9 H JT9").unwrap(),
+            Cards::from_str("S 8").unwrap(),
+        ],
+        unknown: Cards::from_str("S 76543 H 876543").unwrap(),
+    };
+    for _ in 0..100 {
+        let deals = two_unknown.random_hands(&mut rng);
+        assert_eq!(2, deals.len());
+        for deal in deals.iter() {
+            assert!(deal.iter().all(|hand| hand.len() == 6));
+            assert_eq!(
+                two_unknown.unknown,
+                deal[1] + deal[3] - two_unknown.hands[3]
+            );
+        }
+        // The second deal swaps cards between the two hands we cannot see.
+        assert_ne!(deals[0], deals[1]);
+        assert_eq!(deals[0][1] + deals[0][3], deals[1][1] + deals[1][3]);
+        assert_eq!(5, (deals[0][1] & deals[1][3]).len());
+    }
+
+    let three_unknown = Starting {
+        hands: [
+            Cards::from_str("S AKQJ").unwrap(),
+            Cards::EMPTY,
+            Cards::EMPTY,
+            Cards::EMPTY,
+        ],
+        unknown: Cards::from_str("S T98765432 H AKQ").unwrap(),
+    };
+    for _ in 0..100 {
+        let deals = three_unknown.random_hands(&mut rng);
+        assert_eq!(6, deals.len());
+        for deal in deals.iter() {
+            assert!(deal.iter().all(|hand| hand.len() == 4));
+            assert_eq!(three_unknown.unknown, deal[1] + deal[2] + deal[3]);
+        }
     }
 }
 
