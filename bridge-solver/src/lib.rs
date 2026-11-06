@@ -231,9 +231,10 @@ impl Starting {
         let unknown_in_suit = self.unknown.in_suit(plays[0].suit());
         if !unknown_in_suit.is_empty() {
             for i in 1..4 {
-                if plays[i].suit() != plays[0].suit() {
-                    // i showed void.  if only one player has unknown cards, they must have
-                    // all the cards in this suit.
+                // A void we could already see tells us nothing new.
+                if plays[i].suit() != plays[0].suit() && self.hands[i].len() < tricks_left {
+                    // i showed void.  if only one other player has unknown cards, they must
+                    // have all the cards in this suit.
                     let lengths: Vec<usize> = self.hands.iter().map(|h| h.len()).collect();
                     let max_length = lengths.iter().cloned().max().unwrap();
                     if lengths.iter().filter(|&&l| l != max_length).count() <= 2 {
@@ -434,6 +435,57 @@ fn test_after_void() {
         println!("  unknown: {}", after.unknown);
     }
     assert_eq!(TrickTaken::Us(after), start.after(plays, None));
+}
+
+#[test]
+fn test_after_known_void() {
+    use std::str::FromStr;
+    // We can see hands 0 and 2, but not hands 1 and 3.
+    let start = Starting {
+        hands: [
+            Cards::from_str("S 32 D 2").unwrap(),
+            Cards::EMPTY,
+            Cards::from_str("H 32 D 3").unwrap(),
+            Cards::EMPTY,
+        ],
+        unknown: Cards::from_str("S 654 H 654").unwrap(),
+    };
+    // Hand 2 shows out of spades, which we already knew, so either hand 1 or
+    // hand 3 could still have the last spade.
+    let after = Starting {
+        hands: [
+            Cards::EMPTY,
+            Cards::from_str("S 2 D 2").unwrap(),
+            Cards::EMPTY,
+            Cards::from_str("H 2 D 3").unwrap(),
+        ],
+        unknown: Cards::from_str("S 3 H 543").unwrap(),
+    };
+    let plays = [Card::S2, Card::S4, Card::H2, Card::S5];
+    assert_eq!(TrickTaken::Them(after), start.after(plays, None));
+
+    // We can see hands 0 and 1, but not hands 2 and 3.
+    let start = Starting {
+        hands: [
+            Cards::from_str("S 32 D 2").unwrap(),
+            Cards::from_str("H 32 D 3").unwrap(),
+            Cards::EMPTY,
+            Cards::EMPTY,
+        ],
+        unknown: Cards::from_str("S 654 H 654").unwrap(),
+    };
+    // Hand 2 shows out of spades too, so hand 3 has the last two spades.
+    let after = Starting {
+        hands: [
+            Cards::from_str("S 43").unwrap(),
+            Cards::from_str("S 2 D 2").unwrap(),
+            Cards::from_str("H 2 D 3").unwrap(),
+            Cards::from_str("H 43").unwrap(),
+        ],
+        unknown: Cards::EMPTY,
+    };
+    let plays = [Card::S2, Card::H2, Card::H4, Card::S4];
+    assert_eq!(TrickTaken::Them(after), start.after(plays, None));
 }
 
 #[derive(Default, Debug, Clone, Copy)]
