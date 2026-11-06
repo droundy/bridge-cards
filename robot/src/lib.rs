@@ -4,6 +4,7 @@ use display_as::{with_template, DisplayAs, HTML};
 use serde::{Deserialize, Serialize};
 
 mod ai;
+mod utils;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Bid {
