@@ -2,6 +2,9 @@ pub use bridge_deck::{Card, CardMap, Cards, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
+#[cfg(feature = "benchmarks")]
+mod benches;
+
 pub fn normalize_create_map(all: Cards) -> CardMap {
     let mut map = CardMap::default();
     for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {

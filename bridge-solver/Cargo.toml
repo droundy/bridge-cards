@@ -18,3 +18,10 @@ license = "MIT/Apache-2.0"
 bridge-deck = { version = "0.1.1", path = ".." }
 
 rand = "0.8.0"
+scaling = { version = "0.10.0", optional = true }
+
+[features]
+
+# Registers the benchmarks in src/benches.rs with scaling.  benchmarks/ runs
+# them, against the same benchmarks from the main branch.
+benchmarks = ["dep:scaling", "bridge-deck/benchmarks"]

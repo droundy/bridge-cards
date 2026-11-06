@@ -1,5 +1,6 @@
-# The benchmarks for bridge-deck and bridge-solver.  Each one compares the
-# working tree against the committed main branch.
+# Runs the benchmarks that bridge-deck and bridge-solver register with their
+# `benchmarks` feature, from both the working tree and the committed main
+# branch, so that each is compared with its older self.
 #
 # This is its own workspace so that the baseline packages, which have the same
 # names as the ones they are compared with, do not make `cargo -p bridge-deck`
@@ -14,22 +15,17 @@ publish = false
 
 [dev-dependencies]
 
-bridge-deck = { path = ".." }
-bridge-solver = { path = "../bridge-solver" }
+bridge-deck = { path = "..", features = ["benchmarks"] }
+bridge-solver = { path = "../bridge-solver", features = ["benchmarks"] }
 
-bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main" }
-bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main" }
+bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
+bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
 
-rand = { version = "0.8", features = ["small_rng"] }
 scaling = "0.10.0"
 
 cardpack = "0.3.8"
 simple-cards = "1.1.0"
 
 [[bench]]
-name = "deck"
-harness = false
-
-[[bench]]
-name = "solver"
+name = "bench"
 harness = false

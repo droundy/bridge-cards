@@ -883,6 +883,9 @@ impl DoubleEndedIterator for Cards {
 #[cfg(feature = "display-as")]
 mod display;
 
+#[cfg(feature = "benchmarks")]
+mod benches;
+
 #[test]
 fn all_cards() {
     for c in Cards::ALL {

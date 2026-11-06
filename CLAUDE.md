@@ -20,14 +20,16 @@ cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
 ```
 
-Benchmarks live in `benchmarks/`, a separate crate with its own `[workspace]`. Run them from inside that directory so that its `.cargo/config.toml` (function alignment) applies:
+Benchmarks are written in each crate's `src/benches.rs` and only compiled with the crate's `benchmarks` feature. They are run by `benchmarks/`, a separate crate with its own `[workspace]`. Run it from inside that directory so that its `.cargo/config.toml` (function alignment) applies:
 
 ```bash
-cd benchmarks && cargo bench                              # every benchmark
-cd benchmarks && cargo bench --bench solver -- "full deal"  # groups whose names contain "full deal"
+cd benchmarks && cargo bench                   # every benchmark
+cd benchmarks && cargo bench -- "full deal"    # groups whose names contain "full deal"
 ```
 
-Every group compares the working tree (`current`) with the committed `main` branch on GitHub (`main`), which comes in through the `bridge-deck-main` and `bridge-solver-main` git dev-dependencies. `benchmarks/Cargo.lock` pins which commit of `main` is used. Run `cargo update` in `benchmarks/` after pushing to `main` to move the baseline. The benchmarks are kept out of the main workspace because those dependencies are also named `bridge-deck` and `bridge-solver`, which would make `cargo -p bridge-deck` ambiguous there. Both versions of each benchmark come from one `benchmarks!` macro, so they always run the same code. Inputs that are shared between the versions are built in both versions' types (`on_main` converts them). Don't use `#[scaling::bench_scaling]` on the solver. It picks its own sizes with no upper limit, and solver cost is exponential in the number of cards, so it ends up in calls that take hours. List explicit `sizes(..)` instead.
+The runner links both the working tree and the committed `main` branch on GitHub (the `bridge-deck-main` and `bridge-solver-main` git dev-dependencies), so scaling registers every benchmark twice and reports each one against its older version (`naive@0.1.0` against `naive@0.0.9`, say). `benchmarks/Cargo.lock` pins which commit of `main` is used. Run `cargo update` in `benchmarks/` after pushing to `main` to move the baseline. scaling tells the two versions apart by version number, so bump the working tree's version while benchmarking until both have different versions. The runner is kept out of the main workspace because those dependencies are also named `bridge-deck` and `bridge-solver`, which would make `cargo -p bridge-deck` ambiguous there.
+
+Inputs must have the same type in both versions, so they are plain integers. `Cards`, `Suit` and `Starting` convert to and from them with `into_for_bench` and `from_for_bench`. Keep that encoding the same in every version. Scaling keeps only the newest version's inputs, so both versions are handed the same cards. Don't use `#[scaling::bench_scaling]` on the solver. It picks its own sizes with no upper limit, and solver cost is exponential in the number of cards, so it ends up in calls that take hours. List explicit `sizes(..)` instead.
 
 `abridge` embeds `robot/pkg/robot.js` and `robot/pkg/robot_bg.wasm` with `include_bytes!`. That directory is gitignored and only exists after you run `wasm-pack build --target web --no-typescript --release` in `robot/`, which `run.sh` does. Until it exists, any build of `abridge` (including `cargo test --workspace`) fails. After starting the server, open `http://localhost:8087/random`.
 
