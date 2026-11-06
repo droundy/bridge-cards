@@ -676,8 +676,8 @@ impl Naive {
             for suit in Suit::ALL.clone().iter().cloned() {
                 let s = plays.in_suit(suit);
                 if s.len() > 2 {
-                    p = p.insert(plays.max().unwrap());
-                    p = p.insert(plays.min().unwrap());
+                    p = p.insert(s.max().unwrap());
+                    p = p.insert(s.min().unwrap());
                 } else {
                     p += s;
                 }
@@ -1179,6 +1179,27 @@ fn score_matches_plain_minimax() {
             }
         }
     }
+}
+
+#[test]
+fn high_low_plays_top_and_bottom_of_each_suit() {
+    use std::str::FromStr;
+    let naive = Naive::high_low(None);
+    // On a lead, every long suit contributes its own top and bottom card, and
+    // short suits contribute every card.
+    assert_eq!(
+        Cards::from_str("S: A2 H: A2 D: 2 C: 2").unwrap(),
+        naive.thorough_plays(Cards::from_str("S: AKQ32 H: AKQ32 D: 2 C: 2").unwrap())
+    );
+    assert_eq!(
+        Cards::from_str("S: A5 H: KQ D: J4 C: 8").unwrap(),
+        naive.thorough_plays(Cards::from_str("S: A9765 H: KQ D: JT54 C: 8").unwrap())
+    );
+    // Following suit, only one suit is playable.
+    assert_eq!(
+        Cards::from_str("H: A2").unwrap(),
+        naive.thorough_plays(Cards::from_str("H: AKQ32").unwrap())
+    );
 }
 
 #[test]
