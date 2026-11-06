@@ -880,7 +880,7 @@ impl Convention {
         });
 
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P HS$"]).unwrap(),
+            regex: RegexSet::new([r"^P P 1H$"]).unwrap(),
             max,
             min: HandValuation {
                 lhcp: 12,
@@ -1383,7 +1383,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3C$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 4, 4].into(),
-                ..min
+                ..max
             },
             min: HandValuation {
                 length: [5, 0, 0, 0].into(),
@@ -1397,7 +1397,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3D$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 4, 4].into(),
-                ..min
+                ..max
             },
             min: HandValuation {
                 length: [0, 5, 0, 0].into(),
@@ -1409,8 +1409,8 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
-            max: max.with_lhcp(23),
-            min: min.with_lhcp(24),
+            max: max.with_lhcp(24),
+            min: min.with_lhcp(23),
             the_description: format_as!(HTML, ""),
             the_name: "Game invite",
             forcing: Forcing::Passable,
@@ -1787,6 +1787,42 @@ fn test_bidai() {
         Bid::Suit(2, Spades),
         sheets.bid(&[NT(1), Pass, Suit(2, Clubs), Pass], nt_hand)
     );
+}
+
+#[test]
+fn test_bidai_rebids_after_strong_two() {
+    use bridge_deck::Suit::*;
+    use std::str::FromStr;
+    use Bid::*;
+
+    let mut sheets = ConventionalBid(Convention::sheets());
+    // Each of these opens 2C with 23 lhcp, and must not pass partner's 2D.
+    for (hand, rebid) in [
+        ("S AK3 H KQ4 D AQ5 C AJ32", NT(2)),
+        ("S A3 H A4 D AQ5 C AQJ932", Suit(3, Clubs)),
+        ("S A3 H A4 D AQJ932 C AQ5", Suit(3, Diamonds)),
+    ] {
+        let hand = Cards::from_str(hand).unwrap();
+        assert_eq!(Suit(2, Clubs), sheets.bid(&[], hand));
+        assert_eq!(
+            rebid,
+            sheets.bid(&[Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass], hand)
+        );
+    }
+}
+
+#[test]
+fn test_bidai_third_seat_rule_of_20() {
+    use bridge_deck::Suit::*;
+    use std::str::FromStr;
+    use Bid::*;
+
+    let mut sheets = ConventionalBid(Convention::sheets());
+    // With 12 lhcp, third seat opens a five-card major.
+    let spades = Cards::from_str("S AQ432 H 32 D KJ2 C J32").unwrap();
+    assert_eq!(Suit(1, Spades), sheets.bid(&[Pass, Pass], spades));
+    let hearts = Cards::from_str("S 32 H AQ432 D KJ2 C J32").unwrap();
+    assert_eq!(Suit(1, Hearts), sheets.bid(&[Pass, Pass], hearts));
 }
 
 #[test]
