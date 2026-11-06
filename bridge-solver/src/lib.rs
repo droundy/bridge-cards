@@ -627,37 +627,50 @@ impl Naive {
         };
         for _ in 0..num_stats {
             for hands in starting.random_hands(&mut self.rng).into_iter() {
-                let mut best = Score::MIN;
+                // We pick the plays that are best for us (c0 and c2) and
+                // worst for us (c1 and c3).  As soon as a play can no longer
+                // be strictly better for whoever chooses it than what they
+                // already have, we skip that play's remaining responses.
+                // Since we only ever replace a choice by a strictly better
+                // one, this finds exactly the scores we would get by trying
+                // every response.
+                let mut best0 = Score::MIN;
                 for c0 in self.thorough_plays(hands[0]) {
-                    let mut worst = Score::MAX;
+                    let mut worst1 = Score::MAX;
                     for c1 in self.thorough_plays(hands[1].following_suit(c0.suit())) {
-                        let mut best = Score::MIN;
+                        let mut best2 = Score::MIN;
                         for c2 in self.thorough_plays(hands[2].following_suit(c0.suit())) {
-                            let mut worst = Score::MAX;
+                            let mut worst3 = Score::MAX;
                             for c3 in self.thorough_plays(hands[3].following_suit(c0.suit())) {
                                 let mysc = self.score_trick(starting, [c0, c1, c2, c3]);
                                 // println!(" {} {} {} {} -> {}", c0, c1, c2, c3, mysc.mean());
-                                if mysc < worst {
-                                    worst = mysc;
-                                // println!("worst = {}", worst.mean());
-                                } else {
-                                    // println!("worst = {} but mysc = {}", worst.mean(), mysc.mean());
+                                if mysc < worst3 {
+                                    worst3 = mysc;
+                                }
+                                if worst3 <= best2 || worst3 <= best0 {
+                                    break;
                                 }
                             }
-                            if worst > best {
-                                best = worst;
+                            if worst3 > best2 {
+                                best2 = worst3;
+                            }
+                            if best2 >= worst1 {
+                                break;
                             }
                         }
-                        if worst > best {
-                            worst = best;
+                        if worst1 > best2 {
+                            worst1 = best2;
+                        }
+                        if worst1 <= best0 {
+                            break;
                         }
                     }
-                    if worst > best {
-                        best = worst;
-                        // println!("Move {} gives {}", c0, best.mean());
+                    if worst1 > best0 {
+                        best0 = worst1;
+                        // println!("Move {} gives {}", c0, best0.mean());
                     }
                 }
-                score = score + best;
+                score = score + best0;
             }
         }
         self.cache.insert(starting, score);
