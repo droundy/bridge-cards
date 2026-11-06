@@ -420,8 +420,8 @@ async fn ws_connected(
                         g.redeal();
                         println!("sending table update: {:?}", table_updates.send(()).is_ok());
                     }
-                    Action::Bid(myseat, b) => {
-                        if g.turn() == Some(myseat) {
+                    Action::Bid(seat, b) => {
+                        if may_act_for(&g, myseat, seat) && g.bid_is_legal(seat, b) {
                             g.bids.push(b);
                             if g.bids.len() > 3
                                 && g.bids[g.bids.len() - 3..] == [Bid::Pass, Bid::Pass, Bid::Pass]
@@ -435,13 +435,13 @@ async fn ws_connected(
                             }
                             println!("sending table update: {:?}", table_updates.send(()).is_ok());
                         } else {
-                            println!("We got a message from {myseat:?} but it is not playing");
+                            println!("Ignoring a bid of {b:?} for {seat:?} from {myseat:?}");
                         }
                     }
-                    Action::Play(myseat, card) => {
-                        if let (Some(seat), Some(playing)) = (g.turn(), g.hand_playing()) {
-                            if [seat, playing].contains(&myseat) {
-                                if g.playable_cards(playing, seat).playable.contains(card) {
+                    Action::Play(seat, card) => {
+                        if let (Some(turn), Some(playing)) = (g.turn(), g.hand_playing()) {
+                            if may_act_for(&g, myseat, turn) && [turn, playing].contains(&seat) {
+                                if g.playable_cards(playing, turn).playable.contains(card) {
                                     if g.played.len() == 4 {
                                         g.played.clear();
                                     }
@@ -503,6 +503,16 @@ async fn ws_connected(
     }
     println!("sending table update: {:?}", table_updates.send(()).is_ok());
     send_player_updates(&g);
+}
+
+/// Whether the connection for `myseat` (`None` for the robot) may act for
+/// `seat`.  Players act only for their own seat, and the robot only for seats
+/// that nobody is connected to.
+fn may_act_for(g: &GameState<WsSender>, myseat: Option<Seat>, seat: Seat) -> bool {
+    match myseat {
+        Some(me) => me == seat,
+        None => g.connections[seat].is_none(),
+    }
 }
 
 fn send_player_updates(g: &GameState<WsSender>) {
@@ -603,6 +613,12 @@ mod tests {
         })
     }
 
+    async fn send(client: &mut warp::test::WsClient, action: &Action) {
+        client
+            .send_text(serde_json::to_string(action).unwrap())
+            .await;
+    }
+
     /// Whether `ready` becomes true of the game within a few seconds.
     async fn eventually(
         game: &RwLock<GameState<WsSender>>,
@@ -662,5 +678,114 @@ mod tests {
             eventually(&game, |g| g.connections[Seat::South].is_none()).await,
             "a dead connection kept its seat"
         );
+    }
+
+    // In the tests below, every action sends South an update once the server
+    // has handled it, so South's `recv` waits for that.
+
+    #[tokio::test]
+    async fn players_act_only_for_their_own_seat() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South passes, and then tries to bid for West too.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        send(
+            &mut south,
+            &Action::Bid(Seat::West, Bid::Suit(1, Suit::Clubs)),
+        )
+        .await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![Bid::Pass], game.read().await.bids);
+
+        // South declares 1NT, so West leads, and South can't lead for West.
+        let west_card = {
+            let mut g = game.write().await;
+            g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+            g.lead = Some(Seat::West);
+            g.hands[Seat::West].min().unwrap()
+        };
+        send(&mut south, &Action::Play(Seat::West, west_card)).await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.played.is_empty());
+
+        // Once West has led, South plays dummy's cards.
+        let north_card = {
+            let mut g = game.write().await;
+            g.played = vec![west_card];
+            g.hands[Seat::West] -= Cards::singleton(west_card);
+            g.playable_cards(Seat::North, Seat::South)
+                .playable
+                .min()
+                .unwrap()
+        };
+        send(&mut south, &Action::Play(Seat::North, north_card)).await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![west_card, north_card], game.read().await.played);
+    }
+
+    #[tokio::test]
+    async fn only_legal_bids_count() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South opens the bidding, so there is nothing to redouble, and
+        // there is no eighth level.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Redouble)).await;
+        south.recv().await.unwrap();
+        send(
+            &mut south,
+            &Action::Bid(Seat::South, Bid::Suit(8, Suit::Clubs)),
+        )
+        .await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.bids.is_empty());
+
+        // East declares 1NT, and South, on lead, can't reopen the bidding.
+        {
+            let mut g = game.write().await;
+            g.dealer = Seat::East;
+            g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+            g.lead = Some(Seat::South);
+        }
+        send(&mut south, &Action::Bid(Seat::South, Bid::NT(7))).await;
+        south.recv().await.unwrap();
+        assert_eq!(4, game.read().await.bids.len());
+    }
+
+    #[tokio::test]
+    async fn the_robot_acts_only_for_seats_nobody_is_at() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut robot = warp::test::ws()
+            .handshake(socket(None, game.clone()))
+            .await
+            .unwrap();
+        robot.recv().await.unwrap();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South is here, so the robot can't bid for South.
+        send(&mut robot, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.bids.is_empty());
+
+        // Nobody is at West, so the robot bids for West.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        send(&mut robot, &Action::Bid(Seat::West, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![Bid::Pass, Bid::Pass], game.read().await.bids);
     }
 }
