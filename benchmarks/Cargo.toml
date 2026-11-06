@@ -1,0 +1,31 @@
+# Runs the benchmarks that bridge-deck and bridge-solver register with their
+# `benchmarks` feature, from both the working tree and the committed main
+# branch, so that each is compared with its older self.
+#
+# This is its own workspace so that the main workspace does not resolve
+# against GitHub's main branch: without the `benchmarks` feature there, nothing
+# in it would build.  `cargo bench` at the top of the repository runs this.
+[package]
+name = "benchmarks"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+
+bridge-deck = { path = "..", features = ["benchmarks"] }
+bridge-solver = { path = "../bridge-solver", features = ["benchmarks"] }
+
+bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
+bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
+
+scaling = "0.10.1"
+
+cardpack = "0.3.8"
+simple-cards = "1.1.0"
+
+[[bench]]
+name = "bench"
+harness = false

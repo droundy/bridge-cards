@@ -22,17 +22,22 @@ rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 
 display-as = { version = "0.7.0", optional = true }
+scaling = { version = "0.10.1", optional = true }
+
+[features]
+
+# Registers the benchmarks in src/benches.rs with scaling.  benchmarks/ runs
+# them, against the same benchmarks from the main branch.
+benchmarks = ["dep:scaling"]
 
 [dev-dependencies]
 
 quickcheck = "^0.9.2"
-easybench = "1.1.0"
 
-cardpack = "0.3.8"
-simple-cards = "1.1.0"
-
+# `cargo bench` here runs the benchmarks in benchmarks/, which is its own
+# workspace.
 [[bench]]
-name = "bench"
+name = "benchmarks"
 harness = false
 
 [workspace]

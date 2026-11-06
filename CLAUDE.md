@@ -16,11 +16,20 @@ A Cargo workspace with four crates, layered bottom to top:
 ```bash
 cargo test -p bridge-deck -p bridge-solver -p robot   # all real tests (avoid --workspace, see below)
 cargo test -p robot test_sheets                        # single test by name filter
-cargo bench                                            # bridge-deck benches (benches/bench.rs)
-cargo bench -p bridge-solver                           # solver benches
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
 ```
+
+Benchmarks are written in each crate's `src/benches.rs` and only compiled with the crate's `benchmarks` feature. They are run by `benchmarks/`, a separate crate with its own `[workspace]`, which has to be run from inside that directory so that its `.cargo/config.toml` (function alignment) applies. `cargo bench` at the top of the repository does that for you (`benches/benchmarks.rs` runs `cargo bench` in `benchmarks/` and passes on its arguments):
+
+```bash
+cargo bench                   # every benchmark
+cargo bench -- "full deal"    # groups whose names contain "full deal"
+```
+
+The runner links both the working tree and the committed `main` branch on GitHub (the `bridge-deck-main` and `bridge-solver-main` git dev-dependencies), so scaling registers every benchmark twice and reports each one against its `main` version. When the version numbers match, scaling tells the copies apart by source: `naive@0.1.0#<commit>` is `main`, and the baseline. `benchmarks/Cargo.lock` pins which commit of `main` is used. Run `cargo update` in `benchmarks/` after pushing to `main` to move the baseline. The runner is kept out of the main workspace so that the server and robot still build when GitHub's `main` lacks the `benchmarks` feature, and because the second `bridge-deck` and `bridge-solver` would make `cargo update -p bridge-deck` ambiguous.
+
+Inputs must have the same type in both versions, so they are plain integers. `Cards`, `Suit` and `Starting` convert to and from them with `into_for_bench` and `from_for_bench`. Keep that encoding the same in every version. Scaling keeps only the newest version's inputs, so both versions are handed the same cards. Don't use `#[scaling::bench_scaling]` on the solver. It picks its own sizes with no upper limit, and solver cost is exponential in the number of cards, so it ends up in calls that take hours. List explicit `sizes(..)` instead.
 
 `abridge` embeds `robot/pkg/robot.js` and `robot/pkg/robot_bg.wasm` with `include_bytes!`. That directory is gitignored and only exists after you run `wasm-pack build --target web --no-typescript --release` in `robot/`, which `run.sh` does. Until it exists, any build of `abridge` (including `cargo test --workspace`) fails. After starting the server, open `http://localhost:8087/random`.
 
