@@ -1,12 +1,14 @@
 <details id="advice" class="advice"><summary>Bidding advice</summary>
 [% for line in self.situation.iter() { %]<p>[% line %]</p>
 [% } %]<p class="suggestion">[% self.suggestion %]</p>
-[% if !self.others.is_empty() { %]<table>[%
-    for (strain, text) in self.others.iter() { %]
-    <tr><th>[% strain %]</th><td>[% text %]</td></tr>[%
+[% if !self.strains.is_empty() { %]<table>[%
+    for (strain, lines) in self.strains.iter() { %]
+    <tr><th>[% strain %]</th><td>[% for line in lines.iter() { %]<p>[% line %]</p>[% } %]</td></tr>[%
     } %]
 </table>[% } %]
+[% if !self.every_bid.is_empty() { %]<details id="every-bid"><summary>Every bid</summary><table>[%
+    for (strain, text) in self.every_bid.iter() { %]
+    <tr><th>[% strain %]</th><td>[% text %]</td></tr>[%
+    } %]
+</table></details>[% } %]
 </details>
-<details id="contracts" class="advice"><summary>Possible contracts</summary>
-[% for line in self.contracts.iter() { %]<p>[% line %]</p>
-[% } %]</details>

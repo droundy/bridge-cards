@@ -8,7 +8,10 @@
 //! opening.  The bid the robot would make is the first in `ranked_bids` that
 //! fits the hand, and the other bids are explained by the bounds the hand
 //! misses.  Natural bids state what the partnership needs between them, so
-//! for those the advice weighs the hand against what partner has shown.
+//! for those the advice weighs the hand against what partner has shown, and
+//! turns them into the contracts worth aiming for (see `contracts`).  The
+//! advice is arranged by strain: for each, the contracts to aim for and then
+//! the closest bids about it.
 use super::{Convention, Forcing};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
@@ -24,17 +27,19 @@ pub(crate) struct Advice {
     situation: Vec<FormattedString<HTML>>,
     /// The bid the robot would make, and why.
     suggestion: FormattedString<HTML>,
-    /// The other bids closest to fitting, each with the suit it is about.
-    others: Vec<(FormattedString<HTML>, FormattedString<HTML>)>,
-    /// The contracts within reach, and how to bid toward them.
-    contracts: Vec<FormattedString<HTML>>,
+    /// For each strain worth mentioning, its heading, then the contracts in
+    /// it to aim for and the other bids about it that come closest to fitting.
+    strains: Vec<(FormattedString<HTML>, Vec<FormattedString<HTML>>)>,
+    /// Every other bid the convention understands, with its strain's heading.
+    every_bid: Vec<(FormattedString<HTML>, FormattedString<HTML>)>,
 }
 
 #[with_template("[%" "%]" "advice.html")]
 impl DisplayAs<HTML> for Advice {}
 
-/// How many other bids the advice lists, so that it fits on a screen.
-const OTHERS: usize = 6;
+/// How many other bids the advice lists by strain, so that it fits on a
+/// screen.
+const OTHERS: usize = 5;
 
 impl Convention {
     /// Advice for the player holding `hand` on the next bid after `history`.
@@ -53,6 +58,7 @@ impl Convention {
             .filter_map(|&(who, offset)| self.what_was_shown(history, who, offset))
             .collect();
         situation.push(hand_summary(&hand));
+        situation.push(contracts::together(&hand, &partner));
 
         let candidates: Vec<Candidate> = self
             .ranked_bids(history)
@@ -94,19 +100,16 @@ impl Convention {
             None => format_as!(HTML, "No bid fits your hand, so the robot would pass."),
         };
 
-        let mut others: Vec<&Candidate> = candidates
-            .iter()
-            .filter(|c| Some(c.bid) != chosen.map(|c| c.bid))
-            // Why not to pass is said above.
-            .filter(|c| c.bid != Bid::Pass || c.fits)
+        let chosen_bid = chosen.map(|c| c.bid);
+        let others = candidates.iter().filter(|c| Some(c.bid) != chosen_bid);
+        let mut closest: Vec<&Candidate> = others
+            .clone()
+            // Natural bids are said as contracts, and why not to pass above.
+            .filter(|c| c.needs.is_none() && (c.bid != Bid::Pass || c.fits))
             .collect();
-        others.sort_by_key(|c| (!c.fits, c.distance));
-        others.truncate(OTHERS);
-        others.sort_by_key(|c| (c.strain.order(), c.bid.level()));
-        let others = others
-            .into_iter()
-            .map(|c| (c.strain.label(), c.comparison(chosen)))
-            .collect();
+        closest.sort_by_key(|c| (!c.fits, c.distance));
+        closest.truncate(OTHERS);
+        closest.sort_by_key(|c| c.bid.level());
 
         let contracts = self.contracts(
             history,
@@ -115,12 +118,40 @@ impl Convention {
             &self.shown(history, 0),
             &candidates,
         );
+        let strains = Strain::all()
+            .filter_map(|strain| {
+                let lines: Vec<_> = contracts
+                    .iter()
+                    // The suggestion already says why to bid it.
+                    .filter(|(s, c)| *s == strain && Some(c.bid) != chosen_bid)
+                    .map(|(_, c)| c.line.clone())
+                    .chain(
+                        closest
+                            .iter()
+                            .filter(|c| c.strain == strain)
+                            .map(|c| c.comparison(chosen)),
+                    )
+                    .collect();
+                if lines.is_empty() {
+                    None
+                } else {
+                    Some((strain.label(), lines))
+                }
+            })
+            .collect();
+
+        let mut every_bid: Vec<&Candidate> = others.collect();
+        every_bid.sort_by_key(|c| (c.strain.order(), c.bid.level()));
+        let every_bid = every_bid
+            .into_iter()
+            .map(|c| (c.strain.label(), c.comparison(chosen)))
+            .collect();
 
         Advice {
             situation,
             suggestion,
-            others,
-            contracts,
+            strains,
+            every_bid,
         }
     }
 
@@ -281,7 +312,9 @@ impl Candidate {
             fits: meaning.fits(*hand),
             misses: join(misses),
             distance,
-            strain: Strain::of(bid, &min),
+            // A natural bid's own bounds are reduced by what partner has
+            // shown, so its entry says better what it is about.
+            strain: Strain::of(bid, together.as_ref().unwrap_or(&min)),
             meaning,
         }
     }
@@ -351,12 +384,17 @@ enum Strain {
     Suit(Suit),
     Notrump,
     Double,
+    /// An artificial bid that shows no suit, such as Stayman.
+    Other,
     Pass,
 }
 
 impl Strain {
-    /// The suit a bid shows: the longest one its bounds ask for, if that is
-    /// three or more cards, so that a transfer counts as the suit it shows.
+    /// What a bid with lower bounds `min` is about.  A suit bid that asks for
+    /// a card or more of its suit is about that suit.  Otherwise a bid is
+    /// about the longest suit it asks for, if that is three or more cards, so
+    /// that a transfer counts as the suit it shows.  A suit bid that shows no
+    /// suit, such as Stayman, is about something else.
     fn of(bid: Bid, min: &HandValuation) -> Self {
         let own = match bid {
             Bid::Pass => return Strain::Pass,
@@ -364,25 +402,34 @@ impl Strain {
             Bid::Suit(_, suit) => Some(suit),
             Bid::NT(_) => None,
         };
+        match own {
+            Some(suit) if min.length[suit] > 0 => return Strain::Suit(suit),
+            _ => {}
+        }
         let longest = Suit::ALL
             .iter()
             .copied()
-            .max_by_key(|&s| (min.length[s], Some(s) == own))
+            .max_by_key(|&s| min.length[s])
             .unwrap();
         if min.length[longest] >= 3 {
             Strain::Suit(longest)
+        } else if own.is_some() {
+            Strain::Other
         } else {
-            own.map_or(Strain::Notrump, Strain::Suit)
+            Strain::Notrump
         }
     }
-    /// Spades first, as on a convention card.
-    fn order(self) -> u8 {
-        match self {
-            Strain::Suit(suit) => 3 - suit as u8,
-            Strain::Notrump => 4,
-            Strain::Double => 5,
-            Strain::Pass => 6,
-        }
+    /// Every strain, spades first as on a convention card.
+    fn all() -> impl Iterator<Item = Strain> {
+        let suits = Suit::ALL.iter().rev().map(|&s| Strain::Suit(s));
+        suits.chain(
+            [Strain::Notrump, Strain::Double, Strain::Other, Strain::Pass]
+                .iter()
+                .copied(),
+        )
+    }
+    fn order(self) -> usize {
+        Strain::all().position(|s| s == self).unwrap()
     }
     /// The heading for bids about this strain.
     fn label(self) -> FormattedString<HTML> {
@@ -390,6 +437,7 @@ impl Strain {
             Strain::Suit(suit) => format_as!(HTML, suit),
             Strain::Notrump => format_as!(HTML, "NT"),
             Strain::Double => format_as!(HTML, "X"),
+            Strain::Other => format_as!(HTML, "Other"),
             Strain::Pass => format_as!(HTML, "Pass"),
         }
     }
@@ -714,12 +762,16 @@ fn capitalize(s: &str) -> String {
 }
 
 /// Checks the SAYC advice for `hand` after `bids`, as plain text with one
-/// line for each paragraph or table row.
+/// line for each paragraph, up to the list of every bid, which starts
+/// closed.
 #[cfg(test)]
 fn check(bids: &[Bid], hand: &str, expect: Expect) {
     use std::str::FromStr;
     let advice = Convention::sayc().advice(bids, Cards::from_str(hand).unwrap());
-    let html = format_as!(HTML, advice).into_string().replace("</th>", " ");
+    let html = format_as!(HTML, advice)
+        .into_string()
+        .replace("</th>", " ")
+        .replace("</p>", "</p>\n");
     let mut text = String::new();
     let mut in_tag = false;
     for c in html.chars() {
@@ -734,6 +786,7 @@ fn check(bids: &[Bid], hand: &str, expect: Expect) {
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
+        .take_while(|&l| l != "Every bid")
         .collect();
     expect.assert_eq(&lines.join("\n"));
 }
@@ -751,19 +804,17 @@ fn advice_after_a_one_spade_opening() {
             Bidding advice
             Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
             Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
+            Together you have 20–28 high card points and 8+ spades.
             You should bid, since a pass would show at most 5 high card points (you have 7).
             Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
-            ♠ 3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
-            ♠ 4♠ Natural game: it needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+            ♠ 3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
+            4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
+            2NT Jacoby 2NT (4+ card support): needs 4+ spades (you have 3) and 13+ high card points (you have 7).
+            3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
             ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
             ♣ 2♣ Two-level response (New suit): needs 4+ clubs (you have 3) and 10+ high card points (you have 7).
-            NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
-            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
-            Possible contracts
-            Together you have 20–28 high card points and 8+ spades.
-            3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
-            4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
-            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points."#]],
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points.
+            1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠."#]],
     );
     check(
         &one_spade,
@@ -772,15 +823,13 @@ fn advice_after_a_one_spade_opening() {
             Bidding advice
             Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
             Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
+            Together you have 13–21 high card points.
             Suggested: Pass Response pass. It shows at most 5 high card points.
             ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
             ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
             ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3) and 10+ high card points (you have 0).
             ♣ 2♣ Two-level response (New suit): needs 10+ high card points (you have 0).
-            NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0).
-            NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 21 high card points, so that is out of reach.
-            Possible contracts
-            Together you have 13–21 high card points."#]],
+            NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0)."#]],
     );
 }
 
@@ -795,16 +844,14 @@ fn advice_after_one_notrump() {
             Bidding advice
             Partner opened 1NT, showing a balanced hand and 15–17 high card points.
             Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
+            Together you have 21–23 high card points.
             You should bid, since a pass would show at most 5 high card points (you have 6).
             No bid fits your hand, so the robot would pass.
             ♠ 2♥ Jacobi transfer: needs 5+ spades (you have 4).
-            ♠ 3♠ Natural: it needs 8+ spades and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
             ♥ 2♦ Jacobi transfer: needs 5+ hearts (you have 4).
-            ♣ 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6).
             NT 2NT Game invite: needs 8–10 high card points (you have 6).
-            NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
-            Possible contracts
-            Together you have 21–23 high card points."#]],
+            4NT Slam invite: needs 16–17 high card points (you have 6).
+            Other 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6)."#]],
     );
 }
 
@@ -845,18 +892,16 @@ fn advice_on_a_rebid_after_one_notrump() {
             Partner bid 1NT, showing at most 3 spades and 6–10 high card points.
             You opened 1♥, showing 5+ hearts and 13–21 long high card points.
             Your hand: 19 HCP, 20 LHCP and 20 SHCP, with 2♠ 5♥ 3♦ 3♣.
+            Together you have 25–29 high card points.
             Suggested: 2NT Rebid (Balanced, 18-19 hcp). It shows a balanced hand and 18–19 high card points. Your 19 high card points are near the top of that range.
-            ♥ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
-            ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 17–18 long high card points (you have 20).
-            ♥ 4♥ Natural game: it needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10).
+            ♠ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
+            ♥ 3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
+            4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
+            2♥ Rebid (Long suit): needs 6+ hearts (you have 5) and 13–16 long high card points (you have 20).
+            3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 17–18 long high card points (you have 20).
             ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
             ♣ 2♣ New suit: needs 4+ clubs (you have 3).
-            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10).
-            Possible contracts
-            Together you have 25–29 high card points.
-            3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
-            4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
-            3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
     );
 }
 
@@ -873,16 +918,8 @@ fn advice_in_competition() {
             Partner opened 1♥, showing 5+ hearts and 13–21 long high card points.
             Your right-hand opponent bid 1♠, showing 5+ spades and 8–16 high card points.
             Your hand: 7 HCP, 7 LHCP and 8 SHCP, with 2♠ 4♥ 4♦ 3♣.
-            Suggested: 3♥ Law of total tricks. It needs 9+ hearts between you, and you have that.
-            ♥ 2♥ Law of total tricks: also fits, but the system prefers 3♥.
-            ♥ 4♥ Law of total tricks: it needs 10+ hearts between you; that works if partner has 6+ hearts (they have shown 5+).
-            ♦ 2♦ Law of total tricks: it needs 8+ diamonds between you; that works if partner has 4+ diamonds.
-            ♦ 3♦ Law of total tricks: it needs 9+ diamonds between you; that works if partner has 5+ diamonds.
-            ♣ 2♣ Law of total tricks: it needs 8+ clubs between you; that works if partner has 5+ clubs.
-            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
-            Possible contracts
             Together you have 20–28 high card points and 9+ hearts.
-            3♥ part-score: needs 9+ hearts between you; you have that between you.
-            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
+            Suggested: 3♥ Law of total tricks. It needs 9+ hearts between you, and you have that.
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
     );
 }

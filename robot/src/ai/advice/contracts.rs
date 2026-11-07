@@ -15,6 +15,12 @@ use display_as::{format_as, FormattedString, HTML};
 /// How many contracts the advice lists, so that it fits on a screen.
 const CONTRACTS: usize = 6;
 
+/// A contract worth bidding toward, in words.
+pub(super) struct ContractLine {
+    pub(super) bid: Bid,
+    pub(super) line: FormattedString<HTML>,
+}
+
 /// A contract the partnership might reach.
 struct Contract {
     bid: Bid,
@@ -24,7 +30,8 @@ struct Contract {
 }
 
 impl Convention {
-    /// The contracts worth bidding toward after `history`, in words.  In
+    /// The contracts worth bidding toward after `history`, in words, each
+    /// with its strain.  In
     /// each strain where the partnership is likely to have a fit, it takes
     /// one contract within reach of each kind (part-score, game and so on):
     /// the highest that is sure, or else the cheapest.  It lists the highest
@@ -38,7 +45,7 @@ impl Convention {
         partner: &Shown,
         me: &Shown,
         candidates: &[Candidate],
-    ) -> Vec<FormattedString<HTML>> {
+    ) -> Vec<(Strain, ContractLine)> {
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
         let contracts: Vec<Contract> = legal_bids(history)
@@ -53,12 +60,11 @@ impl Convention {
             .collect();
 
         let mut worth: Vec<&Contract> = Vec::new();
-        let strains = Suit::ALL.iter().rev().map(|&s| Strain::Suit(s));
-        for strain in strains.chain(Some(Strain::Notrump)) {
+        for strain in Strain::all() {
             // Contracts come from `legal_bids`, so cheapest first.
             let mut kinds: Vec<&Contract> = Vec::new();
             for c in contracts.iter().filter(|c| {
-                Strain::of(c.bid, &HandValuation::MIN) == strain
+                Strain::of(c.bid, &c.needs) == strain
                     && !matches!(c.reach, Reach::OutOfReach(_))
                     && likely_fit(c, hand, partner)
             }) {
@@ -82,17 +88,22 @@ impl Convention {
         }
         worth.truncate(CONTRACTS);
 
-        let mut lines = vec![together(hand, partner)];
-        lines.extend(worth.into_iter().map(|c| {
-            let needs = join(describe(&c.needs, &HandValuation::MAX));
-            let route = match c.reach {
-                Reach::IfPartnerHas(_) => route(c, me, partner, candidates),
-                _ => FormattedString::from_formatted(""),
-            };
-            format_as!(HTML, "<strong>" c.bid "</strong> " Kind::of(c.bid).name() ": needs " needs
-                       " between you; " c.reach.verdict() "." route)
-        }));
-        lines
+        worth
+            .into_iter()
+            .map(|c| {
+                let needs = join(describe(&c.needs, &HandValuation::MAX));
+                let route = match c.reach {
+                    Reach::IfPartnerHas(_) => route(c, me, partner, candidates),
+                    _ => FormattedString::from_formatted(""),
+                };
+                let line = format_as!(HTML, "<strong>" c.bid "</strong> " Kind::of(c.bid).name()
+                                  ": needs " needs " between you; " c.reach.verdict() "." route);
+                (
+                    Strain::of(c.bid, &c.needs),
+                    ContractLine { bid: c.bid, line },
+                )
+            })
+            .collect()
     }
 
     /// What the first natural entry for the last bid of `bids` says the
@@ -109,7 +120,7 @@ impl Convention {
 }
 
 /// What the hand and partner have between them, as far as anyone knows.
-fn together(hand: &HandValuation, partner: &Shown) -> FormattedString<HTML> {
+pub(super) fn together(hand: &HandValuation, partner: &Shown) -> FormattedString<HTML> {
     let (lo, hi) = partner.range(Measure::Hcp);
     let points = if hi >= HandValuation::MAX.hcp {
         format!("{}+", hand.hcp + lo)
