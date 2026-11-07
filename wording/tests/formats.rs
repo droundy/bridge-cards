@@ -2,7 +2,9 @@
 use display_as::{format_as, DisplayAs, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{Error, Formatter};
-use wording::{a, count, quantity, text, AddTo, List, Noun, Number, Text, HAS, IS};
+use wording::{
+    a, at_least, at_most, between, count, text, AddTo, List, Noun, Number, Quantity, Text, HAS, IS,
+};
 
 /// A playing card's suit, which each format shows its own way.
 #[derive(Clone, Copy)]
@@ -56,10 +58,11 @@ fn check(text: &Text<Suit>, expect: Expect) {
 
 const POINT: Noun = Noun::new("high card point", "high card points");
 const CARD: Noun = Noun::new("card", "cards");
+const LOSER: Noun = Noun::new("loser", "losers");
 
 #[test]
 fn markup_and_escapes() {
-    let points = count(1, POINT);
+    let points = count(1u8, POINT);
     check(
         &text!(
             "partner ",
@@ -81,26 +84,24 @@ fn markup_and_escapes() {
 
 #[test]
 fn quantities_agree() {
-    let seven = count(7, CARD);
-    let range = quantity("6–9", Number::Plural, POINT);
-    let at_most_one = quantity("at most 1", Number::Singular, CARD);
+    let quantities = vec![
+        count(7u8, CARD),
+        count(0u8, CARD),
+        at_least(1u8, CARD),
+        at_most(1u8, CARD),
+        between(6u8, 9u8, POINT),
+        Quantity::other("6½", Number::Plural, LOSER),
+    ];
+    let phrases: Vec<Text<Suit>> = quantities
+        .into_iter()
+        .map(|q| text!(IS.agreeing(q.number()), " ", q))
+        .collect();
     check(
-        &text!(
-            "they ",
-            IS.agreeing(Number::Plural),
-            " ",
-            seven,
-            "; ",
-            range,
-            "; ",
-            at_most_one,
-            "; ",
-            count(0, CARD),
-        ),
+        &text!(List::with(phrases, "; ", "; ")),
         expect![[r#"
-            they are 7 cards; 6–9 high card points; at most 1 card; 0 cards
-            they are 7 cards; 6–9 high card points; at most 1 card; 0 cards
-            they are 7 cards; 6–9 high card points; at most 1 card; 0 cards"#]],
+            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers
+            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers
+            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers"#]],
     );
 }
 

@@ -17,7 +17,7 @@
 //! use wording::{count, text, List, Noun, Text, HAS};
 //!
 //! const POINT: Noun = Noun::new("point", "points");
-//! let points = count(1, POINT);
+//! let points = count(1u8, POINT);
 //! let sentence: Text = text!(
 //!     "partner ", HAS.agreeing(points.number()), " ", points, " and ",
 //!     List::and(vec!["a singleton", "a void"]),
@@ -34,6 +34,8 @@ mod grammar;
 mod list;
 mod text;
 
-pub use grammar::{a, count, quantity, Indefinite, Noun, Number, Quantity, Verb, HAS, IS};
+pub use grammar::{
+    a, at_least, at_most, between, count, Indefinite, Noun, Number, Quantity, Verb, HAS, IS,
+};
 pub use list::List;
 pub use text::{AddTo, Markup, NoMarkup, Plain, Text};
