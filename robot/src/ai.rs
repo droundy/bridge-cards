@@ -2025,6 +2025,62 @@ fn test_two_over_one_differs_from_sayc() {
 }
 
 #[test]
+fn test_major_raise_with_three_card_support() {
+    use bridge_deck::Suit::*;
+    use std::str::FromStr;
+    use Bid::*;
+
+    for (name, mut system) in [
+        ("SAYC", ConventionalBid(Convention::sayc())),
+        ("2/1", ConventionalBid(Convention::two_over_one())),
+    ] {
+        // Three card support and a minimum raises the major, even though
+        // the two over one forcing notrump is also available.
+        for (hand, opening, raise) in [
+            ("S Q32 H KJ4 D J543 C 654", Spades, Suit(2, Spades)),
+            ("S 432 H KJ2 D QJ43 C 654", Hearts, Suit(2, Hearts)),
+        ] {
+            let hand = Cards::from_str(hand).unwrap();
+            assert_eq!(
+                raise,
+                system.bid(&[Suit(1, opening), Pass], hand),
+                "{} over 1{:?}",
+                name,
+                opening
+            );
+        }
+    }
+}
+
+#[test]
+fn test_two_over_one_forcing_notrump_and_limit_raise() {
+    use bridge_deck::Suit::*;
+    use std::str::FromStr;
+    use Bid::*;
+
+    let mut two_over_one = ConventionalBid(Convention::two_over_one());
+    let mut sayc = ConventionalBid(Convention::sayc());
+    // Eleven points with a doubleton in the major still start with 1NT.
+    for (hand, opening) in [
+        ("S 32 H KQ4 D QJ543 C K54", Spades),
+        ("S KJ4 H 32 D QJ543 C K54", Hearts),
+    ] {
+        let hand = Cards::from_str(hand).unwrap();
+        assert_eq!(NT(1), two_over_one.bid(&[Suit(1, opening), Pass], hand));
+    }
+    // Three card support and a limit raise bids three of the major in two
+    // over one, but not in SAYC, which needs four trumps.
+    let three = Cards::from_str("S KJ4 H Q32 D AJ43 C 654").unwrap();
+    let auction = [Suit(1, Spades), Pass];
+    assert_eq!(Suit(3, Spades), two_over_one.bid(&auction, three));
+    assert_ne!(Suit(3, Spades), sayc.bid(&auction, three));
+    // Four card support is a limit raise in both.
+    let four = Cards::from_str("S KJ43 H Q32 D AJ4 C 654").unwrap();
+    assert_eq!(Suit(3, Spades), two_over_one.bid(&auction, four));
+    assert_eq!(Suit(3, Spades), sayc.bid(&auction, four));
+}
+
+#[test]
 fn test_every_system_finishes_seeded_auctions() {
     for system in BiddingSystem::ALL.iter().cloned() {
         let auctions = seeded_auctions(system.convention(), 300);
