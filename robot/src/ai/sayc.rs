@@ -21,6 +21,11 @@
 //!   opened with 3-2 in the minors and 5-5 opens 1C rather than 1D.
 //! * With 5-5 in the majors 1S is opened, but 6-5 in hearts opens 1H.
 //! * 4-4 in the majors responds 1S over a minor opening rather than 1H.
+//! * In two over one the forcing 1NT over a major promises at most two cards
+//!   in the major, since it is tried before the passable single raise.  The
+//!   standard way to show a three card limit raise (1NT, then a jump in the
+//!   major) needs two bids, so the direct limit raise 3M takes three card
+//!   support instead of four.
 //!
 //! Not covered: slam conventions (Blackwood and Gerber), negative doubles,
 //! splinters, strong jump shifts and Michaels over a major.  Auctions the tables do not mention fall
@@ -229,6 +234,11 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
         } else {
             10
         });
+        if two_over_one && is_major(opening) {
+            // The forcing notrump is tried before the passable single raise,
+            // so it must leave three card support to the raise.
+            max_nt = max_nt.max_len(opening, 2);
+        }
         if opening == Hearts {
             max_nt = max_nt.max_len(Spades, 3);
         }
@@ -260,11 +270,19 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 MAX.with_hcp(9),
                 Forcing::Passable,
             );
+            // Two over one shows a three card limit raise with the forcing
+            // notrump and then a jump, which one box cannot say, so the
+            // direct limit raise takes three card support as well.
+            let limit_support = if two_over_one { 3 } else { 4 };
             s.add(
                 "Limit raise",
                 &format!("{after}3{o}$"),
-                "4+ card support",
-                MIN.with_hcp(10).min_len(opening, 4),
+                if two_over_one {
+                    "3+ card support"
+                } else {
+                    "4+ card support"
+                },
+                MIN.with_hcp(10).min_len(opening, limit_support),
                 MAX.with_hcp(12),
                 Forcing::Passable,
             );
