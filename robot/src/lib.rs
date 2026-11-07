@@ -65,6 +65,16 @@ fn bid_comparisons() {
     assert_eq!(Some(3), Bid::NT(3).level());
 }
 
+#[test]
+fn bids_go_from_one_to_seven() {
+    use bridge_deck::Suit::Clubs;
+    let game = GameState::<()>::new();
+    assert!(game.bid_is_legal(Seat::South, Bid::Suit(1, Clubs)));
+    assert!(game.bid_is_legal(Seat::South, Bid::Suit(7, Clubs)));
+    assert!(!game.bid_is_legal(Seat::South, Bid::Suit(8, Clubs)));
+    assert!(!game.bid_is_legal(Seat::South, Bid::NT(0)));
+}
+
 #[with_template("[%" "%]" "bid.html")]
 impl<'a> DisplayAs<HTML> for Bid {}
 
@@ -345,6 +355,7 @@ impl<C> GameState<C> {
                         && self.bids[n - 3].is_contract())
             }
             Bid::Redouble => false,
+            Bid::Suit(level, _) | Bid::NT(level) if !(1..=7).contains(&level) => false,
             _ => {
                 if let Some(hb) = self.highest_contract_bid() {
                     bid > hb
