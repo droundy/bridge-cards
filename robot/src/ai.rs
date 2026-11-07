@@ -1,4 +1,4 @@
-use crate::{Action, Bid, GameState};
+use crate::{bid_follows, Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
 use wasm_bindgen::prelude::*;
@@ -49,44 +49,26 @@ impl BidAI for AllPass {
     }
 }
 
+/// The bids that may follow `history`, lowest priority first: Pass, then
+/// Double, then contract bids from lowest to highest.
+fn legal_bids(history: &[Bid]) -> Vec<Bid> {
+    let mut candidates = vec![Bid::Pass, Bid::Double, Bid::Redouble];
+    for level in 1..8 {
+        for suit in Suit::ALL.iter().cloned() {
+            candidates.push(Bid::Suit(level, suit));
+        }
+        candidates.push(Bid::NT(level));
+    }
+    candidates.retain(|&b| bid_follows(history, b));
+    candidates
+}
+
 #[derive(Debug)]
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        let mut legal_bids = vec![Bid::Pass];
+        let legal_bids = legal_bids(history);
         let len = history.len();
-        if (!history.is_empty() && history[len - 1].is_contract())
-            || (history.len() > 2
-                && history[len - 1] == Bid::Pass
-                && history[len - 2] == Bid::Pass
-                && history[len - 3].is_contract())
-        {
-            legal_bids.push(Bid::Double);
-        } else if (!history.is_empty() && history[len - 1] == Bid::Double)
-            || (history.len() > 2
-                && history[len - 1] == Bid::Pass
-                && history[len - 2] == Bid::Pass
-                && history[len - 3] == Bid::Double)
-        {
-            legal_bids.push(Bid::Redouble);
-        }
-        let last_contract = history
-            .iter()
-            .cloned()
-            .rev()
-            .find(|b| b.is_contract())
-            .unwrap_or(Bid::NT(0));
-        for level in 1..8 {
-            for suit in Suit::ALL.iter().cloned() {
-                let bid = Bid::Suit(level, suit);
-                if bid > last_contract {
-                    legal_bids.push(bid);
-                }
-            }
-            if Bid::NT(level) > last_contract {
-                legal_bids.push(Bid::NT(level));
-            }
-        }
         let mut bids = Vec::with_capacity(len + 1);
         bids.extend_from_slice(history);
         bids.push(Bid::Pass);
@@ -1785,4 +1767,44 @@ fn test_sheets() {
             .refine(&[Suit(1, Clubs), Suit(1, Clubs)])
             .map(|c| c.name())
     );
+}
+
+#[test]
+fn robot_bids_are_what_the_server_accepts() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    let mut every_bid = vec![Pass, Double, Redouble, Suit(0, Clubs), NT(0), NT(8)];
+    for level in 1..8 {
+        for suit in bridge_deck::Suit::ALL.iter().cloned() {
+            every_bid.push(Suit(level, suit));
+        }
+        every_bid.push(NT(level));
+    }
+    for history in [
+        vec![],
+        vec![Pass, Pass],
+        vec![Suit(1, Hearts)],
+        vec![Suit(1, Hearts), Pass, Pass],
+        vec![Suit(1, Hearts), Double],
+        vec![Suit(1, Hearts), Double, Pass, Pass],
+        vec![Suit(1, Hearts), Pass, NT(1), Pass],
+        vec![NT(7)],
+    ] {
+        let mut game = GameState::<()>::new();
+        game.bids = history.clone();
+        let seat = game.bidder().unwrap();
+        let accepted: Vec<Bid> = every_bid
+            .iter()
+            .cloned()
+            .filter(|&b| game.bid_is_legal(seat, b))
+            .collect();
+        let mut robot = legal_bids(&history);
+        assert!(robot.iter().all(|&b| game.bid_is_legal(seat, b)));
+        robot.sort_by_key(|b| every_bid.iter().position(|x| x == b));
+        assert_eq!(accepted, robot, "after {}", bids_string(&history));
+    }
+    assert!(legal_bids(&[Suit(1, Hearts), Pass, Pass]).contains(&Double));
+    assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Double));
+    assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Redouble));
+    assert_eq!(legal_bids(&[NT(7)]), vec![Pass, Double]);
 }

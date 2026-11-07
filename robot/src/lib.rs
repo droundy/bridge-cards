@@ -56,6 +56,30 @@ impl PartialOrd for Bid {
     }
 }
 
+/// Whether `bid` may follow the auction `history`, ignoring whose turn it
+/// is.  Both the server and the robot use this, so they never disagree.
+pub fn bid_follows(history: &[Bid], bid: Bid) -> bool {
+    let n = history.len();
+    match bid {
+        Bid::Pass => true,
+        Bid::Double => {
+            (n >= 1 && history[n - 1].is_contract())
+                || (n >= 3
+                    && history[n - 2..] == [Bid::Pass, Bid::Pass]
+                    && history[n - 3].is_contract())
+        }
+        Bid::Redouble => false,
+        Bid::Suit(level, _) | Bid::NT(level) if !(1..=7).contains(&level) => false,
+        _ => {
+            if let Some(hb) = history.iter().rev().find(|x| x.is_contract()) {
+                bid > *hb
+            } else {
+                true
+            }
+        }
+    }
+}
+
 #[test]
 fn bid_comparisons() {
     assert!(Bid::NT(1) == Bid::NT(1));
@@ -332,28 +356,7 @@ impl<C> GameState<C> {
     }
 
     pub fn bid_is_legal(&self, seat: Seat, bid: Bid) -> bool {
-        if Some(seat) != self.bidder() {
-            return false;
-        }
-        let n = self.bids.len();
-        match bid {
-            Bid::Pass => true,
-            Bid::Double => {
-                (n >= 1 && self.bids[n - 1].is_contract())
-                    || (n >= 3
-                        && self.bids[n - 2..] == [Bid::Pass, Bid::Pass]
-                        && self.bids[n - 3].is_contract())
-            }
-            Bid::Redouble => false,
-            Bid::Suit(level, _) | Bid::NT(level) if !(1..=7).contains(&level) => false,
-            _ => {
-                if let Some(hb) = self.highest_contract_bid() {
-                    bid > hb
-                } else {
-                    true
-                }
-            }
-        }
+        Some(seat) == self.bidder() && bid_follows(&self.bids, bid)
     }
 
     pub fn playable_cards(&self, seat: Seat, player: Seat) -> PlayableHand {
