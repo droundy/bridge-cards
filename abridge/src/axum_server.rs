@@ -1,11 +1,11 @@
-//! The same site as `serve_abridge`, served with axum, and with the
-//! certificate for `--domain` obtained and renewed by `rustls-acme`.
+//! The routes of the site, and serving them, with the certificate for
+//! `--domain` obtained and renewed by `rustls-acme`.
 
 use super::{
-    clean_tables, random_name, serve_connection, Incoming, Outgoing, PlayerPage, Player,
-    RobotPage, Room, TableMap, TableToJoin, WsSender, Index,
+    clean_tables, random_name, ws_connected, Index, Player, PlayerPage, RobotPage, Room, TableMap,
+    TableToJoin,
 };
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -13,19 +13,18 @@ use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::CookieJar;
 use display_as::{display, DisplayAs, HTML};
-use futures::{SinkExt, StreamExt};
-use robot::{GameState, PlayerName, Seat};
+use futures::StreamExt;
+use robot::{PlayerName, Seat};
 use rustls_acme::caches::DirCache;
 use rustls_acme::AcmeConfig;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::Sender;
-use tokio::sync::RwLock;
 
-/// The configuration for running the axum server
+/// The configuration for running the server
 #[derive(clap::Parser)]
-pub struct AxumConfig {
+pub struct Config {
     /// The domain to serve over https, using a certificate from let's encrypt.
     /// This serves https on port 443, and redirects port 80 to it.
     #[arg(long, requires = "email")]
@@ -121,7 +120,7 @@ fn router(app: AppState) -> Router {
         .route("/{table}/{seat}/robot", get(table_robot_tab))
         .route("/{table}/{seat}/ws", get(table_sock))
         .route("/{table}/{seat}/robot/ws", get(table_robot_sock))
-        // Like the warp server, show the list of tables for any other path.
+        // Show the list of tables for any other path, as the site always has.
         .fallback(get(index))
         .with_state(app)
 }
@@ -248,34 +247,6 @@ async fn table_robot_sock(
     Ok(ws.on_upgrade(move |socket| ws_connected(None, socket, game, app.table_updates)))
 }
 
-/// Runs the websocket of a connection that axum has upgraded.
-async fn ws_connected(
-    myseat: Option<Seat>,
-    ws: WebSocket,
-    game: Arc<RwLock<GameState<WsSender>>>,
-    table_updates: Sender<()>,
-) {
-    let (tx, rx) = ws.split();
-    let incoming = rx.map(|m| {
-        m.map(|m| match m {
-            Message::Close(_) => Incoming::Close,
-            Message::Text(text) => Incoming::Text(text.as_str().to_string()),
-            _ => Incoming::Other,
-        })
-        .map_err(|e| e.to_string())
-    });
-    let outgoing = tx.with(|o| {
-        futures::future::ready(Ok::<_, axum::Error>(match o {
-            Outgoing::Text(text) => Message::Text(text.into()),
-            Outgoing::Close { code, reason } => Message::Close(Some(CloseFrame {
-                code,
-                reason: reason.into(),
-            })),
-        }))
-    });
-    serve_connection(myseat, incoming, outgoing, game, table_updates).await
-}
-
 /// Sends everything on port 80 to the same path on `domain` over https.
 async fn redirect_to_https(domain: String, bind: IpAddr) {
     let app = Router::new().fallback(move |uri: axum::http::Uri| async move {
@@ -292,7 +263,7 @@ async fn redirect_to_https(domain: String, bind: IpAddr) {
     }
 }
 
-pub async fn serve_abridge_axum(config: AxumConfig) {
+pub async fn serve_abridge(config: Config) {
     let (table_updates, _) = tokio::sync::broadcast::channel::<()>(1);
     let tables = TableMap::default();
     tokio::spawn(clean_tables(tables.clone()));

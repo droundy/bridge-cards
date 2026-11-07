@@ -9,7 +9,7 @@ A Cargo workspace with four crates, layered bottom to top:
 - **`bridge-deck`** (repo root, `src/`): the `Card` (8 bits) and `Cards` (64-bit set) types plus hand-evaluation helpers (`HandValuation`, `PerSuit`, `CardMap`). `#![deny(missing_docs)]` is on, so every public item needs a doc comment. HTML/UTF8 rendering lives behind the optional `display-as` feature (`src/display.rs`).
 - **`bridge-solver`**: a card-play solver (`Naive`, `Starting`, `Score`). It samples possible deals for the cards nobody can see.
 - **`robot`**: the game model (`GameState`, `Seat`, `Seated<T>`, `Bid`, `Action`) and the AI (`src/ai.rs`). It builds as an rlib and also as a `cdylib` for WebAssembly.
-- **`abridge`**: the web server for the online bridge game (abridgegame.com). It has two binaries over one library: `abridge` (warp, with `lets-encrypt-warp`) and `abridge-axum` (axum, with `rustls-acme`; `abridge/src/axum_server.rs`). The game, templates and `serve_connection` are shared. Only routing, TLS and the websocket framing differ.
+- **`abridge`**: the axum web server for the online bridge game (abridgegame.com). `abridge/src/lib.rs` holds the tables, templates and websocket logic, and `abridge/src/axum_server.rs` holds the routes and TLS, whose certificate `rustls-acme` obtains from Let's Encrypt.
 
 ## Commands
 
@@ -33,7 +33,7 @@ Inputs must have the same type in both versions, so they are plain integers. `Ca
 
 `abridge` embeds `robot/pkg/robot.js` and `robot/pkg/robot_bg.wasm` with `include_bytes!`. That directory is gitignored and only exists after you run `wasm-pack build --target web --no-typescript --release` in `robot/`, which `run.sh` does. Until it exists, any build of `abridge` (including `cargo test --workspace`) fails. After starting the server, open `http://localhost:8087/random`.
 
-`deploy.sh` builds a static musl binary and copies it to the production host over scp. `systemd/` restarts the service whenever that binary changes, so running `deploy.sh` ships to production immediately. `deploy-axum.sh` does the same with the `abridge-axum` binary, which it installs on the host as `abridge`, so each script replaces the other's binary.
+`deploy.sh` builds a static musl binary and copies it to the production host over scp. `systemd/` restarts the service whenever that binary changes, so running `deploy.sh` ships to production immediately.
 
 ## Architecture
 

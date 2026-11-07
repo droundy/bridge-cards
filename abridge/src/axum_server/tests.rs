@@ -1,8 +1,12 @@
 use super::*;
-use crate::{close_idle_tables, CLOSED_FOR_INACTIVITY};
+use crate::{close_idle_tables, WsSender, CLOSED_FOR_INACTIVITY};
+use bridge_deck::{Cards, Suit};
+use futures::{SinkExt, StreamExt};
+use robot::{Action, Bid, GameState};
 use std::future::IntoFuture;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite;
 
 /// Serves the site on a free port.
@@ -174,7 +178,7 @@ async fn a_websocket_sits_and_gives_up_its_seat() {
     // The connection survives, and a real action still works.
     south
         .send(tungstenite::Message::text(
-            serde_json::to_string(&robot::Action::ToggleCountForMe).unwrap(),
+            serde_json::to_string(&Action::ToggleCountForMe).unwrap(),
         ))
         .await
         .unwrap();
@@ -232,4 +236,164 @@ async fn an_idle_table_tells_its_tabs_why_it_closed() {
         }
         m => panic!("expected the table to close, but got {m:?}"),
     }
+}
+
+type Client = tokio_tungstenite::WebSocketStream<
+    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+>;
+
+/// Connects to the websocket at `path`, and waits for the first thing it sends.
+async fn connect(addr: SocketAddr, path: &str) -> Client {
+    let (mut client, _) = tokio_tungstenite::connect_async(ws_url(addr, path))
+        .await
+        .unwrap();
+    recv(&mut client).await;
+    client
+}
+
+/// The next message to `client`, which has to arrive within a few seconds.
+async fn recv(client: &mut Client) -> tungstenite::Message {
+    tokio::time::timeout(Duration::from_secs(5), client.next())
+        .await
+        .expect("the server sent nothing")
+        .expect("the connection closed")
+        .unwrap()
+}
+
+async fn send(client: &mut Client, action: &Action) {
+    client
+        .send(tungstenite::Message::text(
+            serde_json::to_string(action).unwrap(),
+        ))
+        .await
+        .unwrap();
+}
+
+// In the tests below, every action sends South an update once the server has
+// handled it, so South's `recv` waits for that.
+
+#[tokio::test]
+async fn an_empty_table_waits_for_its_players_to_come_back() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut south = connect(addr, "t/south/ws").await;
+    south.close(None).await.unwrap();
+    assert!(eventually(&game, |g| g.connections[Seat::South].is_none()).await);
+
+    close_idle_tables(&app.tables, Instant::now() + Duration::from_mins(9)).await;
+    assert!(app.tables.get("t").is_some(), "an empty table closed too soon");
+    close_idle_tables(&app.tables, Instant::now() + Duration::from_mins(11)).await;
+    assert!(app.tables.get("t").is_none(), "an empty table stayed open");
+}
+
+#[tokio::test]
+async fn playing_after_a_long_pause_keeps_the_table() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut south = connect(addr, "t/south/ws").await;
+    // A clock that started under two hours ago can't go back that far.
+    let Some(long_ago) = Instant::now().checked_sub(Duration::from_hours(2)) else {
+        return;
+    };
+    game.write().await.last_action = Some(long_ago);
+
+    send(&mut south, &Action::ToggleCountForMe).await;
+    assert!(
+        eventually(&game, |g| g.count_for_me[Seat::South]).await,
+        "the table was reset"
+    );
+    assert!(game.read().await.connections[Seat::South].is_some());
+}
+
+#[tokio::test]
+async fn players_act_only_for_their_own_seat() {
+    let (addr, app) = serve().await;
+    let game: Arc<RwLock<GameState<WsSender>>> = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut south = connect(addr, "t/south/ws").await;
+
+    // South passes, and then tries to bid for West too.
+    send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+    recv(&mut south).await;
+    send(
+        &mut south,
+        &Action::Bid(Seat::West, Bid::Suit(1, Suit::Clubs)),
+    )
+    .await;
+    recv(&mut south).await;
+    assert_eq!(vec![Bid::Pass], game.read().await.bids);
+
+    // South declares 1NT, so West leads, and South can't lead for West.
+    let west_card = {
+        let mut g = game.write().await;
+        g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+        g.lead = Some(Seat::West);
+        g.hands[Seat::West].min().unwrap()
+    };
+    send(&mut south, &Action::Play(Seat::West, west_card)).await;
+    recv(&mut south).await;
+    assert!(game.read().await.played.is_empty());
+
+    // Once West has led, South plays dummy's cards.
+    let north_card = {
+        let mut g = game.write().await;
+        g.played = vec![west_card];
+        g.hands[Seat::West] -= Cards::singleton(west_card);
+        g.playable_cards(Seat::North, Seat::South)
+            .playable
+            .min()
+            .unwrap()
+    };
+    send(&mut south, &Action::Play(Seat::North, north_card)).await;
+    recv(&mut south).await;
+    assert_eq!(vec![west_card, north_card], game.read().await.played);
+}
+
+#[tokio::test]
+async fn only_legal_bids_count() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut south = connect(addr, "t/south/ws").await;
+
+    // South opens the bidding, so there is nothing to redouble, and there is
+    // no eighth level.
+    send(&mut south, &Action::Bid(Seat::South, Bid::Redouble)).await;
+    recv(&mut south).await;
+    send(
+        &mut south,
+        &Action::Bid(Seat::South, Bid::Suit(8, Suit::Clubs)),
+    )
+    .await;
+    recv(&mut south).await;
+    assert!(game.read().await.bids.is_empty());
+
+    // East declares 1NT, and South, on lead, can't reopen the bidding.
+    {
+        let mut g = game.write().await;
+        g.dealer = Seat::East;
+        g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+        g.lead = Some(Seat::South);
+    }
+    send(&mut south, &Action::Bid(Seat::South, Bid::NT(7))).await;
+    recv(&mut south).await;
+    assert_eq!(4, game.read().await.bids.len());
+}
+
+#[tokio::test]
+async fn the_robot_acts_only_for_seats_nobody_is_at() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut robot = connect(addr, "t/south/robot/ws").await;
+    let mut south = connect(addr, "t/south/ws").await;
+
+    // South is here, so the robot can't bid for South.
+    send(&mut robot, &Action::Bid(Seat::South, Bid::Pass)).await;
+    recv(&mut south).await;
+    assert!(game.read().await.bids.is_empty());
+
+    // Nobody is at West, so the robot bids for West.
+    send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+    recv(&mut south).await;
+    send(&mut robot, &Action::Bid(Seat::West, Bid::Pass)).await;
+    recv(&mut south).await;
+    assert_eq!(vec![Bid::Pass, Bid::Pass], game.read().await.bids);
 }
