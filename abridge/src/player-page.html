@@ -23,9 +23,15 @@
         console.log('got html data');
         document.getElementById('main').innerHTML = event.data;
     };
-    ws.onclose = function () {
+    ws.onclose = function (event) {
         console.log('disconnected');
-        location.reload();
+        if (event.code == 4000) {
+            // The table closed for inactivity, so wait for the player to come back.
+            document.getElementById('main').innerHTML =
+                '<p>' + event.reason + ' <a href="">Sit down again</a></p>';
+        } else {
+            location.reload();
+        }
     };
     function send_message(action) {
         ws.send(action);

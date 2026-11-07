@@ -218,19 +218,9 @@ impl<C> GameState<C> {
     pub fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
         self.conventions[0].refine2(bid, otherbids).is_some()
     }
-    pub fn check_timeout(&mut self) -> bool {
-        let now = std::time::Instant::now();
-        if let Some(last_action) = self.last_action {
-            if now.duration_since(last_action) > std::time::Duration::from_secs(60 * 60) {
-                *self = GameState::new();
-                true
-            } else {
-                self.last_action = Some(now);
-                false
-            }
-        } else {
-            false
-        }
+    /// Notes that something just happened at this table.
+    pub fn touch(&mut self) {
+        self.last_action = Some(std::time::Instant::now());
     }
     pub fn redeal(&mut self) {
         let dealer = self.dealer.next();
