@@ -1,3 +1,4 @@
+<details id="advice" class="advice"><summary>Bidding advice</summary>
 [% for line in self.situation.iter() { %]<p>[% line %]</p>
 [% } %]<p class="suggestion">[% self.suggestion %]</p>
 [% if !self.others.is_empty() { %]<table>[%
@@ -5,3 +6,7 @@
     <tr><th>[% strain %]</th><td>[% text %]</td></tr>[%
     } %]
 </table>[% } %]
+</details>
+<details id="contracts" class="advice"><summary>Possible contracts</summary>
+[% for line in self.contracts.iter() { %]<p>[% line %]</p>
+[% } %]</details>

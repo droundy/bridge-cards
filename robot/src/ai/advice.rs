@@ -14,6 +14,8 @@ use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML};
 
+mod contracts;
+
 /// Advice on the next bid of an auction.
 pub(crate) struct Advice {
     /// What each player has shown, the hand, and whether it must bid.
@@ -22,6 +24,8 @@ pub(crate) struct Advice {
     suggestion: FormattedString<HTML>,
     /// The other bids closest to fitting, each with the suit it is about.
     others: Vec<(FormattedString<HTML>, FormattedString<HTML>)>,
+    /// The contracts within reach, and how to bid toward them.
+    contracts: Vec<FormattedString<HTML>>,
 }
 
 #[with_template("[%" "%]" "advice.html")]
@@ -102,10 +106,19 @@ impl Convention {
             .map(|c| (c.strain.label(), c.comparison(chosen)))
             .collect();
 
+        let contracts = self.contracts(
+            history,
+            &hand,
+            &partner,
+            &self.shown(history, 0),
+            &candidates,
+        );
+
         Advice {
             situation,
             suggestion,
             others,
+            contracts,
         }
     }
 
@@ -183,7 +196,11 @@ impl Convention {
     }
 }
 
-/// What a player has shown with their bids.
+/// What a player has shown with their bids, as bounds combined from the
+/// table entries for each bid.  This is everything the advice knows about the
+/// other hands, so it is the place for a better estimate, such as one drawn
+/// from deals simulated to fit the whole auction.
+#[derive(Clone)]
 struct Shown {
     /// Their bids, with where each sits in the auction.
     bids: Vec<(usize, Bid)>,
@@ -202,6 +219,15 @@ impl Shown {
             ),
             _ => (m.of(&self.min), m.of(&self.max)),
         }
+    }
+    /// What they will have shown after also making a bid that means `meaning`.
+    fn and(&self, meaning: &Convention) -> Shown {
+        let mut shown = self.clone();
+        if let Convention::Simple { min, max, .. } = meaning {
+            shown.min = shown.min.max(*min);
+            shown.max = shown.max.min(*max);
+        }
+        shown
     }
 }
 
@@ -242,7 +268,7 @@ impl Candidate {
                 let words = describe(&t, &HandValuation::MAX);
                 format!("it needs {} between you", join(words))
             }),
-            verdict: together.map(|t| verdict(&t, hand, partner)),
+            verdict: together.map(|t| Reach::of(&t, hand, partner).verdict()),
             fits: meaning.fits(*hand),
             misses: join(misses),
             distance,
@@ -549,33 +575,55 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
     (words, distance)
 }
 
-/// How a natural bid's needs, `together`, compare with the hand plus what
-/// partner has shown.
-fn verdict(together: &HandValuation, hand: &HandValuation, partner: &Shown) -> String {
-    let mut out_of_reach = Vec::new();
-    let mut partner_needs = Vec::new();
-    for m in Measure::all() {
-        let need = m.of(together).saturating_sub(m.of(hand));
-        let (lo, hi) = partner.range(m);
-        if need > hi {
-            out_of_reach.push(bound(m, 0, hi).unwrap_or_default());
-        } else if need > lo {
-            let needs = bound(m, need, m.limit()).unwrap_or_default();
-            partner_needs.push(match range(m, lo, hi) {
-                Some(shown) => format!("{} (they have shown {})", needs, shown),
-                None => needs,
-            });
+/// How what a partnership needs compares with a hand plus what partner has
+/// shown.
+enum Reach {
+    /// The hand and the least partner has shown are enough.
+    Sure,
+    /// Enough if partner has these, each with what partner has shown.
+    IfPartnerHas(Vec<String>),
+    /// More than partner can have, given the most they have shown.
+    OutOfReach(Vec<String>),
+}
+
+impl Reach {
+    /// How `together`, what the partnership needs, compares with `hand` plus
+    /// what `partner` has shown.
+    fn of(together: &HandValuation, hand: &HandValuation, partner: &Shown) -> Self {
+        let mut out_of_reach = Vec::new();
+        let mut partner_needs = Vec::new();
+        for m in Measure::all() {
+            let need = m.of(together).saturating_sub(m.of(hand));
+            let (lo, hi) = partner.range(m);
+            if need > hi {
+                out_of_reach.push(bound(m, 0, hi).unwrap_or_default());
+            } else if need > lo {
+                let needs = bound(m, need, m.limit()).unwrap_or_default();
+                partner_needs.push(match range(m, lo, hi) {
+                    Some(shown) => format!("{} (they have shown {})", needs, shown),
+                    None => needs,
+                });
+            }
+        }
+        if !out_of_reach.is_empty() {
+            Reach::OutOfReach(out_of_reach)
+        } else if !partner_needs.is_empty() {
+            Reach::IfPartnerHas(partner_needs)
+        } else {
+            Reach::Sure
         }
     }
-    if !out_of_reach.is_empty() {
-        format!(
-            "partner has shown {}, so that is out of reach",
-            join(out_of_reach)
-        )
-    } else if !partner_needs.is_empty() {
-        format!("that works if partner has {}", join(partner_needs))
-    } else {
-        "you have that between you".to_string()
+    fn verdict(&self) -> String {
+        match self {
+            Reach::Sure => "you have that between you".to_string(),
+            Reach::IfPartnerHas(needs) => {
+                format!("that works if partner has {}", join(needs.clone()))
+            }
+            Reach::OutOfReach(shown) => format!(
+                "partner has shown {}, so that is out of reach",
+                join(shown.clone())
+            ),
+        }
     }
 }
 
@@ -721,4 +769,47 @@ fn advice_follows_every_seeded_auction() {
             }
         }
     }
+}
+
+#[test]
+fn contracts_weigh_partner_and_the_next_bid() {
+    use crate::Bid::*;
+    use bridge_deck::Suit::*;
+    let sayc = Convention::sayc();
+    let contracts = |bids: &[Bid], hand| {
+        let text = advice_text(&sayc, bids, hand);
+        text.split("Possible contracts").nth(1).unwrap().to_string()
+    };
+
+    let text = contracts(&[Suit(1, Spades), Pass], "S Q32 H KJ4 D J543 C 654");
+    assert!(text.contains("Together you have 20–28 high card points and 8+ spades."));
+    assert!(text.contains(
+        "4♠ game: needs 8+ spades and 26+ high card points between you; \
+         that works if partner has 19+ high card points (they have shown 13–21). \
+         Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+."
+    ));
+    // Partner's 1♠ makes a heart fit unlikely.
+    assert!(!text.contains("♥"), "{}", text);
+
+    let text = contracts(
+        &[Suit(1, Hearts), Pass, NT(1), Pass],
+        "S A2 H KQ976 D AJ3 C KQ2",
+    );
+    assert!(
+        text.contains(
+            "3NT game: needs 26+ high card points between you; \
+         that works if partner has 7+ high card points (they have shown 6–10). \
+         Bidding 2NT shows 18+ high card points, more than you have shown so far, \
+         so partner can bid it with 8+."
+        ),
+        "{}",
+        text
+    );
+
+    // With nine trumps the three level is safe in competition.
+    let text = contracts(
+        &[Suit(1, Hearts), Suit(1, Spades)],
+        "S 32 H K432 D A432 C 432",
+    );
+    assert!(text.contains("3♥ part-score: needs 9+ hearts between you; you have that between you."));
 }
