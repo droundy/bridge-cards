@@ -3,50 +3,72 @@ use display_as::{format_as, DisplayAs, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{Error, Formatter};
 use wording::{
-    a, at_least, at_most, between, count, text, AddTo, List, Noun, Number, Quantity, Text, HAS, IS,
+    a, at_least, at_most, between, count, text, AddTo, Countable, List, Noun, Number, Quantity,
+    Text, HAS, IS,
 };
 
-/// A playing card's suit, which each format shows its own way.
+/// A playing card's suit.
 #[derive(Clone, Copy)]
 enum Suit {
     Hearts,
     Spades,
 }
 
-impl DisplayAs<UTF8> for Suit {
+/// The markup: a suit as a symbol, as in "1♠", or as a noun, as in "5+
+/// spades".  Each format shows it its own way, and only plain text spells
+/// the noun out.
+#[derive(Clone, Copy)]
+enum Mark {
+    Symbol(Suit),
+    Noun(Suit, Number),
+}
+
+impl DisplayAs<UTF8> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         f.write_str(match self {
-            Suit::Hearts => "♥",
-            Suit::Spades => "♠",
+            Mark::Symbol(Suit::Hearts) => "♥",
+            Mark::Symbol(Suit::Spades) => "♠",
+            Mark::Noun(Suit::Hearts, number) => Noun::new("heart", "hearts").agreeing(*number),
+            Mark::Noun(Suit::Spades, number) => Noun::new("spade", "spades").agreeing(*number),
         })
     }
 }
 
-impl DisplayAs<HTML> for Suit {
+impl DisplayAs<HTML> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         f.write_str(match self {
-            Suit::Hearts => r#"<span class="hearts">♥</span>"#,
-            Suit::Spades => r#"<span class="spades">♠</span>"#,
+            Mark::Symbol(Suit::Hearts) | Mark::Noun(Suit::Hearts, _) => {
+                r#"<span class="hearts">♥</span>"#
+            }
+            Mark::Symbol(Suit::Spades) | Mark::Noun(Suit::Spades, _) => {
+                r#"<span class="spades">♠</span>"#
+            }
         })
     }
 }
 
-impl DisplayAs<LaTeX> for Suit {
+impl DisplayAs<LaTeX> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         f.write_str(match self {
-            Suit::Hearts => r"\heartsuit{}",
-            Suit::Spades => r"\spadesuit{}",
+            Mark::Symbol(Suit::Hearts) | Mark::Noun(Suit::Hearts, _) => r"\heartsuit{}",
+            Mark::Symbol(Suit::Spades) | Mark::Noun(Suit::Spades, _) => r"\spadesuit{}",
         })
     }
 }
 
-impl AddTo<Suit> for Suit {
-    fn add_to(self, text: &mut Text<Suit>) {
-        text.push_markup(self);
+impl AddTo<Mark> for Suit {
+    fn add_to(self, text: &mut Text<Mark>) {
+        text.push_markup(Mark::Symbol(self));
     }
 }
 
-fn check(text: &Text<Suit>, expect: Expect) {
+impl Countable<Mark> for Suit {
+    fn add_agreeing(self, number: Number, text: &mut Text<Mark>) {
+        text.push_markup(Mark::Noun(self, number));
+    }
+}
+
+fn check(text: &Text<Mark>, expect: Expect) {
     let shown = format!(
         "{}\n{}\n{}",
         format_as!(UTF8, text).into_string(),
@@ -92,7 +114,7 @@ fn quantities_agree() {
         between(6u8, 9u8, POINT),
         Quantity::other("6½", Number::Plural, LOSER),
     ];
-    let phrases: Vec<Text<Suit>> = quantities
+    let phrases: Vec<Text<Mark>> = quantities
         .into_iter()
         .map(|q| text!(IS.agreeing(q.number()), " ", q))
         .collect();
@@ -106,10 +128,27 @@ fn quantities_agree() {
 }
 
 #[test]
+fn quantities_of_markup() {
+    let phrases: Vec<Text<Mark>> = vec![
+        text!(count(1u8, Suit::Spades)),
+        text!(at_least(5u8, Suit::Spades)),
+        text!(at_most(1u8, Suit::Hearts)),
+        text!(between(2u8, 3u8, Suit::Hearts)),
+    ];
+    check(
+        &text!(List::with(phrases, "; ", "; ")),
+        expect![[r#"
+            1 spade; 5+ spades; at most 1 heart; 2–3 hearts
+            1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>
+            1 \spadesuit{}; 5+ \spadesuit{}; at most 1 \heartsuit{}; 2–3 \heartsuit{}"#]],
+    );
+}
+
+#[test]
 fn lists() {
-    let empty: Text<Suit> = text!(List::and(Vec::<&str>::new()));
+    let empty: Text<Mark> = text!(List::and(Vec::<&str>::new()));
     assert!(empty.is_empty());
-    let lists: Vec<Text<Suit>> = vec![
+    let lists: Vec<Text<Mark>> = vec![
         text!(List::and(vec!["a"])),
         text!(List::and(vec!["a", "b"])),
         text!(List::and(vec!["a", "b", "c"])),
@@ -154,7 +193,7 @@ fn articles() {
 
 #[test]
 fn sentences() {
-    let sentences: Vec<Text<Suit>> = vec![
+    let sentences: Vec<Text<Mark>> = vec![
         text!("bid it").sentence(),
         text!("is that forcing?").sentence(),
         text!(Suit::Spades, " are trumps").sentence(),

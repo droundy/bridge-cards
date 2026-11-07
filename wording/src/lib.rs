@@ -35,7 +35,8 @@ mod list;
 mod text;
 
 pub use grammar::{
-    a, at_least, at_most, between, count, Indefinite, Noun, Number, Quantity, Verb, HAS, IS,
+    a, at_least, at_most, between, count, Countable, Indefinite, Noun, Number, Quantity, Verb, HAS,
+    IS,
 };
 pub use list::List;
 pub use text::{AddTo, Markup, NoMarkup, Plain, Text};

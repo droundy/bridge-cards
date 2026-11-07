@@ -70,14 +70,30 @@ impl Verb {
     }
 }
 
-/// An amount of a noun, as in "1 spade", "5+ spades" or "6–9 points".
+/// Something that can be counted, such as a [`Noun`].
+///
+/// Implement it for markup that should agree with a number, such as a suit
+/// that plain text spells "spade" or "spades" and HTML shows as "♠".
+pub trait Countable<M> {
+    /// Adds the form that agrees with `number` to the end of `text`.
+    fn add_agreeing(self, number: Number, text: &mut Text<M>);
+}
+
+impl<M> Countable<M> for Noun {
+    fn add_agreeing(self, number: Number, text: &mut Text<M>) {
+        text.push_words(self.agreeing(number));
+    }
+}
+
+/// An amount of something [`Countable`], as in "1 spade", "5+ spades" or
+/// "6–9 points".
 ///
 /// The noun agrees with the amount, so "at most 1 spade" is singular and
 /// "1+ spades" plural.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Quantity {
+pub struct Quantity<N = Noun> {
     amount: Amount,
-    noun: Noun,
+    noun: N,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,32 +106,32 @@ enum Amount {
 }
 
 /// `n` of `noun`, as in "1 spade" or "7 spades".
-pub fn count(n: impl Into<u64>, noun: Noun) -> Quantity {
+pub fn count<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::Exactly(n.into()), noun)
 }
 
 /// `n` or more of `noun`, as in "5+ spades".
-pub fn at_least(n: impl Into<u64>, noun: Noun) -> Quantity {
+pub fn at_least<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::AtLeast(n.into()), noun)
 }
 
 /// `n` or fewer of `noun`, as in "at most 1 spade".
-pub fn at_most(n: impl Into<u64>, noun: Noun) -> Quantity {
+pub fn at_most<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::AtMost(n.into()), noun)
 }
 
 /// From `lo` to `hi` of `noun`, as in "6–9 points".
-pub fn between(lo: impl Into<u64>, hi: impl Into<u64>, noun: Noun) -> Quantity {
+pub fn between<N>(lo: impl Into<u64>, hi: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::Between(lo.into(), hi.into()), noun)
 }
 
-impl Quantity {
-    fn new(amount: Amount, noun: Noun) -> Self {
+impl<N> Quantity<N> {
+    fn new(amount: Amount, noun: N) -> Self {
         Quantity { amount, noun }
     }
     /// An amount the other constructors can't write, as in "6½ losers".
     /// The noun agrees with `number`.
-    pub fn other(amount: impl Display, number: Number, noun: Noun) -> Self {
+    pub fn other(amount: impl Display, number: Number, noun: N) -> Self {
         Quantity::new(Amount::Other(amount.to_string(), number), noun)
     }
     /// Whether this is one or many, for a verb to agree with.
@@ -128,22 +144,23 @@ impl Quantity {
     }
 }
 
-impl Display for Quantity {
+impl Display for Amount {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match &self.amount {
-            Amount::Exactly(n) => write!(f, "{n}")?,
-            Amount::AtLeast(n) => write!(f, "{n}+")?,
-            Amount::AtMost(n) => write!(f, "at most {n}")?,
-            Amount::Between(lo, hi) => write!(f, "{lo}–{hi}")?,
-            Amount::Other(amount, _) => f.write_str(amount)?,
+        match self {
+            Amount::Exactly(n) => write!(f, "{n}"),
+            Amount::AtLeast(n) => write!(f, "{n}+"),
+            Amount::AtMost(n) => write!(f, "at most {n}"),
+            Amount::Between(lo, hi) => write!(f, "{lo}–{hi}"),
+            Amount::Other(amount, _) => f.write_str(amount),
         }
-        write!(f, " {}", self.noun.agreeing(self.number()))
     }
 }
 
-impl<M> AddTo<M> for Quantity {
+impl<M, N: Countable<M>> AddTo<M> for Quantity<N> {
     fn add_to(self, text: &mut Text<M>) {
-        text.push_words(&self.to_string());
+        let number = self.number();
+        text.push_words(&format!("{} ", self.amount));
+        self.noun.add_agreeing(number, text);
     }
 }
 
