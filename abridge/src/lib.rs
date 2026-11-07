@@ -416,6 +416,12 @@ async fn ws_connected(
                             g.count_for_me[myseat] = !g.count_for_me[myseat];
                         }
                     }
+                    Action::SetSystem(system) => {
+                        if g.bids.is_empty() {
+                            g.set_system(system);
+                            println!("sending table update: {:?}", table_updates.send(()).is_ok());
+                        }
+                    }
                     Action::Redeal => {
                         g.redeal();
                         println!("sending table update: {:?}", table_updates.send(()).is_ok());

@@ -1,4 +1,4 @@
-pub use ai::{choose_play, BridgeAi, Convention};
+pub use ai::{choose_play, BiddingSystem, BridgeAi, Convention};
 use bridge_deck::{Card, Cards};
 use display_as::{with_template, DisplayAs, HTML};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,8 @@ pub enum Action {
     Play(Seat, Card),
     Name(String),
     ToggleCountForMe,
+    /// Choose the bidding system, before the first bid.
+    SetSystem(BiddingSystem),
 }
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
@@ -129,6 +131,9 @@ pub struct GameState<C> {
     #[serde(skip)]
     pub last_action: Option<std::time::Instant>,
 
+    /// The bidding system the robots play and the bid descriptions explain.
+    #[serde(default)]
+    pub system: BiddingSystem,
     #[serde(skip)]
     conventions: Vec<Convention>,
 }
@@ -167,8 +172,16 @@ impl<C> GameState<C> {
             ns_tricks: 0,
             ew_tricks: 0,
             last_action: Some(std::time::Instant::now()),
+            system: BiddingSystem::default(),
             conventions: vec![Convention::sheets()],
         }
+    }
+
+    /// Switch to another bidding system.  Players should do this only before
+    /// the first bid.
+    pub fn set_system(&mut self, system: BiddingSystem) {
+        self.system = system;
+        self.conventions = vec![system.convention()];
     }
 
     pub fn randomseat(&self) -> Option<Seat> {
@@ -238,12 +251,16 @@ impl<C> GameState<C> {
         let ai = std::mem::take(&mut self.ai);
         let connections = std::mem::take(&mut self.connections);
         let count_for_me = self.count_for_me;
+        let system = self.system;
+        let conventions = std::mem::take(&mut self.conventions);
         *self = Self {
             names,
             dealer,
             connections,
             ai,
             count_for_me,
+            system,
+            conventions,
             ..GameState::new()
         }
     }
@@ -594,4 +611,26 @@ impl<T> std::ops::IndexMut<Seat> for Seated<T> {
     fn index_mut(&mut self, index: Seat) -> &mut T {
         &mut self.internal[index as usize]
     }
+}
+
+#[test]
+fn test_bidding_system_survives_redeal_and_serialization() {
+    use display_as::format_as;
+    let mut game = GameState::<()>::new();
+    assert_eq!(BiddingSystem::Sheets, game.system);
+    game.set_system(BiddingSystem::Sayc);
+    game.redeal();
+    assert_eq!(BiddingSystem::Sayc, game.system);
+    // The convention that explains bids is the one chosen.
+    assert_eq!(
+        "SAYC",
+        format_as!(HTML, game.conventions[0].name()).into_string()
+    );
+
+    let mut json: serde_json::Value = serde_json::to_value(&game).unwrap();
+    assert_eq!(serde_json::json!("Sayc"), json["system"]);
+    // A table serialized before systems existed is still Sheets.
+    json.as_object_mut().unwrap().remove("system");
+    let old: GameState<()> = serde_json::from_value(json).unwrap();
+    assert_eq!(BiddingSystem::Sheets, old.system);
 }
