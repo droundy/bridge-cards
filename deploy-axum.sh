@@ -1,16 +1,14 @@
 #!/bin/bash
 
-# Like deploy.sh, but for abridge-axum.  The first time, install the units in
-# systemd/ on the host (as root):
+# Like deploy.sh, but ships abridge-axum.  It goes to the host as `abridge`, in
+# place of the warp binary, so the existing abridge.service and
+# abridge-watcher.path restart it with the same arguments, and the name won't
+# change when abridge-axum is renamed to abridge.  Run deploy.sh to put the
+# warp one back.
 #
-#   cp systemd/abridge-axum*.{service,path} /etc/systemd/system/
-#   systemctl daemon-reload
-#   systemctl enable --now abridge-axum-watcher.path
-#
-# After that, this script ships a new binary and abridge-axum-watcher.path
-# restarts the service.  The first restart switches the site over from warp,
-# since abridge-axum.service conflicts with abridge.service.  To switch back,
-# run `systemctl start abridge.service`.
+# The certificate comes from a new cache, ./acme-cache in the service's working
+# directory, so the first start asks Let's Encrypt for one, and https doesn't
+# work until it has it.
 
 set -ev
 
@@ -24,6 +22,6 @@ strip target/x86_64-unknown-linux-musl/release/abridge-axum
 
 upx target/x86_64-unknown-linux-musl/release/abridge-axum
 
-scp target/x86_64-unknown-linux-musl/release/abridge-axum droundy@abridgegame.com:abridge-axum.new
+scp target/x86_64-unknown-linux-musl/release/abridge-axum droundy@abridgegame.com:abridge.new
 
-ssh -l droundy abridgegame.com mv -v abridge-axum.new abridge-axum
+ssh -l droundy abridgegame.com mv -v abridge.new abridge

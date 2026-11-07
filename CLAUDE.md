@@ -33,7 +33,7 @@ Inputs must have the same type in both versions, so they are plain integers. `Ca
 
 `abridge` embeds `robot/pkg/robot.js` and `robot/pkg/robot_bg.wasm` with `include_bytes!`. That directory is gitignored and only exists after you run `wasm-pack build --target web --no-typescript --release` in `robot/`, which `run.sh` does. Until it exists, any build of `abridge` (including `cargo test --workspace`) fails. After starting the server, open `http://localhost:8087/random`.
 
-`deploy.sh` builds a static musl binary and copies it to the production host over scp. `systemd/` restarts the service whenever that binary changes, so running `deploy.sh` ships to production immediately.
+`deploy.sh` builds a static musl binary and copies it to the production host over scp. `systemd/` restarts the service whenever that binary changes, so running `deploy.sh` ships to production immediately. `deploy-axum.sh` does the same with the `abridge-axum` binary, which it installs on the host as `abridge`, so each script replaces the other's binary.
 
 ## Architecture
 

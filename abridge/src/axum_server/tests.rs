@@ -85,8 +85,21 @@ async fn serves_the_pages() {
 
     let (head, _) = get(addr, "/a%20table/south/robot").await;
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
-    let (head, _) = get(addr, "/a%20table/sideways").await;
-    assert!(head.starts_with("HTTP/1.1 404"), "{head}");
+    // A bad seat is a 404, with a way back to the home page.
+    for path in ["/a%20table/sideways", "/a%20table/sideways/robot"] {
+        let (head, body) = get(addr, path).await;
+        assert!(head.starts_with("HTTP/1.1 404"), "{path}: {head}");
+        assert!(body.contains(r#"href="/""#), "{path} has no link home");
+    }
+    // Nor does a websocket to a bad seat get upgraded.
+    for path in ["a%20table/sideways/ws", "a%20table/sideways/robot/ws"] {
+        match tokio_tungstenite::connect_async(ws_url(addr, path)).await {
+            Err(tungstenite::Error::Http(response)) => {
+                assert_eq!(response.status(), 404, "{path}")
+            }
+            other => panic!("{path} should be refused, but got {other:?}"),
+        }
+    }
 }
 
 #[tokio::test]

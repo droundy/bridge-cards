@@ -1,5 +1,0 @@
-[Path]
-PathModified=/home/droundy/abridge-axum
-
-[Install]
-WantedBy=multi-user.target

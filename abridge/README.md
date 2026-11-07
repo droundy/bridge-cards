@@ -36,7 +36,12 @@ renewal needs no restart.  Certificates and the account key are kept in
 `--cache-dir` (`./acme-cache`), so that a restart doesn't ask Let's Encrypt for
 a new one.
 
-By default it gets certificates from Let's Encrypt's staging server, which
-browsers do not trust but which has generous rate limits.  Once that works,
-add `--production`.  It listens on IPv4 only unless you give `--bind ::`, so
-do that if the domain has an AAAA record.
+Add `--staging` to get certificates from Let's Encrypt's staging server, which
+browsers do not trust but which has generous rate limits, for testing.  It
+listens on IPv4 only unless you give `--bind ::`, so do that if the domain has
+an AAAA record.
+
+It takes the same `--domain` and `--email` as `abridge`, so `deploy-axum.sh`
+ships it to the host as `abridge`, in place of the warp one, and the existing
+`abridge.service` runs it unchanged.  Running `deploy.sh` puts the warp one
+back.

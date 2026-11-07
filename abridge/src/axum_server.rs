@@ -33,11 +33,10 @@ pub struct AxumConfig {
     /// The email associated with the domain
     #[arg(long)]
     email: Option<String>,
-    /// Get a real certificate.  Without this, the certificate comes from let's
-    /// encrypt's staging server, which browsers do not trust, but which has
-    /// generous rate limits for testing.
+    /// Get the certificate from let's encrypt's staging server, which browsers
+    /// do not trust, but which has generous rate limits for testing.
     #[arg(long)]
-    production: bool,
+    staging: bool,
     /// Where to keep the certificate and account key, so that they survive a
     /// restart.  Let's encrypt limits how often we may ask for a certificate.
     #[arg(long, default_value = "acme-cache")]
@@ -77,9 +76,35 @@ fn redirect_to(segments: &[&str]) -> Response {
     (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, location)]).into_response()
 }
 
+/// The response when a path doesn't name anything: a page that links back to
+/// the home page.
+struct NotFound;
+
+impl IntoResponse for NotFound {
+    fn into_response(self) -> Response {
+        const PAGE: &str = r#"<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Not found</title>
+    <link rel="stylesheet" href="/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+    <p>There is nothing here.</p>
+    <p><a href="/">Back to the home page</a></p>
+</body>
+
+</html>
+"#;
+        (StatusCode::NOT_FOUND, Html(PAGE)).into_response()
+    }
+}
+
 /// The seat that `/<table>/<seat>` names.
-fn parse_seat(seat: &str) -> Result<Seat, StatusCode> {
-    seat.parse().map_err(|_| StatusCode::NOT_FOUND)
+fn parse_seat(seat: &str) -> Result<Seat, NotFound> {
+    seat.parse().map_err(|_| NotFound)
 }
 
 fn router(app: AppState) -> Router {
@@ -159,7 +184,7 @@ async fn table_seat(
     State(app): State<AppState>,
     Path((table, seat)): Path<(String, String)>,
     jar: CookieJar,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, NotFound> {
     let seat = parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
     let mut g = game.write().await;
@@ -173,7 +198,7 @@ async fn table_seat(
 
 async fn table_robot_tab(
     Path((_table, seat)): Path<(String, String)>,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, NotFound> {
     parse_seat(&seat)?;
     Ok(html(&RobotPage))
 }
@@ -207,7 +232,7 @@ async fn table_sock(
     State(app): State<AppState>,
     Path((table, seat)): Path<(String, String)>,
     ws: WebSocketUpgrade,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, NotFound> {
     let seat = parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
     Ok(ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, app.table_updates)))
@@ -217,7 +242,7 @@ async fn table_robot_sock(
     State(app): State<AppState>,
     Path((table, seat)): Path<(String, String)>,
     ws: WebSocketUpgrade,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, NotFound> {
     parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
     Ok(ws.on_upgrade(move |socket| ws_connected(None, socket, game, app.table_updates)))
@@ -287,12 +312,12 @@ pub async fn serve_abridge_axum(config: AxumConfig) {
     let email = config.email.expect("clap requires an email with a domain");
     println!(
         "Using let's encrypt{} for {domain}...",
-        if config.production { "" } else { " staging" }
+        if config.staging { " staging" } else { "" }
     );
     let mut acme = AcmeConfig::new([&domain])
         .contact_push(format!("mailto:{email}"))
         .cache(DirCache::new(config.cache_dir))
-        .directory_lets_encrypt(config.production)
+        .directory_lets_encrypt(!config.staging)
         .state();
     let acceptor = acme.axum_acceptor(acme.default_rustls_config());
     // The certificate is obtained and renewed as this stream is polled.  The
