@@ -1,6 +1,6 @@
 pub use ai::{choose_play, BiddingSystem, BridgeAi, Convention};
 use bridge_deck::{Card, Cards};
-use display_as::{with_template, DisplayAs, HTML};
+use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};
 
 mod ai;
@@ -103,6 +103,18 @@ fn bids_go_from_one_to_seven() {
 
 #[with_template("[%" "%]" "bid.html")]
 impl<'a> DisplayAs<HTML> for Bid {}
+
+impl DisplayAs<UTF8> for Bid {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match self {
+            Bid::Pass => f.write_str("Pass"),
+            Bid::Double => f.write_str("X"),
+            Bid::Redouble => f.write_str("XX"),
+            Bid::Suit(level, suit) => write!(f, "{}{}", level, suit.unicode()),
+            Bid::NT(level) => write!(f, "{}NT", level),
+        }
+    }
+}
 
 impl Bid {
     pub fn level(self) -> Option<usize> {

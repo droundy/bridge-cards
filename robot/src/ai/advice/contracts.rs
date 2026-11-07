@@ -6,20 +6,15 @@
 //! already sure, depends on partner, or is out of reach.  When it depends on
 //! partner, what matters is what our next bid tells them: once they know we
 //! have that much, they can bid the contract when they hold the rest.
-use super::{bound, describe, join, Candidate, Measure, Need, Reach, Shown, Strain};
+use super::{
+    describe, AddTo, Bound, Candidate, Line, List, Measure, Need, Reach, Shown, Strain, Text,
+};
 use crate::ai::{legal_bids, Convention};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
-use display_as::{format_as, FormattedString, HTML};
 
 /// How many contracts the advice lists, so that it fits on a screen.
 const CONTRACTS: usize = 6;
-
-/// A contract worth bidding toward, in words.
-pub(super) struct ContractLine {
-    pub(super) bid: Bid,
-    pub(super) line: FormattedString<HTML>,
-}
 
 /// A contract the partnership might reach.
 struct Contract {
@@ -45,7 +40,7 @@ impl Convention {
         partner: &Shown,
         me: &Shown,
         candidates: &[Candidate],
-    ) -> Vec<(Strain, ContractLine)> {
+    ) -> Vec<(Strain, Line)> {
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
         let contracts: Vec<Contract> = legal_bids(history)
@@ -91,17 +86,21 @@ impl Convention {
         worth
             .into_iter()
             .map(|c| {
-                let needs = join(describe(&c.needs, &HandValuation::MAX));
+                let needs = describe(&c.needs, &HandValuation::MAX);
                 let route = match c.reach {
                     Reach::IfPartnerHas(_) => route(c, me, partner, candidates),
-                    _ => FormattedString::from_formatted(""),
+                    _ => text!(),
                 };
-                let line = format_as!(HTML, "<strong>" c.bid "</strong> " Kind::of(c.bid).name()
-                                  ": needs " needs " between you; " c.reach.verdict() "." route);
-                (
-                    Strain::of(c.bid, &c.needs),
-                    ContractLine { bid: c.bid, line },
-                )
+                let text = text!(
+                    Kind::of(c.bid).name(),
+                    ": needs ",
+                    List::and(needs),
+                    " between you; ",
+                    c.reach.verdict(),
+                    ".",
+                    route
+                );
+                (Strain::of(c.bid, &c.needs), Line { bid: c.bid, text })
             })
             .collect()
     }
@@ -120,21 +119,23 @@ impl Convention {
 }
 
 /// What the hand and partner have between them, as far as anyone knows.
-pub(super) fn together(hand: &HandValuation, partner: &Shown) -> FormattedString<HTML> {
-    let (lo, hi) = partner.range(Measure::Hcp);
-    let points = if hi >= HandValuation::MAX.hcp {
-        format!("{}+", hand.hcp + lo)
-    } else {
-        format!("{}–{}", hand.hcp + lo, hand.hcp + hi)
-    };
-    let mut words = vec![format!("{} high card points", points)];
+pub(super) fn together(hand: &HandValuation, partner: &Shown) -> Option<Text> {
+    let points = Measure::Hcp;
+    let (lo, hi) = partner.range(points);
+    let mut has: Vec<Bound> = Bound::new(points, hand.hcp + lo, hand.hcp.saturating_add(hi))
+        .into_iter()
+        .collect();
     for &suit in Suit::ALL.iter().rev() {
         let cards = hand.length[suit] + partner.min.length[suit];
         if cards >= 8 {
-            words.push(format!("{}+ {}", cards, suit.name()));
+            has.extend(Bound::at_least(Measure::Length(suit), cards));
         }
     }
-    format_as!(HTML, "Together you have " join(words) ".")
+    if has.is_empty() {
+        None
+    } else {
+        Some(text!("Together you have ", List::and(has), "."))
+    }
 }
 
 /// Is the partnership likely to have the trumps `contract` needs?  Partner
@@ -192,16 +193,10 @@ impl Kind {
 /// `candidates` that fit the hand, it takes the one after which partner
 /// needs the least beyond what they have shown, in points and in trumps
 /// alike, and says what partner then knows and needs.
-fn route(
-    contract: &Contract,
-    me: &Shown,
-    partner: &Shown,
-    candidates: &[Candidate],
-) -> FormattedString<HTML> {
-    let nothing = FormattedString::from_formatted("");
+fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candidate]) -> Text {
     let fitting = candidates.iter().filter(|c| c.fits && c.bid != Bid::Pass);
     if fitting.clone().any(|c| c.bid == contract.bid) {
-        return format_as!(HTML, " You can bid it now.");
+        return text!(" You can bid it now.");
     }
     // The robot's choice comes first, and wins a tie.
     let best = fitting
@@ -218,27 +213,39 @@ fn route(
         .min_by_key(|&(stretch, ..)| stretch);
     let (bid, after, reach) = match best {
         Some((_, bid, after, reach)) => (bid, after, reach),
-        None => return nothing,
+        None => return text!(),
     };
-    let knows: Vec<String> = Measure::all()
+    let knows: Vec<Bound> = Measure::all()
         .filter(|&m| m.of(&contract.needs) > 0)
-        .filter_map(|m| bound(m, m.of(&after.least()), m.limit()))
+        .filter_map(|m| Bound::at_least(m, m.of(&after.least())))
         .collect();
     if knows.is_empty() {
-        return nothing;
+        return text!();
     }
     let then = match reach {
-        Reach::IfPartnerHas(needs) => format!(
-            "so they can bid it with {}",
-            join(needs.iter().map(Need::words).collect())
-        ),
-        _ => "which is enough for them to bid it".to_string(),
+        Reach::IfPartnerHas(needs) => text!("so they can bid it with ", List::and(needs)),
+        _ => text!("which is enough for them to bid it"),
     };
     let points = Measure::Hcp;
     if me.range(points).0 > 0 && after.range(points).0 > me.range(points).0 {
-        format_as!(HTML, " Bidding " bid " shows more than you have so far: partner then knows you have "
-                   join(knows) ", " then ".")
+        text!(
+            " Bidding ",
+            bid,
+            " shows more than you have so far: partner then knows you have ",
+            List::and(knows),
+            ", ",
+            then,
+            "."
+        )
     } else {
-        format_as!(HTML, " After " bid ", partner knows you have " join(knows) ", " then ".")
+        text!(
+            " After ",
+            bid,
+            ", partner knows you have ",
+            List::and(knows),
+            ", ",
+            then,
+            "."
+        )
     }
 }
