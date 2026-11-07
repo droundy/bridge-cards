@@ -109,46 +109,70 @@ fn legal_bids(history: &[Bid]) -> Vec<Bid> {
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        let legal_bids = legal_bids(history);
-        let len = history.len();
-        let mut bids = Vec::with_capacity(len + 1);
-        bids.extend_from_slice(history);
+        let handvalue = hand.values();
+        for (b, c) in self.0.ranked_bids(history) {
+            let (min, max) = c.bounds();
+            if c.fits(handvalue) {
+                println!(
+                    "Bidding {:?} with convention {}",
+                    b,
+                    format_as!(HTML, c.description()).into_string()
+                );
+                println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
+                println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
+                return b;
+            }
+        }
+        Bid::Pass
+    }
+}
+
+impl Convention {
+    /// The legal bids after `history` that this convention understands, each
+    /// with its meaning, in the order the robot considers them.  Game-forcing
+    /// bids come first, then forcing bids, then passable ones and last forced
+    /// ones, and within each level the highest bid comes first.  The robot
+    /// makes the first bid whose bounds fit its hand.
+    fn ranked_bids(&self, history: &[Bid]) -> Vec<(Bid, Convention)> {
+        let mut bids = history.to_vec();
         bids.push(Bid::Pass);
+        let understood: Vec<(Bid, Convention)> = legal_bids(history)
+            .into_iter()
+            .rev()
+            .filter_map(|b| {
+                *bids.last_mut().unwrap() = b;
+                self.refine(&bids).map(|c| (b, c))
+            })
+            .collect();
+        let mut ranked = Vec::with_capacity(understood.len());
         for forcing_level in [
             Forcing::GameForcing,
             Forcing::Forcing,
             Forcing::Passable,
             Forcing::Forced,
-        ]
-        .iter()
-        .cloned()
-        {
-            // First we check if we have a valid game-forcing bid, and pick the
-            // highest such bid.  Otherwise we pick the highest valid forcing
-            // bid.  If no such bid exists, we pick the highest valid passable
-            // bid.
-            for b in legal_bids.iter().cloned().rev() {
-                bids[len] = b;
-                if let Some(c) = self.0.refine(&bids) {
-                    if c.is_forcing() == forcing_level {
-                        let min = c.min_valuation(&bids);
-                        let max = c.max_valuation(&bids);
-                        let handvalue = hand.values();
-                        if !handvalue.exceeds(max) && !min.exceeds(handvalue) {
-                            println!(
-                                "Bidding {:?} with convention {}",
-                                b,
-                                format_as!(HTML, c.description()).into_string()
-                            );
-                            println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
-                            println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
-                            return b;
-                        }
-                    }
-                }
-            }
+        ] {
+            ranked.extend(
+                understood
+                    .iter()
+                    .filter(|(_, c)| c.is_forcing() == forcing_level)
+                    .cloned(),
+            );
         }
-        Bid::Pass
+        ranked
+    }
+    /// The bounds of a refined convention, as returned by `refine`.
+    fn bounds(&self) -> (HandValuation, HandValuation) {
+        match self {
+            Convention::Simple { min, max, .. }
+            | Convention::Natural { min, max, .. }
+            | Convention::Forced { min, max, .. } => (*min, *max),
+            Convention::Ordered { .. } => (HandValuation::MIN, HandValuation::MAX),
+        }
+    }
+    /// Does a hand with value `hand` fit the bounds of this refined convention?
+    fn fits(&self, hand: HandValuation) -> bool {
+        let (min, max) = self.bounds();
+        !hand.exceeds(max) && !min.exceeds(hand)
     }
 }
 
@@ -333,6 +357,7 @@ impl PlayAI for RandomPlay {
 }
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
+mod advice;
 mod sayc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]

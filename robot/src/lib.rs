@@ -265,6 +265,13 @@ impl<C> GameState<C> {
     pub fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
         self.conventions[0].refine2(bid, otherbids).is_some()
     }
+    /// Advice for `seat` on its next bid, when it is that seat's turn to bid.
+    pub fn bidding_advice(&self, seat: Seat) -> Option<impl DisplayAs<HTML>> {
+        if self.bidder() != Some(seat) {
+            return None;
+        }
+        Some(self.conventions[0].advice(&self.bids, self.hands[seat]))
+    }
     /// Notes that something just happened at this table.
     pub fn touch(&mut self) {
         self.last_action = Some(std::time::Instant::now());
