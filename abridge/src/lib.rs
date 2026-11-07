@@ -47,10 +47,10 @@ impl TableMap {
 
 /// A table where nothing has happened for this long is closed, even if some
 /// tabs are still connected to it, since nobody is playing there.
-const IDLE_TABLE: Duration = Duration::from_secs(60 * 60);
+const IDLE_TABLE: Duration = Duration::from_hours(1);
 /// A table that nobody is sitting at is closed once nothing has happened for
 /// this long, which gives a player whose connection dropped time to come back.
-const EMPTY_TABLE: Duration = Duration::from_secs(60 * 10);
+const EMPTY_TABLE: Duration = Duration::from_mins(10);
 /// The websocket close code that tells a page its table was closed for
 /// inactivity, so that it shouldn't reconnect.
 const CLOSED_FOR_INACTIVITY: u16 = 4000;
@@ -687,10 +687,10 @@ mod tests {
             .unwrap();
         south.next().await.unwrap().unwrap();
 
-        close_idle_tables(&tables, Instant::now() + Duration::from_secs(59 * 60)).await;
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(59)).await;
         assert!(tables.get("t").is_some(), "a table closed while in use");
 
-        close_idle_tables(&tables, Instant::now() + Duration::from_secs(61 * 60)).await;
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(61)).await;
         assert!(tables.get("t").is_none(), "an idle table stayed open");
         match south.next().await.unwrap().unwrap() {
             Message::Close(Some(frame)) => {
@@ -708,9 +708,9 @@ mod tests {
         south.recv_closed().await.unwrap();
         assert!(eventually(&game, |g| g.connections[Seat::South].is_none()).await);
 
-        close_idle_tables(&tables, Instant::now() + Duration::from_secs(9 * 60)).await;
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(9)).await;
         assert!(tables.get("t").is_some(), "an empty table closed too soon");
-        close_idle_tables(&tables, Instant::now() + Duration::from_secs(11 * 60)).await;
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(11)).await;
         assert!(tables.get("t").is_none(), "an empty table stayed open");
     }
 
@@ -719,7 +719,7 @@ mod tests {
         let tables = TableMap::default();
         let (game, mut south) = table_with_south(&tables).await;
         // A clock that started under two hours ago can't go back that far.
-        let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(2 * 60 * 60)) else {
+        let Some(long_ago) = Instant::now().checked_sub(Duration::from_hours(2)) else {
             return;
         };
         game.write().await.last_action = Some(long_ago);
