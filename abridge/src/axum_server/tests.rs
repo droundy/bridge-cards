@@ -75,6 +75,11 @@ async fn serves_the_pages() {
         assert!(head.starts_with("HTTP/1.1 200"), "{path}: {head}");
         assert!(body.contains("New table"), "{path} is not the index");
     }
+    let (head, _) = get(addr, "/").await;
+    assert!(
+        header(&head, "content-type").is_some_and(|t| t.starts_with("text/html")),
+        "{head}"
+    );
     let (head, _) = get(addr, "/style.css").await;
     assert_eq!(header(&head, "content-type"), Some("text/css"));
 
