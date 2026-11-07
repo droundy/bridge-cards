@@ -4,6 +4,7 @@ use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
 use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -44,29 +45,53 @@ impl TableMap {
     }
 }
 
+/// A table where nothing has happened for this long is closed, even if some
+/// tabs are still connected to it, since nobody is playing there.
+const IDLE_TABLE: Duration = Duration::from_hours(1);
+/// A table that nobody is sitting at is closed once nothing has happened for
+/// this long, which gives a player whose connection dropped time to come back.
+const EMPTY_TABLE: Duration = Duration::from_mins(10);
+/// The websocket close code that tells a page its table was closed for
+/// inactivity, so that it shouldn't reconnect.
+const CLOSED_FOR_INACTIVITY: u16 = 4000;
+
 async fn clean_tables(tables: TableMap) {
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60 * 10)).await;
-        let keys = tables.0.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
-        let mut to_clean = std::collections::HashSet::new();
-        for k in keys {
-            if let Some(g) = tables.get(&k) {
-                let g = g.read().await;
-                if g.connections.iter().all(Option::is_none) {
-                    println!("Cleaning up table {k} where no one is sitting.");
-                    to_clean.insert(k.to_string());
-                } else if let Some(t) = g.last_action {
-                    if t.elapsed() > std::time::Duration::from_secs(60 * 60) {
-                        println!("Cleaning up table {k} where no one has played recently.");
-                        to_clean.insert(k.to_string());
-                    }
-                }
+        tokio::time::sleep(EMPTY_TABLE).await;
+        close_idle_tables(&tables, Instant::now()).await;
+    }
+}
+
+/// Closes the tables where nobody is playing at `now`, and tells any tabs
+/// still connected to them that their table is gone.
+async fn close_idle_tables(tables: &TableMap, now: Instant) {
+    let keys = tables.0.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
+    for k in keys {
+        // Don't hold the map's lock while waiting for the table's.
+        let Some(game) = tables.get(&k).map(|g| Arc::clone(&g)) else {
+            continue;
+        };
+        let idle = {
+            let g = game.read().await;
+            let idle = g
+                .last_action
+                .map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
+            let empty = g.connections.iter().all(Option::is_none);
+            idle > IDLE_TABLE || (empty && idle > EMPTY_TABLE)
+        };
+        if idle {
+            println!("Closing table {k}, where nobody is playing.");
+            // Remove it first, so that nobody new can join it.
+            tables.remove(&k);
+            let g = game.read().await;
+            let closed = warp::ws::Message::close_with(
+                CLOSED_FOR_INACTIVITY,
+                "This table closed because nobody was playing.",
+            );
+            for c in g.connections.iter().chain([&g.ai]).flatten() {
+                c.send(closed.clone()).ok();
             }
         }
-        for k in to_clean {
-            tables.remove(&k);
-        }
-        // tables.retain(|_, t| t.read().await.connections.any(|c| c.is_some()));
     }
 }
 
@@ -164,7 +189,7 @@ pub async fn serve_abridge(config: Config) {
                     .to_string();
                 let g = tables.entry(table);
                 let mut g = g.write().await;
-                g.check_timeout();
+                g.touch();
                 if let Some(name) = name {
                     g.names[seat] = PlayerName::Human(name);
                 } else {
@@ -375,6 +400,7 @@ async fn ws_connected(
         } else {
             g.ai = Some(tx.clone());
         }
+        g.touch();
         send_player_updates(&g);
         println!("sending table update: {:?}", table_updates.send(()).is_ok());
     }
@@ -426,8 +452,8 @@ async fn ws_connected(
                         g.redeal();
                         println!("sending table update: {:?}", table_updates.send(()).is_ok());
                     }
-                    Action::Bid(myseat, b) => {
-                        if g.turn() == Some(myseat) {
+                    Action::Bid(seat, b) => {
+                        if may_act_for(&g, myseat, seat) && g.bid_is_legal(seat, b) {
                             g.bids.push(b);
                             if g.bids.len() > 3
                                 && g.bids[g.bids.len() - 3..] == [Bid::Pass, Bid::Pass, Bid::Pass]
@@ -441,13 +467,13 @@ async fn ws_connected(
                             }
                             println!("sending table update: {:?}", table_updates.send(()).is_ok());
                         } else {
-                            println!("We got a message from {myseat:?} but it is not playing");
+                            println!("Ignoring a bid of {b:?} for {seat:?} from {myseat:?}");
                         }
                     }
-                    Action::Play(myseat, card) => {
-                        if let (Some(seat), Some(playing)) = (g.turn(), g.hand_playing()) {
-                            if [seat, playing].contains(&myseat) {
-                                if g.playable_cards(playing, seat).playable.contains(card) {
+                    Action::Play(seat, card) => {
+                        if let (Some(turn), Some(playing)) = (g.turn(), g.hand_playing()) {
+                            if may_act_for(&g, myseat, turn) && [turn, playing].contains(&seat) {
+                                if g.playable_cards(playing, turn).playable.contains(card) {
                                     if g.played.len() == 4 {
                                         g.played.clear();
                                     }
@@ -468,7 +494,7 @@ async fn ws_connected(
                         }
                     }
                 }
-                g.check_timeout();
+                g.touch();
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
                     if g.names[seat] == PlayerName::None && g.connections[seat].is_none() && g.ai.is_some() {
                         g.names[seat] = PlayerName::Robot(random_name());
@@ -483,6 +509,7 @@ async fn ws_connected(
     // The socket is gone, whether or not it closed cleanly, so give up our
     // place at the table, unless a newer connection has already taken it.
     let mut g = game.write().await;
+    g.touch();
     let ours = |c: &Option<WsSender>| c.as_ref().is_some_and(|c| c.same_channel(&tx));
     if let Some(seat) = myseat {
         if !ours(&g.connections[seat]) {
@@ -509,6 +536,16 @@ async fn ws_connected(
     }
     println!("sending table update: {:?}", table_updates.send(()).is_ok());
     send_player_updates(&g);
+}
+
+/// Whether the connection for `myseat` (`None` for the robot) may act for
+/// `seat`.  Players act only for their own seat, and the robot only for seats
+/// that nobody is connected to.
+fn may_act_for(g: &GameState<WsSender>, myseat: Option<Seat>, seat: Seat) -> bool {
+    match myseat {
+        Some(me) => me == seat,
+        None => g.connections[seat].is_none(),
+    }
 }
 
 fn send_player_updates(g: &GameState<WsSender>) {
@@ -609,6 +646,12 @@ mod tests {
         })
     }
 
+    async fn send(client: &mut warp::test::WsClient, action: &Action) {
+        client
+            .send_text(serde_json::to_string(action).unwrap())
+            .await;
+    }
+
     /// Whether `ready` becomes true of the game within a few seconds.
     async fn eventually(
         game: &RwLock<GameState<WsSender>>,
@@ -621,6 +664,80 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         false
+    }
+
+    /// Table "t" in `tables`, with South sitting at it.
+    async fn table_with_south(
+        tables: &TableMap,
+    ) -> (Arc<RwLock<GameState<WsSender>>>, warp::test::WsClient) {
+        let game = Arc::clone(&tables.entry("t".to_string()));
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+        (game, south)
+    }
+
+    #[tokio::test]
+    async fn a_table_closes_once_nobody_has_played_for_an_hour() {
+        use tokio_tungstenite::tungstenite::Message;
+        let tables = TableMap::default();
+        let game = Arc::clone(&tables.entry("t".to_string()));
+        // The test client hides close frames, so use a real connection.
+        let (addr, server) =
+            warp::serve(socket(Some(Seat::South), game)).bind_ephemeral(([127, 0, 0, 1], 0));
+        tokio::spawn(server);
+        let (mut south, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        south.next().await.unwrap().unwrap();
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(59)).await;
+        assert!(tables.get("t").is_some(), "a table closed while in use");
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(61)).await;
+        assert!(tables.get("t").is_none(), "an idle table stayed open");
+        match south.next().await.unwrap().unwrap() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(u16::from(frame.code), CLOSED_FOR_INACTIVITY)
+            }
+            m => panic!("expected the table to close, but got {m:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_table_waits_for_its_players_to_come_back() {
+        let tables = TableMap::default();
+        let (game, mut south) = table_with_south(&tables).await;
+        south.send(warp::ws::Message::close()).await;
+        south.recv_closed().await.unwrap();
+        assert!(eventually(&game, |g| g.connections[Seat::South].is_none()).await);
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(9)).await;
+        assert!(tables.get("t").is_some(), "an empty table closed too soon");
+        close_idle_tables(&tables, Instant::now() + Duration::from_mins(11)).await;
+        assert!(tables.get("t").is_none(), "an empty table stayed open");
+    }
+
+    #[tokio::test]
+    async fn playing_after_a_long_pause_keeps_the_table() {
+        let tables = TableMap::default();
+        let (game, mut south) = table_with_south(&tables).await;
+        // A clock that started under two hours ago can't go back that far.
+        let Some(long_ago) = Instant::now().checked_sub(Duration::from_hours(2)) else {
+            return;
+        };
+        game.write().await.last_action = Some(long_ago);
+
+        south
+            .send_text(serde_json::to_string(&Action::ToggleCountForMe).unwrap())
+            .await;
+        assert!(
+            eventually(&game, |g| g.count_for_me[Seat::South]).await,
+            "the table was reset"
+        );
+        assert!(game.read().await.connections[Seat::South].is_some());
     }
 
     #[tokio::test]
@@ -668,5 +785,114 @@ mod tests {
             eventually(&game, |g| g.connections[Seat::South].is_none()).await,
             "a dead connection kept its seat"
         );
+    }
+
+    // In the tests below, every action sends South an update once the server
+    // has handled it, so South's `recv` waits for that.
+
+    #[tokio::test]
+    async fn players_act_only_for_their_own_seat() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South passes, and then tries to bid for West too.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        send(
+            &mut south,
+            &Action::Bid(Seat::West, Bid::Suit(1, Suit::Clubs)),
+        )
+        .await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![Bid::Pass], game.read().await.bids);
+
+        // South declares 1NT, so West leads, and South can't lead for West.
+        let west_card = {
+            let mut g = game.write().await;
+            g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+            g.lead = Some(Seat::West);
+            g.hands[Seat::West].min().unwrap()
+        };
+        send(&mut south, &Action::Play(Seat::West, west_card)).await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.played.is_empty());
+
+        // Once West has led, South plays dummy's cards.
+        let north_card = {
+            let mut g = game.write().await;
+            g.played = vec![west_card];
+            g.hands[Seat::West] -= Cards::singleton(west_card);
+            g.playable_cards(Seat::North, Seat::South)
+                .playable
+                .min()
+                .unwrap()
+        };
+        send(&mut south, &Action::Play(Seat::North, north_card)).await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![west_card, north_card], game.read().await.played);
+    }
+
+    #[tokio::test]
+    async fn only_legal_bids_count() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South opens the bidding, so there is nothing to redouble, and
+        // there is no eighth level.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Redouble)).await;
+        south.recv().await.unwrap();
+        send(
+            &mut south,
+            &Action::Bid(Seat::South, Bid::Suit(8, Suit::Clubs)),
+        )
+        .await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.bids.is_empty());
+
+        // East declares 1NT, and South, on lead, can't reopen the bidding.
+        {
+            let mut g = game.write().await;
+            g.dealer = Seat::East;
+            g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+            g.lead = Some(Seat::South);
+        }
+        send(&mut south, &Action::Bid(Seat::South, Bid::NT(7))).await;
+        south.recv().await.unwrap();
+        assert_eq!(4, game.read().await.bids.len());
+    }
+
+    #[tokio::test]
+    async fn the_robot_acts_only_for_seats_nobody_is_at() {
+        let game: Arc<RwLock<GameState<WsSender>>> = Default::default();
+        let mut robot = warp::test::ws()
+            .handshake(socket(None, game.clone()))
+            .await
+            .unwrap();
+        robot.recv().await.unwrap();
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+
+        // South is here, so the robot can't bid for South.
+        send(&mut robot, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        assert!(game.read().await.bids.is_empty());
+
+        // Nobody is at West, so the robot bids for West.
+        send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        send(&mut robot, &Action::Bid(Seat::West, Bid::Pass)).await;
+        south.recv().await.unwrap();
+        assert_eq!(vec![Bid::Pass, Bid::Pass], game.read().await.bids);
     }
 }

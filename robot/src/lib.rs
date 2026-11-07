@@ -58,6 +58,30 @@ impl PartialOrd for Bid {
     }
 }
 
+/// Whether `bid` may follow the auction `history`, ignoring whose turn it
+/// is.  Both the server and the robot use this, so they never disagree.
+pub fn bid_follows(history: &[Bid], bid: Bid) -> bool {
+    let n = history.len();
+    match bid {
+        Bid::Pass => true,
+        Bid::Double => {
+            (n >= 1 && history[n - 1].is_contract())
+                || (n >= 3
+                    && history[n - 2..] == [Bid::Pass, Bid::Pass]
+                    && history[n - 3].is_contract())
+        }
+        Bid::Redouble => false,
+        Bid::Suit(level, _) | Bid::NT(level) if !(1..=7).contains(&level) => false,
+        _ => {
+            if let Some(hb) = history.iter().rev().find(|x| x.is_contract()) {
+                bid > *hb
+            } else {
+                true
+            }
+        }
+    }
+}
+
 #[test]
 fn bid_comparisons() {
     assert!(Bid::NT(1) == Bid::NT(1));
@@ -65,6 +89,16 @@ fn bid_comparisons() {
     assert!(Bid::NT(1).is_contract());
     assert_eq!(Some(1), Bid::NT(1).level());
     assert_eq!(Some(3), Bid::NT(3).level());
+}
+
+#[test]
+fn bids_go_from_one_to_seven() {
+    use bridge_deck::Suit::Clubs;
+    let game = GameState::<()>::new();
+    assert!(game.bid_is_legal(Seat::South, Bid::Suit(1, Clubs)));
+    assert!(game.bid_is_legal(Seat::South, Bid::Suit(7, Clubs)));
+    assert!(!game.bid_is_legal(Seat::South, Bid::Suit(8, Clubs)));
+    assert!(!game.bid_is_legal(Seat::South, Bid::NT(0)));
 }
 
 #[with_template("[%" "%]" "bid.html")]
@@ -231,19 +265,9 @@ impl<C> GameState<C> {
     pub fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
         self.conventions[0].refine2(bid, otherbids).is_some()
     }
-    pub fn check_timeout(&mut self) -> bool {
-        let now = std::time::Instant::now();
-        if let Some(last_action) = self.last_action {
-            if now.duration_since(last_action) > std::time::Duration::from_secs(60 * 60) {
-                *self = GameState::new();
-                true
-            } else {
-                self.last_action = Some(now);
-                false
-            }
-        } else {
-            false
-        }
+    /// Notes that something just happened at this table.
+    pub fn touch(&mut self) {
+        self.last_action = Some(std::time::Instant::now());
     }
     pub fn redeal(&mut self) {
         let dealer = self.dealer.next();
@@ -349,27 +373,7 @@ impl<C> GameState<C> {
     }
 
     pub fn bid_is_legal(&self, seat: Seat, bid: Bid) -> bool {
-        if Some(seat) != self.bidder() {
-            return false;
-        }
-        let n = self.bids.len();
-        match bid {
-            Bid::Pass => true,
-            Bid::Double => {
-                (n >= 1 && self.bids[n - 1].is_contract())
-                    || (n >= 3
-                        && self.bids[n - 2..] == [Bid::Pass, Bid::Pass]
-                        && self.bids[n - 3].is_contract())
-            }
-            Bid::Redouble => false,
-            _ => {
-                if let Some(hb) = self.highest_contract_bid() {
-                    bid > hb
-                } else {
-                    true
-                }
-            }
-        }
+        Some(seat) == self.bidder() && bid_follows(&self.bids, bid)
     }
 
     pub fn playable_cards(&self, seat: Seat, player: Seat) -> PlayableHand {

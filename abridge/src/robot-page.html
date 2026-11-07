@@ -41,9 +41,14 @@
             document.getElementById('main').innerHTML = action;
             ws.send(action);
         };
-        ws.onclose = function () {
+        ws.onclose = function (event) {
             console.log('disconnected');
-            location.reload();
+            if (event.code == 4000) {
+                // The table closed for inactivity, so the robot's job is done.
+                document.getElementById('main').innerHTML = event.reason;
+            } else {
+                location.reload();
+            }
         };
         function send_message(action) {
             ws.send(action);
