@@ -714,30 +714,39 @@ fn advice_after_a_one_spade_opening() {
         &one_spade,
         "S Q32 H KJ4 D J543 C 654",
         expect![[r#"
-        Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
-        Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
-        You should bid, since a pass would show at most 5 high card points (you have 7).
-        Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
-        ♠ 3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
-        ♠ 4♠ Natural game: it needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
-        ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
-        ♣ 2♣ Two-level response (New suit): needs 4+ clubs (you have 3) and 10+ high card points (you have 7).
-        NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
-        NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
+            Bidding advice
+            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+            Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
+            You should bid, since a pass would show at most 5 high card points (you have 7).
+            Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
+            ♠ 3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
+            ♠ 4♠ Natural game: it needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+            ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
+            ♣ 2♣ Two-level response (New suit): needs 4+ clubs (you have 3) and 10+ high card points (you have 7).
+            NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
+            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+            Possible contracts
+            Together you have 20–28 high card points and 8+ spades.
+            3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 18+.
+            4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+.
+            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+."#]],
     );
     check(
         &one_spade,
         "S 32 H 5432 D 432 C 5432",
         expect![[r#"
-        Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
-        Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
-        Suggested: Pass Response pass. It shows at most 5 high card points.
-        ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
-        ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
-        ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3) and 10+ high card points (you have 0).
-        ♣ 2♣ Two-level response (New suit): needs 10+ high card points (you have 0).
-        NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0).
-        NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 21 high card points, so that is out of reach."#]],
+            Bidding advice
+            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+            Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
+            Suggested: Pass Response pass. It shows at most 5 high card points.
+            ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
+            ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
+            ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3) and 10+ high card points (you have 0).
+            ♣ 2♣ Two-level response (New suit): needs 10+ high card points (you have 0).
+            NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0).
+            NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 21 high card points, so that is out of reach.
+            Possible contracts
+            Together you have 13–21 high card points."#]],
     );
 }
 
@@ -749,16 +758,19 @@ fn advice_after_one_notrump() {
         &[NT(1), Pass],
         "S KJ32 H Q432 D 32 C 432",
         expect![[r#"
-        Partner opened 1NT, showing a balanced hand and 15–17 high card points.
-        Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
-        You should bid, since a pass would show at most 5 high card points (you have 6).
-        No bid fits your hand, so the robot would pass.
-        ♠ 2♥ Jacobi transfer: needs 5+ spades (you have 4).
-        ♠ 3♠ Natural: it needs 8+ spades and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
-        ♥ 2♦ Jacobi transfer: needs 5+ hearts (you have 4).
-        ♣ 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6).
-        NT 2NT Game invite: needs 8–10 high card points (you have 6).
-        NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 17 high card points, so that is out of reach."#]],
+            Bidding advice
+            Partner opened 1NT, showing a balanced hand and 15–17 high card points.
+            Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
+            You should bid, since a pass would show at most 5 high card points (you have 6).
+            No bid fits your hand, so the robot would pass.
+            ♠ 2♥ Jacobi transfer: needs 5+ spades (you have 4).
+            ♠ 3♠ Natural: it needs 8+ spades and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
+            ♥ 2♦ Jacobi transfer: needs 5+ hearts (you have 4).
+            ♣ 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6).
+            NT 2NT Game invite: needs 8–10 high card points (you have 6).
+            NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
+            Possible contracts
+            Together you have 21–23 high card points."#]],
     );
 }
 
@@ -787,44 +799,56 @@ fn advice_follows_every_seeded_auction() {
 }
 
 #[test]
-fn contracts_weigh_partner_and_the_next_bid() {
+fn advice_on_a_rebid_after_one_notrump() {
     use crate::Bid::*;
-    use bridge_deck::Suit::*;
-    let sayc = Convention::sayc();
-    let contracts = |bids: &[Bid], hand| {
-        let text = advice_text(&sayc, bids, hand);
-        text.split("Possible contracts").nth(1).unwrap().to_string()
-    };
-
-    let text = contracts(&[Suit(1, Spades), Pass], "S Q32 H KJ4 D J543 C 654");
-    assert!(text.contains("Together you have 20–28 high card points and 8+ spades."));
-    assert!(text.contains(
-        "4♠ game: needs 8+ spades and 26+ high card points between you; \
-         that works if partner has 19+ high card points (they have shown 13–21). \
-         Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+."
-    ));
-    // Partner's 1♠ makes a heart fit unlikely.
-    assert!(!text.contains("♥"), "{}", text);
-
-    let text = contracts(
+    use bridge_deck::Suit::Hearts;
+    // 2NT shows more than the opening did, so partner can bid 3NT.
+    check(
         &[Suit(1, Hearts), Pass, NT(1), Pass],
         "S A2 H KQ976 D AJ3 C KQ2",
+        expect![[r#"
+            Bidding advice
+            Partner bid 1NT, showing at most 3 spades and 6–10 high card points.
+            You opened 1♥, showing 5+ hearts and 13–21 long high card points.
+            Your hand: 19 HCP, 20 LHCP and 20 SHCP, with 2♠ 5♥ 3♦ 3♣.
+            Suggested: 2NT Rebid (Balanced, 18-19 hcp). It shows a balanced hand and 18–19 high card points. Your 19 high card points are near the top of that range.
+            ♥ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
+            ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 17–18 long high card points (you have 20).
+            ♥ 4♥ Natural game: it needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10).
+            ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
+            ♣ 2♣ New suit: needs 4+ clubs (you have 3).
+            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10).
+            Possible contracts
+            Together you have 25–29 high card points.
+            3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows 18+ high card points, more than you have shown so far, which is enough for partner to bid it.
+            4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows 18+ high card points, more than you have shown so far, so partner can bid it with 8+.
+            3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows 18+ high card points, more than you have shown so far, so partner can bid it with 8+."#]],
     );
-    assert!(
-        text.contains(
-            "3NT game: needs 26+ high card points between you; \
-         that works if partner has 7+ high card points (they have shown 6–10). \
-         Bidding 2NT shows 18+ high card points, more than you have shown so far, \
-         so partner can bid it with 8+."
-        ),
-        "{}",
-        text
-    );
+}
 
-    // With nine trumps the three level is safe in competition.
-    let text = contracts(
+#[test]
+fn advice_in_competition() {
+    use crate::Bid::*;
+    use bridge_deck::Suit::*;
+    // With nine trumps the three level is safe.
+    check(
         &[Suit(1, Hearts), Suit(1, Spades)],
         "S 32 H K432 D A432 C 432",
+        expect![[r#"
+            Bidding advice
+            Partner opened 1♥, showing 5+ hearts and 13–21 long high card points.
+            Your right-hand opponent bid 1♠, showing 5+ spades and 8–16 high card points.
+            Your hand: 7 HCP, 7 LHCP and 8 SHCP, with 2♠ 4♥ 4♦ 3♣.
+            Suggested: 3♥ Law of total tricks. It needs 9+ hearts between you, and you have that.
+            ♥ 2♥ Law of total tricks: also fits, but the system prefers 3♥.
+            ♥ 4♥ Law of total tricks: it needs 10+ hearts between you; that works if partner has 6+ hearts (they have shown 5+).
+            ♦ 2♦ Law of total tricks: it needs 8+ diamonds between you; that works if partner has 4+ diamonds.
+            ♦ 3♦ Law of total tricks: it needs 9+ diamonds between you; that works if partner has 5+ diamonds.
+            ♣ 2♣ Law of total tricks: it needs 8+ clubs between you; that works if partner has 5+ clubs.
+            NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+            Possible contracts
+            Together you have 20–28 high card points and 9+ hearts.
+            3♥ part-score: needs 9+ hearts between you; you have that between you.
+            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
     );
-    assert!(text.contains("3♥ part-score: needs 9+ hearts between you; you have that between you."));
 }
