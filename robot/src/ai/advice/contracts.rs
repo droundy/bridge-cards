@@ -6,7 +6,7 @@
 //! already sure, depends on partner, or is out of reach.  When it depends on
 //! partner, what matters is what our next bid tells them: once they know we
 //! have that much, they can bid the contract when they hold the rest.
-use super::{describe, join, Candidate, Reach, Shown, Strain};
+use super::{bound, describe, join, Candidate, Measure, Need, Reach, Shown, Strain};
 use crate::ai::{legal_bids, Convention};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
@@ -110,7 +110,7 @@ impl Convention {
 
 /// What the hand and partner have between them, as far as anyone knows.
 fn together(hand: &HandValuation, partner: &Shown) -> FormattedString<HTML> {
-    let (lo, hi) = partner.range(super::Measure::Hcp);
+    let (lo, hi) = partner.range(Measure::Hcp);
     let points = if hi >= HandValuation::MAX.hcp {
         format!("{}+", hand.hcp + lo)
     } else {
@@ -177,42 +177,57 @@ impl Kind {
     }
 }
 
-/// How to bid toward a contract that depends on partner: with the bid among
-/// `candidates` that fits the hand and shows partner the most, how much
-/// partner then needs to bid it.
+/// How to bid toward a contract that depends on partner.  Among the bids in
+/// `candidates` that fit the hand, it takes the one after which partner
+/// needs the least beyond what they have shown, in points and in trumps
+/// alike, and says what partner then knows and needs.
 fn route(
     contract: &Contract,
     me: &Shown,
     partner: &Shown,
     candidates: &[Candidate],
 ) -> FormattedString<HTML> {
-    let points = super::Measure::Hcp;
+    let nothing = FormattedString::from_formatted("");
     let fitting = candidates.iter().filter(|c| c.fits && c.bid != Bid::Pass);
     if fitting.clone().any(|c| c.bid == contract.bid) {
         return format_as!(HTML, " You can bid it now.");
     }
     // The robot's choice comes first, and wins a tie.
     let best = fitting
-        .rev()
-        .map(|c| (c, me.and(&c.meaning).range(points).0))
-        .max_by_key(|&(_, shown)| shown);
-    let (bid, shown) = match best {
-        Some((c, shown)) if shown > 0 => (c.bid, shown),
-        _ => return FormattedString::from_formatted(""),
+        .filter_map(|c| {
+            let after = me.and(&c.meaning);
+            let reach = Reach::of(&contract.needs, &after.least(), partner);
+            let stretch = match &reach {
+                Reach::Sure => 0,
+                Reach::IfPartnerHas(needs) => needs.iter().map(Need::stretch).sum(),
+                Reach::OutOfReach(_) => return None,
+            };
+            Some((stretch, c.bid, after, reach))
+        })
+        .min_by_key(|&(stretch, ..)| stretch);
+    let (bid, after, reach) = match best {
+        Some((_, bid, after, reach)) => (bid, after, reach),
+        None => return nothing,
     };
-    let more = if me.range(points).0 > 0 && shown > me.range(points).0 {
-        ", more than you have shown so far"
+    let knows: Vec<String> = Measure::all()
+        .filter(|&m| m.of(&contract.needs) > 0)
+        .filter_map(|m| bound(m, m.of(&after.least()), m.limit()))
+        .collect();
+    if knows.is_empty() {
+        return nothing;
+    }
+    let then = match reach {
+        Reach::IfPartnerHas(needs) => format!(
+            "so they can bid it with {}",
+            join(needs.iter().map(Need::words).collect())
+        ),
+        _ => "which is enough for them to bid it".to_string(),
+    };
+    let points = Measure::Hcp;
+    if me.range(points).0 > 0 && after.range(points).0 > me.range(points).0 {
+        format_as!(HTML, " Bidding " bid " shows more than you have so far: partner then knows you have "
+                   join(knows) ", " then ".")
     } else {
-        ""
-    };
-    let need = contract.needs.hcp.saturating_sub(shown);
-    let (lo, hi) = partner.range(points);
-    let then = if need <= lo {
-        "which is enough for partner to bid it".to_string()
-    } else if need > hi {
-        format!("but partner would need {}+ to bid it", need)
-    } else {
-        format!("so partner can bid it with {}+", need)
-    };
-    format_as!(HTML, " Bidding " bid " shows " shown "+ high card points" more ", " then ".")
+        format_as!(HTML, " After " bid ", partner knows you have " join(knows) ", " then ".")
+    }
 }

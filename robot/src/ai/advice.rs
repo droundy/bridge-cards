@@ -222,6 +222,13 @@ impl Shown {
             _ => (m.of(&self.min), m.of(&self.max)),
         }
     }
+    /// The least they have shown, counting long points as `range` does.
+    fn least(&self) -> HandValuation {
+        HandValuation {
+            hcp: self.range(Measure::Hcp).0,
+            ..self.min
+        }
+    }
     /// What they will have shown after also making a bid that means `meaning`.
     fn and(&self, meaning: &Convention) -> Shown {
         let mut shown = self.clone();
@@ -582,8 +589,8 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
 enum Reach {
     /// The hand and the least partner has shown are enough.
     Sure,
-    /// Enough if partner has these, each with what partner has shown.
-    IfPartnerHas(Vec<String>),
+    /// Enough if partner has these.
+    IfPartnerHas(Vec<Need>),
     /// More than partner can have, given the most they have shown.
     OutOfReach(Vec<String>),
 }
@@ -600,10 +607,10 @@ impl Reach {
             if need > hi {
                 out_of_reach.push(bound(m, 0, hi).unwrap_or_default());
             } else if need > lo {
-                let needs = bound(m, need, m.limit()).unwrap_or_default();
-                partner_needs.push(match range(m, lo, hi) {
-                    Some(shown) => format!("{} (they have shown {})", needs, shown),
-                    None => needs,
+                partner_needs.push(Need {
+                    m,
+                    amount: need,
+                    shown: (lo, hi),
                 });
             }
         }
@@ -619,13 +626,39 @@ impl Reach {
         match self {
             Reach::Sure => "you have that between you".to_string(),
             Reach::IfPartnerHas(needs) => {
-                format!("that works if partner has {}", join(needs.clone()))
+                let needs = needs
+                    .iter()
+                    .map(|n| match range(n.m, n.shown.0, n.shown.1) {
+                        Some(shown) => format!("{} (they have shown {})", n.words(), shown),
+                        None => n.words(),
+                    });
+                format!("that works if partner has {}", join(needs.collect()))
             }
             Reach::OutOfReach(shown) => format!(
                 "partner has shown {}, so that is out of reach",
                 join(shown.clone())
             ),
         }
+    }
+}
+
+/// Something partner needs to hold for a contract.
+struct Need {
+    m: Measure,
+    /// How much of `m` partner needs.
+    amount: u8,
+    /// The range of `m` that partner has shown.
+    shown: (u8, u8),
+}
+
+impl Need {
+    fn words(&self) -> String {
+        bound(self.m, self.amount, self.m.limit()).unwrap_or_default()
+    }
+    /// How far this asks beyond the least partner has shown, to compare the
+    /// bids that might lead to a contract.
+    fn stretch(&self) -> u32 {
+        self.m.weight() * (self.amount - self.shown.0) as u32
     }
 }
 
@@ -710,6 +743,7 @@ fn advice_after_a_one_spade_opening() {
     use crate::Bid::*;
     use bridge_deck::Suit::Spades;
     let one_spade = [Suit(1, Spades), Pass];
+    // Toward 4♠, 2♠ tells partner about the spade fit, which 1NT would not.
     check(
         &one_spade,
         "S Q32 H KJ4 D J543 C 654",
@@ -727,9 +761,9 @@ fn advice_after_a_one_spade_opening() {
             NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
             Possible contracts
             Together you have 20–28 high card points and 8+ spades.
-            3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 18+.
-            4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+.
-            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). Bidding 2♠ shows 6+ high card points, so partner can bid it with 20+."#]],
+            3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
+            4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
+            3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points."#]],
     );
     check(
         &one_spade,
@@ -820,9 +854,9 @@ fn advice_on_a_rebid_after_one_notrump() {
             NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10).
             Possible contracts
             Together you have 25–29 high card points.
-            3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows 18+ high card points, more than you have shown so far, which is enough for partner to bid it.
-            4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows 18+ high card points, more than you have shown so far, so partner can bid it with 8+.
-            3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows 18+ high card points, more than you have shown so far, so partner can bid it with 8+."#]],
+            3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
+            4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
+            3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
     );
 }
 
