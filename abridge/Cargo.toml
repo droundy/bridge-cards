@@ -23,7 +23,7 @@ axum = { version = "0.8", features = ["ws"] }
 internment = "0.7.0"
 dashmap = "5.5.3"
 
-display-as = "0.7.0"
+display-as = { version = "0.8.0", features = ["axum"] }
 rustls-acme = { version = "0.15.4", default-features = false, features = ["ring", "axum", "webpki-roots", "tls12"] }
 axum-server = "0.8"
 axum-extra = { version = "0.12.6", features = ["cookie"] }

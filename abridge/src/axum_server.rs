@@ -12,7 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::CookieJar;
-use display_as::{display, DisplayAs, HTML};
+use display_as::{display, HTML};
 use futures::StreamExt;
 use robot::{PlayerName, Seat};
 use rustls_acme::caches::DirCache;
@@ -55,11 +55,6 @@ mod tests;
 struct AppState {
     tables: TableMap,
     table_updates: Sender<()>,
-}
-
-/// Render `page` as an html response.
-fn html<T: DisplayAs<HTML>>(page: &T) -> Response {
-    Html(display(HTML, page).to_string()).into_response()
 }
 
 /// Redirect (temporarily) to a path on this site, in which `segments` are
@@ -167,15 +162,19 @@ async fn room(tables: &TableMap) -> Room {
 
 async fn index(State(app): State<AppState>, RawQuery(query): RawQuery) -> Response {
     if query.as_deref().map_or(true, str::is_empty) {
-        html(&Index {
-            room: room(&app.tables).await,
-        })
+        display(
+            HTML,
+            &Index {
+                room: room(&app.tables).await,
+            },
+        )
+        .into_response()
     } else {
         // The page asks for this to learn about the next change to a table.
         println!("Someone is long polling");
         app.table_updates.subscribe().recv().await.ok();
         println!("Got a change.");
-        html(&room(&app.tables).await)
+        display(HTML, &room(&app.tables).await).into_response()
     }
 }
 
@@ -192,14 +191,14 @@ async fn table_seat(
         jar.get("name")
             .map_or_else(random_name, |c| c.value().to_string()),
     );
-    Ok(html(&PlayerPage(Player { seat, game: &g })))
+    Ok(display(HTML, &PlayerPage(Player { seat, game: &g })).into_response())
 }
 
 async fn table_robot_tab(
     Path((_table, seat)): Path<(String, String)>,
 ) -> Result<Response, NotFound> {
     parse_seat(&seat)?;
-    Ok(html(&RobotPage))
+    Ok(display(HTML, &RobotPage).into_response())
 }
 
 async fn random_seat(State(app): State<AppState>) -> Response {
