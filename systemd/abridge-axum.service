@@ -1,0 +1,19 @@
+[Unit]
+Description=abridge server (axum)
+After=network.target
+StartLimitIntervalSec=0
+# Both servers want ports 80 and 443, so starting this one stops the warp one.
+Conflicts=abridge.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+User=root
+# Without --production, the certificate comes from Let's Encrypt's staging
+# server, which browsers do not trust.  Add it once staging works.
+ExecStart=/home/droundy/abridge-axum --domain abridgegame.com --email daveroundy@gmail.com --cache-dir /root/lists/acme-cache
+WorkingDirectory=/root/lists
+
+[Install]
+WantedBy=multi-user.target
