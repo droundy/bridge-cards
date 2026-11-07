@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace layout
 
-A Cargo workspace with four crates, layered bottom to top:
+A Cargo workspace with four bridge crates, layered bottom to top, and one general-purpose crate:
 
 - **`bridge-deck`** (repo root, `src/`): the `Card` (8 bits) and `Cards` (64-bit set) types plus hand-evaluation helpers (`HandValuation`, `PerSuit`, `CardMap`). `#![deny(missing_docs)]` is on, so every public item needs a doc comment. HTML/UTF8 rendering lives behind the optional `display-as` feature (`src/display.rs`).
 - **`bridge-solver`**: a card-play solver (`Naive`, `Starting`, `Score`). It samples possible deals for the cards nobody can see.
 - **`robot`**: the game model (`GameState`, `Seat`, `Seated<T>`, `Bid`, `Action`) and the AI (`src/ai.rs`). It builds as an rlib and also as a `cdylib` for WebAssembly.
 - **`abridge`**: the axum web server for the online bridge game (abridgegame.com). `abridge/src/lib.rs` holds the tables, templates and websocket logic, and `abridge/src/axum_server.rs` holds the routes and TLS, whose certificate `rustls-acme` obtains from Let's Encrypt.
+- **`wording`**: builds English sentences from pieces that know their own grammar (`Quantity` picks singular or plural, `Verb` agrees, `a` picks "a" or "an", `List` joins items) into a `Text` of words and markup, which displays as HTML, UTF8 or LaTeX through display-as. It knows nothing about bridge, so that it can move to its own repository later; bridge supplies the markup type (bids, suits).
 
 ## Commands
 

@@ -1,0 +1,15 @@
+[package]
+name = "wording"
+version = "0.1.0"
+authors = ["David Roundy <daveroundy@gmail.com>"]
+edition = "2021"
+
+description = "Build English sentences from pieces that know their own grammar, and display them as HTML, plain text or LaTeX"
+repository = "https://github.com/droundy/bridge-cards"
+license = "MIT/Apache-2.0"
+
+[dependencies]
+display-as = "0.7.0"
+
+[dev-dependencies]
+expect-test = "1.5"
