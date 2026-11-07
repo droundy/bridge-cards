@@ -29,5 +29,8 @@ dashmap = "5.5.3"
 
 display-as = { version = "0.7.0", features = ["warp"] }
 
+[dev-dependencies]
+tokio-tungstenite = "0.21.0"
+
 [profile.release]
 lto = true

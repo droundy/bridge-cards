@@ -4,6 +4,7 @@ use display_as::{display, format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
 use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
@@ -44,29 +45,53 @@ impl TableMap {
     }
 }
 
+/// A table where nothing has happened for this long is closed, even if some
+/// tabs are still connected to it, since nobody is playing there.
+const IDLE_TABLE: Duration = Duration::from_secs(60 * 60);
+/// A table that nobody is sitting at is closed once nothing has happened for
+/// this long, which gives a player whose connection dropped time to come back.
+const EMPTY_TABLE: Duration = Duration::from_secs(60 * 10);
+/// The websocket close code that tells a page its table was closed for
+/// inactivity, so that it shouldn't reconnect.
+const CLOSED_FOR_INACTIVITY: u16 = 4000;
+
 async fn clean_tables(tables: TableMap) {
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60 * 10)).await;
-        let keys = tables.0.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
-        let mut to_clean = std::collections::HashSet::new();
-        for k in keys {
-            if let Some(g) = tables.get(&k) {
-                let g = g.read().await;
-                if g.connections.iter().all(Option::is_none) {
-                    println!("Cleaning up table {k} where no one is sitting.");
-                    to_clean.insert(k.to_string());
-                } else if let Some(t) = g.last_action {
-                    if t.elapsed() > std::time::Duration::from_secs(60 * 60) {
-                        println!("Cleaning up table {k} where no one has played recently.");
-                        to_clean.insert(k.to_string());
-                    }
-                }
+        tokio::time::sleep(EMPTY_TABLE).await;
+        close_idle_tables(&tables, Instant::now()).await;
+    }
+}
+
+/// Closes the tables where nobody is playing at `now`, and tells any tabs
+/// still connected to them that their table is gone.
+async fn close_idle_tables(tables: &TableMap, now: Instant) {
+    let keys = tables.0.iter().map(|r| r.key().clone()).collect::<Vec<_>>();
+    for k in keys {
+        // Don't hold the map's lock while waiting for the table's.
+        let Some(game) = tables.get(&k).map(|g| Arc::clone(&g)) else {
+            continue;
+        };
+        let idle = {
+            let g = game.read().await;
+            let idle = g
+                .last_action
+                .map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
+            let empty = g.connections.iter().all(Option::is_none);
+            idle > IDLE_TABLE || (empty && idle > EMPTY_TABLE)
+        };
+        if idle {
+            println!("Closing table {k}, where nobody is playing.");
+            // Remove it first, so that nobody new can join it.
+            tables.remove(&k);
+            let g = game.read().await;
+            let closed = warp::ws::Message::close_with(
+                CLOSED_FOR_INACTIVITY,
+                "This table closed because nobody was playing.",
+            );
+            for c in g.connections.iter().chain([&g.ai]).flatten() {
+                c.send(closed.clone()).ok();
             }
         }
-        for k in to_clean {
-            tables.remove(&k);
-        }
-        // tables.retain(|_, t| t.read().await.connections.any(|c| c.is_some()));
     }
 }
 
@@ -164,7 +189,7 @@ pub async fn serve_abridge(config: Config) {
                     .to_string();
                 let g = tables.entry(table);
                 let mut g = g.write().await;
-                g.check_timeout();
+                g.touch();
                 if let Some(name) = name {
                     g.names[seat] = PlayerName::Human(name);
                 } else {
@@ -375,6 +400,7 @@ async fn ws_connected(
         } else {
             g.ai = Some(tx.clone());
         }
+        g.touch();
         send_player_updates(&g);
         println!("sending table update: {:?}", table_updates.send(()).is_ok());
     }
@@ -462,7 +488,7 @@ async fn ws_connected(
                         }
                     }
                 }
-                g.check_timeout();
+                g.touch();
                 for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
                     if g.names[seat] == PlayerName::None && g.connections[seat].is_none() && g.ai.is_some() {
                         g.names[seat] = PlayerName::Robot(random_name());
@@ -477,6 +503,7 @@ async fn ws_connected(
     // The socket is gone, whether or not it closed cleanly, so give up our
     // place at the table, unless a newer connection has already taken it.
     let mut g = game.write().await;
+    g.touch();
     let ours = |c: &Option<WsSender>| c.as_ref().is_some_and(|c| c.same_channel(&tx));
     if let Some(seat) = myseat {
         if !ours(&g.connections[seat]) {
@@ -631,6 +658,80 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         false
+    }
+
+    /// Table "t" in `tables`, with South sitting at it.
+    async fn table_with_south(
+        tables: &TableMap,
+    ) -> (Arc<RwLock<GameState<WsSender>>>, warp::test::WsClient) {
+        let game = Arc::clone(&tables.entry("t".to_string()));
+        let mut south = warp::test::ws()
+            .handshake(socket(Some(Seat::South), game.clone()))
+            .await
+            .unwrap();
+        south.recv().await.unwrap();
+        (game, south)
+    }
+
+    #[tokio::test]
+    async fn a_table_closes_once_nobody_has_played_for_an_hour() {
+        use tokio_tungstenite::tungstenite::Message;
+        let tables = TableMap::default();
+        let game = Arc::clone(&tables.entry("t".to_string()));
+        // The test client hides close frames, so use a real connection.
+        let (addr, server) =
+            warp::serve(socket(Some(Seat::South), game)).bind_ephemeral(([127, 0, 0, 1], 0));
+        tokio::spawn(server);
+        let (mut south, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+            .await
+            .unwrap();
+        south.next().await.unwrap().unwrap();
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_secs(59 * 60)).await;
+        assert!(tables.get("t").is_some(), "a table closed while in use");
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_secs(61 * 60)).await;
+        assert!(tables.get("t").is_none(), "an idle table stayed open");
+        match south.next().await.unwrap().unwrap() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(u16::from(frame.code), CLOSED_FOR_INACTIVITY)
+            }
+            m => panic!("expected the table to close, but got {m:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_table_waits_for_its_players_to_come_back() {
+        let tables = TableMap::default();
+        let (game, mut south) = table_with_south(&tables).await;
+        south.send(warp::ws::Message::close()).await;
+        south.recv_closed().await.unwrap();
+        assert!(eventually(&game, |g| g.connections[Seat::South].is_none()).await);
+
+        close_idle_tables(&tables, Instant::now() + Duration::from_secs(9 * 60)).await;
+        assert!(tables.get("t").is_some(), "an empty table closed too soon");
+        close_idle_tables(&tables, Instant::now() + Duration::from_secs(11 * 60)).await;
+        assert!(tables.get("t").is_none(), "an empty table stayed open");
+    }
+
+    #[tokio::test]
+    async fn playing_after_a_long_pause_keeps_the_table() {
+        let tables = TableMap::default();
+        let (game, mut south) = table_with_south(&tables).await;
+        // A clock that started under two hours ago can't go back that far.
+        let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(2 * 60 * 60)) else {
+            return;
+        };
+        game.write().await.last_action = Some(long_ago);
+
+        south
+            .send_text(serde_json::to_string(&Action::ToggleCountForMe).unwrap())
+            .await;
+        assert!(
+            eventually(&game, |g| g.count_for_me[Seat::South]).await,
+            "the table was reset"
+        );
+        assert!(game.read().await.connections[Seat::South].is_some());
     }
 
     #[tokio::test]
