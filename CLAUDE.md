@@ -9,7 +9,7 @@ A Cargo workspace with four crates, layered bottom to top:
 - **`bridge-deck`** (repo root, `src/`): the `Card` (8 bits) and `Cards` (64-bit set) types plus hand-evaluation helpers (`HandValuation`, `PerSuit`, `CardMap`). `#![deny(missing_docs)]` is on, so every public item needs a doc comment. HTML/UTF8 rendering lives behind the optional `display-as` feature (`src/display.rs`).
 - **`bridge-solver`**: a card-play solver (`Naive`, `Starting`, `Score`). It samples possible deals for the cards nobody can see.
 - **`robot`**: the game model (`GameState`, `Seat`, `Seated<T>`, `Bid`, `Action`) and the AI (`src/ai.rs`). It builds as an rlib and also as a `cdylib` for WebAssembly.
-- **`abridge`**: the warp web server for the online bridge game (abridgegame.com).
+- **`abridge`**: the web server for the online bridge game (abridgegame.com). It has two binaries over one library: `abridge` (warp, with `lets-encrypt-warp`) and `abridge-axum` (axum, with `rustls-acme`; `abridge/src/axum_server.rs`). The game, templates and `serve_connection` are shared. Only routing, TLS and the websocket framing differ.
 
 ## Commands
 

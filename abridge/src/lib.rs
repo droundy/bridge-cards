@@ -1,7 +1,7 @@
 use bridge_deck::{Cards, Suit};
 use dashmap::DashMap;
 use display_as::{display, format_as, with_template, DisplayAs, HTML};
-use futures::{SinkExt, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use robot::{Action, Bid, GameState, PlayerName, Seat, Seated};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +9,9 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::{mpsc, RwLock};
 use warp::reply::Reply;
 use warp::{path, Filter};
+
+mod axum_server;
+pub use axum_server::{serve_abridge_axum, AxumConfig};
 
 /// The configuration for running the server
 #[derive(clap::Parser)]
@@ -84,10 +87,10 @@ async fn close_idle_tables(tables: &TableMap, now: Instant) {
             // Remove it first, so that nobody new can join it.
             tables.remove(&k);
             let g = game.read().await;
-            let closed = warp::ws::Message::close_with(
-                CLOSED_FOR_INACTIVITY,
-                "This table closed because nobody was playing.",
-            );
+            let closed = Outgoing::Close {
+                code: CLOSED_FOR_INACTIVITY,
+                reason: "This table closed because nobody was playing.",
+            };
             for c in g.connections.iter().chain([&g.ai]).flatten() {
                 c.send(closed.clone()).ok();
             }
@@ -378,17 +381,66 @@ enum IsMe<T> {
 #[with_template("[%" "%]" "player-name.html")]
 impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
-type WsSender = mpsc::UnboundedSender<warp::ws::Message>;
+/// A message to a websocket, independent of the web framework that carries it.
+#[derive(Clone, Debug)]
+enum Outgoing {
+    Text(String),
+    Close { code: u16, reason: &'static str },
+}
 
+/// A message from a websocket, independent of the web framework that carries it.
+#[derive(Debug)]
+enum Incoming {
+    Text(String),
+    Close,
+    /// Anything else, such as a ping, which we ignore.
+    Other,
+}
+
+type WsSender = mpsc::UnboundedSender<Outgoing>;
+
+/// Runs the websocket of a connection that warp has upgraded.
 async fn ws_connected(
     myseat: Option<Seat>,
     ws: warp::ws::WebSocket,
     game: Arc<RwLock<GameState<WsSender>>>,
     table_updates: Sender<()>,
 ) {
-    // Split the socket into a sender and receive of messages.
-    let (mut user_ws_tx, mut user_ws_rx) = ws.split();
+    let (tx, rx) = ws.split();
+    let incoming = rx.map(|m| {
+        m.map(|m| {
+            if m.is_close() {
+                Incoming::Close
+            } else if let Ok(text) = m.to_str() {
+                Incoming::Text(text.to_string())
+            } else {
+                Incoming::Other
+            }
+        })
+        .map_err(|e| e.to_string())
+    });
+    let outgoing = tx.with(|o| {
+        futures::future::ready(Ok::<_, warp::Error>(match o {
+            Outgoing::Text(text) => warp::ws::Message::text(text),
+            Outgoing::Close { code, reason } => warp::ws::Message::close_with(code, reason),
+        }))
+    });
+    serve_connection(myseat, incoming, outgoing, game, table_updates).await
+}
 
+/// Plays the game for one websocket connection, for the seat `myseat` or for
+/// the robot if that is `None`, until the connection closes.
+async fn serve_connection<In, Out>(
+    myseat: Option<Seat>,
+    mut user_ws_rx: In,
+    mut user_ws_tx: Out,
+    game: Arc<RwLock<GameState<WsSender>>>,
+    table_updates: Sender<()>,
+) where
+    In: Stream<Item = Result<Incoming, String>> + Unpin,
+    Out: Sink<Outgoing> + Unpin + Send + 'static,
+    Out::Error: std::fmt::Display,
+{
     // Use an unbounded channel to handle buffering and flushing of messages
     // to the websocket...
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -422,18 +474,19 @@ async fn ws_connected(
                 break;
             }
         };
-        if msg.is_close() {
-            println!("got a close");
-            break;
-        }
-        match msg.to_str().map(serde_json::from_str::<Action>) {
-            Err(e) => {
-                eprintln!("Bad UTF8: {:?} {:?}", e, msg);
+        let text = match msg {
+            Incoming::Close => {
+                println!("got a close");
+                break;
             }
-            Ok(Err(e)) => {
+            Incoming::Other => continue,
+            Incoming::Text(text) => text,
+        };
+        match serde_json::from_str::<Action>(&text) {
+            Err(e) => {
                 eprintln!("Bad JSON: {:?}", e);
             }
-            Ok(Ok(action)) => {
+            Ok(action) => {
                 println!("Doing {:?}", action);
                 let mut g = game.write().await;
                 match action {
@@ -547,16 +600,14 @@ fn send_player_updates(g: &GameState<WsSender>) {
         if let Some(s) = &g.connections[seat] {
             let pp = Player { seat, game: &g };
             let msg = format_as!(HTML, "" pp);
-            s.send(warp::ws::Message::text(msg.into_string())).ok();
+            s.send(Outgoing::Text(msg.into_string())).ok();
         }
     }
     if let Some(seat) = g.turn() {
         if g.connections[seat].is_none() {
             if let Some(s) = &g.ai {
-                s.send(warp::ws::Message::text(
-                    &serde_json::to_string(&*g).unwrap(),
-                ))
-                .ok();
+                s.send(Outgoing::Text(serde_json::to_string(&*g).unwrap()))
+                    .ok();
             }
         }
     }
