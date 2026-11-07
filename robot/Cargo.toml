@@ -28,6 +28,7 @@ rand = "0.8.0"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [dev-dependencies]
+expect-test = "1.5"
 wasm-bindgen-test = "0.3.34"
 
 [profile.release]

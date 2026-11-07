@@ -13,6 +13,8 @@ use super::{Convention, Forcing};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML};
+#[cfg(test)]
+use expect_test::{expect, Expect};
 
 mod contracts;
 
@@ -678,12 +680,13 @@ fn capitalize(s: &str) -> String {
         .map_or(String::new(), |c| c.to_uppercase().chain(chars).collect())
 }
 
+/// Checks the SAYC advice for `hand` after `bids`, as plain text with one
+/// line for each paragraph or table row.
 #[cfg(test)]
-fn advice_text(convention: &Convention, bids: &[Bid], hand: &str) -> String {
+fn check(bids: &[Bid], hand: &str, expect: Expect) {
     use std::str::FromStr;
-    let advice = convention.advice(bids, Cards::from_str(hand).unwrap());
-    // Drop the markup, so that tests can look for plain sentences.
-    let html = format_as!(HTML, advice).into_string();
+    let advice = Convention::sayc().advice(bids, Cards::from_str(hand).unwrap());
+    let html = format_as!(HTML, advice).into_string().replace("</th>", " ");
     let mut text = String::new();
     let mut in_tag = false;
     for c in html.chars() {
@@ -694,57 +697,69 @@ fn advice_text(convention: &Convention, bids: &[Bid], hand: &str) -> String {
             _ => {}
         }
     }
-    text
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    expect.assert_eq(&lines.join("\n"));
 }
 
 #[test]
-fn advice_explains_a_raise() {
+fn advice_after_a_one_spade_opening() {
     use crate::Bid::*;
     use bridge_deck::Suit::Spades;
-    let text = advice_text(
-        &Convention::sayc(),
-        &[Suit(1, Spades), Pass],
+    let one_spade = [Suit(1, Spades), Pass];
+    check(
+        &one_spade,
         "S Q32 H KJ4 D J543 C 654",
+        expect![[r#"
+        Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+        Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
+        You should bid, since a pass would show at most 5 high card points (you have 7).
+        Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
+        ♠ 3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
+        ♠ 4♠ Natural game: it needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+        ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
+        ♣ 2♣ Two-level response (New suit): needs 4+ clubs (you have 3) and 10+ high card points (you have 7).
+        NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
+        NT 3NT Natural game: it needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
     );
-    for sentence in [
-        "Partner opened 1♠, showing 5+ spades and 13–21 long high card points.",
-        "You should bid, since a pass would show at most 5 high card points (you have 7).",
-        "Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. \
-         Your 7 high card points are near the bottom of that range.",
-        "3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and \
-         10–12 high card points (you have 7).",
-        "1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.",
-        "3NT Natural game: it needs 26+ high card points between you; \
-         that works if partner has 19+ high card points (they have shown 13–21).",
-    ] {
-        assert!(text.contains(sentence), "{:?} not in\n{}", sentence, text);
-    }
+    check(
+        &one_spade,
+        "S 32 H 5432 D 432 C 5432",
+        expect![[r#"
+        Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+        Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
+        Suggested: Pass Response pass. It shows at most 5 high card points.
+        ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
+        ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
+        ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3) and 10+ high card points (you have 0).
+        ♣ 2♣ Two-level response (New suit): needs 10+ high card points (you have 0).
+        NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0).
+        NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 21 high card points, so that is out of reach."#]],
+    );
 }
 
 #[test]
-fn advice_weighs_a_game_against_partner() {
+fn advice_after_one_notrump() {
     use crate::Bid::*;
-    use bridge_deck::Suit::Spades;
-    let text = advice_text(
-        &Convention::sayc(),
-        &[Suit(1, Spades), Pass],
-        "S 32 H 5432 D 432 C 5432",
-    );
-    assert!(text.contains("Suggested: Pass Response pass. It shows at most 5 high card points."));
-    assert!(text.contains(
-        "3NT Natural game: it needs 26+ high card points between you; \
-         partner has shown at most 21 high card points, so that is out of reach."
-    ));
-    let text = advice_text(
-        &Convention::sayc(),
+    // A transfer is listed with the suit it shows.
+    check(
         &[NT(1), Pass],
         "S KJ32 H Q432 D 32 C 432",
+        expect![[r#"
+        Partner opened 1NT, showing a balanced hand and 15–17 high card points.
+        Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
+        You should bid, since a pass would show at most 5 high card points (you have 6).
+        No bid fits your hand, so the robot would pass.
+        ♠ 2♥ Jacobi transfer: needs 5+ spades (you have 4).
+        ♠ 3♠ Natural: it needs 8+ spades and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
+        ♥ 2♦ Jacobi transfer: needs 5+ hearts (you have 4).
+        ♣ 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6).
+        NT 2NT Game invite: needs 8–10 high card points (you have 6).
+        NT 3NT Natural game: it needs 26+ high card points between you; partner has shown at most 17 high card points, so that is out of reach."#]],
     );
-    assert!(
-        text.contains("Partner opened 1NT, showing a balanced hand and 15–17 high card points.")
-    );
-    // A transfer is listed with the suit it shows.
-    assert!(text.contains("♠2♥ Jacobi transfer: needs 5+ spades (you have 4)."));
 }
 
 #[test]
