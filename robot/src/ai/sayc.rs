@@ -1,6 +1,7 @@
 //! Standard American Yellow Card (SAYC), and its two-over-one game-force
 //! cousin, as bidding conventions.
 //!
+//! SAYC follows the ACBL's "SAYC System Booklet" (revised January 2006).
 //! Both are built by the same function.  They agree on openings, notrump
 //! structure, the strong two clubs, weak twos and competitive bidding, and
 //! differ in how responder shows a hand:
@@ -18,18 +19,28 @@
 //! Where SAYC makes such a comparison the table approximates it:
 //!
 //! * 1D shows four or more diamonds and at most four clubs, so 1C is also
-//!   opened with 3-2 in the minors and 5-5 opens 1C rather than 1D.
+//!   opened with 3-2 in the minors (the booklet opens 1D with 4-4-3-2), and
+//!   5-5 or 6-5 in the minors opens 1C rather than 1D.
 //! * With 5-5 in the majors 1S is opened, but 6-5 in hearts opens 1H.
-//! * 4-4 in the majors responds 1S over a minor opening rather than 1H.
+//! * Over a minor opening, 4-4 in the majors responds 1S rather than 1H, and
+//!   5-5 responds 1H rather than 1S.
+//! * The booklet's 1NT over a major is 6-9, but here it is 6-10, so that a
+//!   ten count with no suit to show still has a bid.  Its limit raise is 10-11
+//!   with three or more trumps; here it is 10-12, since a 12 count with three
+//!   trumps would otherwise need two bids (a new suit, then a raise).  For the
+//!   same reason SAYC's Jacoby 2NT takes three trumps as well as four.
 //! * In two over one the forcing 1NT over a major promises at most two cards
 //!   in the major, since it is tried before the passable single raise.  The
 //!   standard way to show a three card limit raise (1NT, then a jump in the
 //!   major) needs two bids, so the direct limit raise 3M takes three card
-//!   support instead of four.
+//!   support.  After the forcing 1NT, opener's 2C is the bid that is left
+//!   when nothing else fits, and may be short.
 //!
-//! Not covered: slam conventions (Blackwood and Gerber), negative doubles,
-//! splinters, strong jump shifts and Michaels over a major.  Auctions the tables do not mention fall
-//! back on the natural bids shared with the other conventions.
+//! Not covered, though the booklet has them: slam conventions (Blackwood and
+//! Gerber), negative doubles, strong jump shifts, jump shifts by opener, a
+//! 3NT opening and Michaels over a major.  (Splinters are not part of SAYC.)
+//! Auctions the tables do not mention fall back on the natural bids shared
+//! with the other conventions.
 use super::{Convention, Forcing};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
@@ -50,19 +61,21 @@ impl Convention {
 }
 
 trait Shape: Sized {
-    /// Require at least `n` cards in `suit`.
+    /// Require at least `n` cards in `suit`, on a lower bound.  It never
+    /// loosens a bound that already requires more.
     fn min_len(self, suit: Suit, n: u8) -> Self;
-    /// Allow at most `n` cards in `suit`.
+    /// Allow at most `n` cards in `suit`, on an upper bound.  It never
+    /// loosens a bound that already allows fewer.
     fn max_len(self, suit: Suit, n: u8) -> Self;
 }
 
 impl Shape for HandValuation {
     fn min_len(mut self, suit: Suit, n: u8) -> Self {
-        self.length[suit] = n;
+        self.length[suit] = self.length[suit].max(n);
         self
     }
     fn max_len(mut self, suit: Suit, n: u8) -> Self {
-        self.length[suit] = n;
+        self.length[suit] = self.length[suit].min(n);
         self
     }
 }
@@ -270,45 +283,50 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 MAX.with_hcp(9),
                 Forcing::Passable,
             );
-            // Two over one shows a three card limit raise with the forcing
-            // notrump and then a jump, which one box cannot say, so the
-            // direct limit raise takes three card support as well.
-            let limit_support = if two_over_one { 3 } else { 4 };
             s.add(
                 "Limit raise",
                 &format!("{after}3{o}$"),
-                if two_over_one {
-                    "3+ card support"
-                } else {
-                    "4+ card support"
-                },
-                MIN.with_hcp(10).min_len(opening, limit_support),
+                "3+ card support",
+                MIN.with_hcp(10).min_len(opening, 3),
                 MAX.with_hcp(12),
                 Forcing::Passable,
             );
+            // In SAYC a game force with three trumps has no other single
+            // bid, since a new suit denies three card support.
+            let jacoby_support = if two_over_one { 4 } else { 3 };
             s.add(
                 "Jacoby 2NT",
                 &format!("{after}2N$"),
-                "4+ card support",
-                MIN.with_hcp(13).min_len(opening, 4),
+                if two_over_one {
+                    "4+ card support"
+                } else {
+                    "3+ card support"
+                },
+                MIN.with_hcp(13).min_len(opening, jacoby_support),
                 MAX,
                 Forcing::GameForcing,
             );
         } else {
             let no_major = MAX.max_len(Hearts, 3).max_len(Spades, 3);
+            // Four trumps raise 1D, but five raise 1C.
+            let (support, shown) = if opening == Diamonds {
+                (4, "4+ card support")
+            } else {
+                (5, "5+ card support")
+            };
             s.add(
                 "Single raise",
                 &format!("{after}2{o}$"),
-                "5+ card support",
-                weak.min_len(opening, 5),
+                shown,
+                weak.min_len(opening, support),
                 no_major.with_hcp(9),
                 Forcing::Passable,
             );
             s.add(
                 "Limit raise",
                 &format!("{after}3{o}$"),
-                "5+ card support",
-                MIN.with_hcp(10).min_len(opening, 5),
+                shown,
+                MIN.with_hcp(10).min_len(opening, support),
                 no_major.with_hcp(12),
                 Forcing::Passable,
             );
@@ -338,6 +356,11 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 // A four card spade suit is shown first.
                 max = max.max_len(Spades, 3);
             }
+            if !two_over_one && is_major(opening) {
+                // With three trumps SAYC raises directly, and the new suit
+                // is tried first because it is forcing.
+                max = max.max_len(opening, 2);
+            }
             if response == Diamonds {
                 max = max.max_len(Clubs, 4);
             }
@@ -357,6 +380,11 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
 }
 
 /// Opener's second bid.
+///
+/// The booklet's ranges are a minimum of 13-15, a medium hand of 16-18
+/// (jump raises and jump rebids, and reverses) and a non-reverse new suit of
+/// 13-18.  After a one level response only a reverse forces, but after a two
+/// level response responder has promised to bid again, so every rebid does.
 fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
     use Suit::*;
     let (bal_min, bal_max) = balanced();
@@ -367,11 +395,19 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
             let level = cheapest_level(response, opening);
             let r = response.latin();
             let after = format!("^{OPEN}1{o} P {level}{r} P ");
-            // Opener must bid again only after a two over one game force.
-            let rebid_forcing = if two_over_one && level == 2 {
+            let rebid_forcing = if level == 2 {
                 Forcing::Forcing
             } else {
                 Forcing::Passable
+            };
+            // A four card major that can still be bid at the one level is
+            // shown there rather than by a higher bid that would hide it.
+            let hides_no_major = |max: HandValuation| {
+                [Hearts, Spades]
+                    .iter()
+                    .cloned()
+                    .filter(|&m| level == 1 && m != opening && m > response)
+                    .fold(max, |max, m| max.max_len(m, 3))
             };
             // Both partners promised four cards, so opener needs four to raise.
             let support = |lhcp: u8| min.with_lhcp(lhcp).min_len(response, 4);
@@ -380,31 +416,24 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 &format!("{after}2{o}$"),
                 "6+ card suit",
                 min.min_len(opening, 6),
-                MAX.with_lhcp(16),
+                hides_no_major(MAX.with_lhcp(15)),
                 rebid_forcing,
             );
             s.add(
                 "Jump rebid",
                 &format!("{after}3{o}$"),
                 "6+ card suit, invitational",
-                MIN.with_lhcp(17).min_len(opening, 6),
-                MAX.with_lhcp(18),
-                Forcing::Passable,
+                MIN.with_lhcp(16).min_len(opening, 6),
+                hides_no_major(MAX.with_lhcp(18)),
+                rebid_forcing,
             );
             if level == 1 {
-                // Four card majors that can still be bid at the one level.
-                let mut balanced_max = bal_max.with_hcp(15);
-                for m in [Hearts, Spades].iter().cloned() {
-                    if m != opening && m > response {
-                        balanced_max = balanced_max.max_len(m, 3);
-                    }
-                }
                 s.add(
                     "Rebid",
                     &format!("{after}1N$"),
                     "Balanced minimum",
                     bal_min.with_hcp(13),
-                    balanced_max,
+                    hides_no_major(bal_max.with_hcp(15)),
                     Forcing::Passable,
                 );
                 s.add(
@@ -412,7 +441,7 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                     &format!("{after}2N$"),
                     "Balanced, 18-19 hcp",
                     bal_min.with_hcp(18),
-                    bal_max.with_hcp(19),
+                    hides_no_major(bal_max.with_hcp(19)),
                     Forcing::Passable,
                 );
                 s.add(
@@ -420,14 +449,14 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                     &format!("{after}2{r}$"),
                     "4+ card support",
                     support(13),
-                    MAX.with_lhcp(16),
+                    MAX.with_lhcp(15),
                     Forcing::Passable,
                 );
                 s.add(
                     "Raise",
                     &format!("{after}3{r}$"),
                     "4+ card support, invitational",
-                    support(17),
+                    support(16),
                     MAX.with_lhcp(18),
                     Forcing::Passable,
                 );
@@ -450,55 +479,50 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 );
             }
             // A new suit, at the one level if it is cheap enough.  Bidding a
-            // higher ranking suit at the two level is a reverse.
+            // higher ranking suit than the opening at the two level is a
+            // reverse.
             for z in Suit::ALL.iter().cloned() {
                 if z == opening || z == response {
                     continue;
                 }
-                let zlevel = cheapest_level(z, response);
+                let zlevel = if z > response { level } else { level + 1 };
                 let reverse = zlevel == 2 && z > opening;
+                let (min, max, forcing) = if reverse {
+                    let min = MIN.with_lhcp(16).min_len(opening, 5);
+                    (min, MAX.with_lhcp(21), Forcing::Forcing)
+                } else if zlevel == 2 {
+                    (min, hides_no_major(MAX.with_lhcp(18)), rebid_forcing)
+                } else {
+                    (min, MAX.with_lhcp(21), rebid_forcing)
+                };
                 s.add(
                     "New suit",
                     &format!("{after}{zlevel}{}$", z.latin()),
                     if reverse { "Reverse" } else { "4+ cards" },
-                    if reverse {
-                        MIN.with_lhcp(17).min_len(opening, 5)
-                    } else {
-                        min
-                    }
-                    .min_len(z, 4),
-                    MAX.with_lhcp(if zlevel == 2 && !reverse && level == 1 {
-                        18
-                    } else {
-                        21
-                    }),
-                    Forcing::Forcing,
+                    min.min_len(z, 4),
+                    max,
+                    forcing,
                 );
             }
         }
 
-        // After a 1NT response to a major.
+        // After a 1NT response to a major, where opener's bids are not
+        // forcing, though two over one's 1NT forces opener to make one.
         if is_major(opening) {
             let after = format!("^{OPEN}1{o} P 1N P ");
-            // After a forcing 1NT opener may not pass.
-            let forcing = if two_over_one {
-                Forcing::Forcing
-            } else {
-                Forcing::Passable
-            };
             s.add(
                 "Rebid",
                 &format!("{after}2{o}$"),
-                "Long suit",
+                "6+ card suit",
                 min.min_len(opening, 6),
-                MAX.with_lhcp(16),
-                forcing,
+                MAX.with_lhcp(15),
+                Forcing::Passable,
             );
             s.add(
                 "Jump rebid",
                 &format!("{after}3{o}$"),
                 "6+ card suit, invitational",
-                MIN.with_lhcp(17).min_len(opening, 6),
+                MIN.with_lhcp(16).min_len(opening, 6),
                 MAX.with_lhcp(18),
                 Forcing::Passable,
             );
@@ -511,22 +535,35 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 Forcing::Passable,
             );
             for z in Suit::ALL.iter().cloned().filter(|&z| z != opening) {
+                let regex = format!("{after}2{}$", z.latin());
+                if two_over_one && z == Clubs {
+                    // Opener may not pass the forcing notrump, so 2C is what
+                    // is left when nothing else fits, and may be short.
+                    s.0.add(Convention::Forced {
+                        the_name: "Rebid over forcing 1NT",
+                        regex: RegexSet::new([regex]).unwrap(),
+                        min: MIN,
+                        max: MAX,
+                    });
+                    continue;
+                }
                 let reverse = z > opening;
-                // In two over one a three card club suit is the way to bid a
-                // minimum balanced hand.
-                let length = if two_over_one && z == Clubs { 3 } else { 4 };
                 s.add(
                     "New suit",
-                    &format!("{after}2{}$", z.latin()),
+                    &regex,
                     if reverse { "Reverse" } else { "New suit" },
                     if reverse {
-                        MIN.with_lhcp(17).min_len(opening, 5)
+                        MIN.with_lhcp(16).min_len(opening, 5)
                     } else {
                         min
                     }
-                    .min_len(z, length),
+                    .min_len(z, 4),
                     MAX,
-                    Forcing::Forcing,
+                    if reverse {
+                        Forcing::Forcing
+                    } else {
+                        Forcing::Passable
+                    },
                 );
             }
         }
@@ -539,6 +576,12 @@ fn competition(s: &mut Sheet) {
     let (bal_min, bal_max) = balanced();
     for opening in Suit::ALL.iter().cloned() {
         let o = opening.latin();
+        // The cheapest suit advancer can bid over partner's takeout double.
+        let cheapest = Suit::ALL
+            .iter()
+            .cloned()
+            .find(|&z| z > opening)
+            .unwrap_or(Clubs);
         s.add(
             "Takeout double",
             &format!("^{OPEN}1{o} X$"),
@@ -555,7 +598,7 @@ fn competition(s: &mut Sheet) {
             "1NT overcall",
             &format!("^{OPEN}1{o} 1N$"),
             "Balanced with a stopper",
-            bal_min.with_hcp(16),
+            bal_min.with_hcp(15),
             bal_max.with_hcp(18),
             Forcing::Passable,
         );
@@ -607,15 +650,27 @@ fn competition(s: &mut Sheet) {
                 MAX.with_hcp(16),
                 Forcing::Passable,
             );
-            // Advancing a takeout double.
-            s.add(
-                "Takeout double response",
-                &format!("^{OPEN}1{o} X P {level}{c}$"),
-                "Cheapest bid in a 4+ card suit",
-                MIN.min_len(overcall, 4),
-                MAX,
-                Forcing::Passable,
-            );
+            // Advancing a takeout double, which advancer may not pass for
+            // want of a four card suit, so the cheapest suit is what is left
+            // when nothing else fits.
+            let regex = format!("^{OPEN}1{o} X P {level}{c}$");
+            if overcall == cheapest {
+                s.0.add(Convention::Forced {
+                    the_name: "Takeout double response",
+                    regex: RegexSet::new([regex]).unwrap(),
+                    min: MIN,
+                    max: MAX,
+                });
+            } else {
+                s.add(
+                    "Takeout double response",
+                    &regex,
+                    "4+ card suit",
+                    MIN.min_len(overcall, 4),
+                    MAX,
+                    Forcing::Passable,
+                );
+            }
         }
     }
 }

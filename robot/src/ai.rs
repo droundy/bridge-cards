@@ -2068,12 +2068,12 @@ fn test_two_over_one_forcing_notrump_and_limit_raise() {
         let hand = Cards::from_str(hand).unwrap();
         assert_eq!(NT(1), two_over_one.bid(&[Suit(1, opening), Pass], hand));
     }
-    // Three card support and a limit raise bids three of the major in two
-    // over one, but not in SAYC, which needs four trumps.
+    // Three card support and a limit raise bids three of the major in both,
+    // since the SAYC booklet's limit raise takes three trumps.
     let three = Cards::from_str("S KJ4 H Q32 D AJ43 C 654").unwrap();
     let auction = [Suit(1, Spades), Pass];
     assert_eq!(Suit(3, Spades), two_over_one.bid(&auction, three));
-    assert_ne!(Suit(3, Spades), sayc.bid(&auction, three));
+    assert_eq!(Suit(3, Spades), sayc.bid(&auction, three));
     // Four card support is a limit raise in both.
     let four = Cards::from_str("S KJ43 H Q32 D AJ4 C 654").unwrap();
     assert_eq!(Suit(3, Spades), two_over_one.bid(&auction, four));
@@ -2138,4 +2138,201 @@ fn robot_bids_are_what_the_server_accepts() {
     assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Double));
     assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Redouble));
     assert_eq!(legal_bids(&[NT(7)]), vec![Pass, Double]);
+}
+
+/// The bid `system` makes with `hand` after `auction`.
+#[cfg(test)]
+fn system_bid(system: BiddingSystem, auction: &[Bid], hand: &str) -> Bid {
+    use std::str::FromStr;
+    ConventionalBid(system.convention()).bid(auction, Cards::from_str(hand).unwrap())
+}
+
+#[test]
+fn opener_rebids_after_a_two_level_response() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, rebid) in [
+            // A new suit lower than the opening.
+            (
+                [Suit(1, Spades), Pass, Suit(2, Clubs), Pass],
+                "S AQ432 H KJ32 D K32 C 3",
+                Suit(2, Hearts),
+            ),
+            // A reverse.
+            (
+                [Suit(1, Hearts), Pass, Suit(2, Clubs), Pass],
+                "S AKJ2 H AQ876 D K2 C K2",
+                Suit(2, Spades),
+            ),
+            // A new suit at the three level.
+            (
+                [Suit(1, Spades), Pass, Suit(2, Hearts), Pass],
+                "S AQ432 H 3 D K2 C KJ432",
+                Suit(3, Clubs),
+            ),
+        ] {
+            assert_eq!(
+                rebid,
+                system_bid(system, &auction, hand),
+                "{:?} after {}",
+                system,
+                bids_string(&auction)
+            );
+        }
+    }
+}
+
+#[test]
+fn two_over_one_opener_bids_over_the_forcing_notrump() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    // A minimum 5-3-3-2 with two clubs bids its doubleton club in two over
+    // one, and passes in SAYC, where 1NT is not forcing.
+    let auction = [Suit(1, Spades), Pass, NT(1), Pass];
+    let hand = "S AJ432 H K32 D Q32 C K2";
+    assert_eq!(
+        Suit(2, Clubs),
+        system_bid(BiddingSystem::TwoOverOne, &auction, hand)
+    );
+    assert_eq!(Pass, system_bid(BiddingSystem::Sayc, &auction, hand));
+}
+
+#[test]
+fn takeout_doubles_are_never_passed_for_want_of_a_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, advance) in [
+            (
+                [Suit(1, Clubs), Double, Pass],
+                "S 432 H 432 D 432 C 5432",
+                Suit(1, Diamonds),
+            ),
+            (
+                [Suit(1, Clubs), Double, Pass],
+                "S 432 H Q432 D 432 C 432",
+                Suit(1, Hearts),
+            ),
+            (
+                [Suit(1, Spades), Double, Pass],
+                "S 5432 H 432 D 432 C 432",
+                Suit(2, Clubs),
+            ),
+        ] {
+            assert_eq!(
+                advance,
+                system_bid(system, &auction, hand),
+                "{:?} with {}",
+                system,
+                hand
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_raises_a_major_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let auction = [Suit(1, Spades), Pass];
+    for (hand, sayc, two_over_one) in [
+        // A limit raise, with four trumps or three, rather than a new suit.
+        ("S KJ43 H 32 D A32 C Q432", Suit(3, Spades), Suit(3, Spades)),
+        ("S KJ4 H 32 D A32 C Q5432", Suit(3, Spades), Suit(3, Spades)),
+        // A game force with three trumps.
+        ("S KJ4 H 32 D AK32 C Q432", NT(2), Suit(2, Diamonds)),
+    ] {
+        assert_eq!(sayc, system_bid(BiddingSystem::Sayc, &auction, hand));
+        assert_eq!(
+            two_over_one,
+            system_bid(BiddingSystem::TwoOverOne, &auction, hand)
+        );
+    }
+    // Four trumps raise 1D.
+    assert_eq!(
+        Suit(2, Diamonds),
+        system_bid(
+            BiddingSystem::Sayc,
+            &[Suit(1, Diamonds), Pass],
+            "S 432 H 32 D KJ43 C Q432"
+        )
+    );
+}
+
+#[test]
+fn sayc_opener_rebids_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sayc = Convention::sayc();
+    let forcing = |auction: &[Bid]| {
+        let description = format_as!(HTML, sayc.refine(auction).unwrap().description());
+        description.into_string().contains("Forcing")
+    };
+    let one_level = [Suit(1, Diamonds), Pass, Suit(1, Hearts), Pass];
+    // A new suit that is not a reverse does not force, after a one level
+    // response, but everything forces after a two level response.
+    assert!(!forcing(&[
+        Suit(1, Diamonds),
+        Pass,
+        Suit(1, Hearts),
+        Pass,
+        Suit(2, Clubs)
+    ]));
+    assert!(!forcing(&[
+        Suit(1, Diamonds),
+        Pass,
+        Suit(1, Hearts),
+        Pass,
+        Suit(1, Spades)
+    ]));
+    assert!(forcing(&[
+        Suit(1, Diamonds),
+        Pass,
+        Suit(1, Spades),
+        Pass,
+        Suit(2, Hearts)
+    ]));
+    assert!(forcing(&[
+        Suit(1, Spades),
+        Pass,
+        Suit(2, Clubs),
+        Pass,
+        Suit(2, Spades)
+    ]));
+    assert!(forcing(&[
+        Suit(1, Spades),
+        Pass,
+        Suit(2, Clubs),
+        Pass,
+        Suit(2, Diamonds)
+    ]));
+    for (hand, rebid) in [
+        ("S 3 H K32 D AQ432 C KJ32", Suit(2, Clubs)),
+        // A four card spade suit is shown at the one level.
+        ("S KJ32 H 3 D AQ43 C KJ32", Suit(1, Spades)),
+        // 16 points with six diamonds is a jump rebid.
+        ("S Q2 H 3 D AKJ432 C KJ3", Suit(3, Diamonds)),
+    ] {
+        assert_eq!(
+            rebid,
+            system_bid(BiddingSystem::Sayc, &one_level, hand),
+            "{}",
+            hand
+        );
+    }
+    // A 1NT overcall is 15-18.
+    assert_eq!(
+        NT(1),
+        system_bid(
+            BiddingSystem::Sayc,
+            &[Suit(1, Clubs)],
+            "S AQ3 H KJ4 D Q54 C K432"
+        )
+    );
 }

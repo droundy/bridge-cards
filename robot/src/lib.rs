@@ -180,6 +180,13 @@ impl<C> Default for GameState<C> {
 
 impl<C> GameState<C> {
     pub fn new() -> GameState<C> {
+        Self::with_conventions(vec![Convention::sheets()])
+    }
+
+    /// A new deal at a new table that explains bids with `conventions`.
+    /// Building conventions compiles many regexes, so `redeal` hands over
+    /// the ones it already has.
+    fn with_conventions(conventions: Vec<Convention>) -> GameState<C> {
         let mut deck = Cards::ALL;
         let north = deck.pick(13).unwrap();
         let south = deck.pick(13).unwrap();
@@ -207,7 +214,7 @@ impl<C> GameState<C> {
             ew_tricks: 0,
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
-            conventions: vec![Convention::sheets()],
+            conventions,
         }
     }
 
@@ -284,8 +291,7 @@ impl<C> GameState<C> {
             ai,
             count_for_me,
             system,
-            conventions,
-            ..GameState::new()
+            ..GameState::with_conventions(conventions)
         }
     }
 
