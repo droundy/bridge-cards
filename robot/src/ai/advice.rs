@@ -6,24 +6,35 @@
 //! When describing a bid it leaves out bounds that only shape a balanced hand
 //! or break a tie with another bid, such as the "at most 5 hearts" of a 1S
 //! opening.  The bid the robot would make is the fitting one whose table entry
-//! comes first (`first_fit`), and the other bids are explained by the bounds the hand
-//! misses.  Natural bids state what the partnership needs between them, so
-//! for those the advice weighs the hand against what partner has shown.
+//! comes first (`first_fit`), and the other bids are explained by the bounds
+//! the hand misses.  Natural bids state what the partnership needs between
+//! them, so for those the advice weighs the hand against what partner has
+//! shown.
+//!
+//! The sentences are built with `wording`, so that counts, lists and verbs
+//! agree wherever a phrase ends up, and the advice can be shown as HTML, plain
+//! text or LaTeX.
 use super::{legal_bids, Convention, Fit, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
-use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML};
+#[cfg(test)]
+use display_as::format_as;
+use display_as::{with_template, DisplayAs, Format, FormattedString, LaTeX, HTML, UTF8};
 #[cfg(test)]
 use expect_test::{expect, Expect};
+use std::fmt::{self, Formatter};
+use wording::{
+    and, at_least, between, count, numbered, then, Amount, Form, Markup, Number, Text, Word,
+};
 
 /// Advice on the next bid of an auction.
 pub(crate) struct Advice {
     /// What each player has shown, the hand, and whether it must bid.
-    situation: Vec<FormattedString<HTML>>,
+    situation: Vec<Text>,
     /// The bid the robot would make, and why.
-    suggestion: FormattedString<HTML>,
+    suggestion: Text,
     /// The other bids closest to fitting, each with the suit it is about.
-    others: Vec<(FormattedString<HTML>, FormattedString<HTML>)>,
+    others: Vec<(Text, Text)>,
 }
 
 #[with_template("[%" "%]" "advice.html")]
@@ -31,6 +42,91 @@ impl DisplayAs<HTML> for Advice {}
 
 /// How many other bids the advice lists, so that it fits on a screen.
 const OTHERS: usize = 6;
+
+const HCP: Word = Word::noun("high card point", "high card points");
+const LHCP: Word = Word::noun("long high card point", "long high card points");
+const SHCP: Word = Word::noun("short high card point", "short high card points");
+const LOSER: Word = Word::noun("loser", "losers");
+
+fn partner() -> Text {
+    numbered("partner", Number::Singular)
+}
+
+fn you() -> Text {
+    numbered("you", Number::Plural)
+}
+
+fn they() -> Text {
+    numbered("they", Number::Plural)
+}
+
+/// HTML that a table entry wrote out, which plain text and LaTeX show as the
+/// text in it.
+struct Raw(FormattedString<HTML>);
+
+/// `html` without its tags.
+fn strip_tags(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    text
+}
+
+impl Markup for Raw {
+    fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        f.write_str(self.0.as_str())
+    }
+    fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        f.write_str(&strip_tags(self.0.as_str()))
+    }
+    fn latex(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        LaTeX::escape(f, &strip_tags(self.0.as_str()))
+    }
+}
+
+/// A phrase in bold.
+struct Strong(Text);
+
+impl Markup for Strong {
+    fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        f.write_str("<strong>")?;
+        <Text as DisplayAs<HTML>>::fmt(&self.0, f)?;
+        f.write_str("</strong>")
+    }
+    fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        <Text as DisplayAs<UTF8>>::fmt(&self.0, f)
+    }
+    fn latex(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        f.write_str(r"\textbf{")?;
+        <Text as DisplayAs<LaTeX>>::fmt(&self.0, f)?;
+        f.write_str("}")
+    }
+}
+
+/// How many cards a hand has in a suit, as in "3♠", with nothing between the
+/// number and the suit.
+struct Length(u8, Suit);
+
+impl Markup for Length {
+    fn html(&self, form: Form, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        self.1.html(form, f)
+    }
+    fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}{}", self.0, self.1.unicode())
+    }
+    fn latex(&self, form: Form, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        self.1.latex(form, f)
+    }
+}
 
 impl Convention {
     /// Advice for the player holding `hand` on the next bid after `history`.
@@ -84,25 +180,21 @@ impl Convention {
         };
         let pass = candidates.iter().find(|c| c.bid == Bid::Pass);
         situation.extend(match (partner_forcing, pass) {
-            (Forcing::GameForcing, _) => Some(format_as!(
-                HTML,
-                "Partner's bid is game forcing, so keep bidding until you reach game."
+            (Forcing::GameForcing, _) => Some(Text::from(
+                "Partner's bid is game forcing, so keep bidding until you reach game.",
             )),
-            (Forcing::Forcing, _) => Some(format_as!(
-                HTML,
-                "Partner's bid is forcing, so you must bid."
-            )),
-            (_, Some(pass)) if !pass.fits() => Some(format_as!(
-                HTML,
-                "You should bid, since a pass would show " pass.misses "."
-            )),
+            (Forcing::Forcing, _) => Some(Text::from("Partner's bid is forcing, so you must bid.")),
+            (_, Some(pass)) if !pass.fits() => Some(
+                Text::from("You should bid, since a pass would show") + pass.misses.clone() + ".",
+            ),
             _ => None,
         });
 
         let suggestion = match chosen {
-            Some(c) => format_as!(HTML, "Suggested: <strong>" c.bid "</strong> " c.title() ". "
-                                  c.reason(&hand)),
-            None => format_as!(HTML, "No bid fits your hand, so the robot would pass."),
+            Some(c) => {
+                Text::from("Suggested:") + Strong(c.bid.into()) + c.title() + "." + c.reason(&hand)
+            }
+            None => Text::from("No bid fits your hand, so the robot would pass."),
         };
 
         let mut others: Vec<&Candidate> = candidates
@@ -169,47 +261,40 @@ impl Convention {
 
     /// A sentence on what `who` has shown with their bids, if they have bid
     /// anything but pass, or are partner.
-    fn what_was_shown(
-        &self,
-        history: &[Bid],
-        who: &str,
-        offset: usize,
-    ) -> Option<FormattedString<HTML>> {
+    fn what_was_shown(&self, history: &[Bid], who: &str, offset: usize) -> Option<Text> {
         let shown = self.shown(history, offset);
         let first_bid = shown.bids.iter().position(|&(_, b)| b != Bid::Pass);
         if first_bid.is_none() && (offset != 2 || shown.bids.is_empty()) {
             return None;
         }
         let opening = history.iter().position(|&b| b != Bid::Pass);
-        let verbs: Vec<_> = shown
+        let verbs: Vec<Text> = shown
             .bids
             .iter()
             .enumerate()
             // A pass after a real bid says little.
             .filter(|&(j, &(_, b))| b != Bid::Pass || first_bid.map_or(true, |f| j < f))
             .map(|(_, &(i, bid))| match bid {
-                Bid::Pass => format_as!(HTML, "passed"),
-                Bid::Double => format_as!(HTML, "doubled"),
-                Bid::Redouble => format_as!(HTML, "redoubled"),
-                _ if Some(i) == opening => format_as!(HTML, "opened " bid),
-                _ => format_as!(HTML, "bid " bid),
+                Bid::Pass => Text::from("passed"),
+                Bid::Double => Text::from("doubled"),
+                Bid::Redouble => Text::from("redoubled"),
+                _ if Some(i) == opening => Text::from("opened") + bid,
+                _ => Text::from("bid") + bid,
             })
             .collect();
-        let said = FormattedString::<HTML>::from_formatted(
-            verbs
-                .iter()
-                .map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join(", then "),
-        );
+        let several = verbs.len() > 1;
+        let said = Text::from(who) + then(verbs);
         let words = describe(&shown.min, &shown.max);
-        Some(if words.is_empty() {
-            format_as!(HTML, who " " said ".")
-        } else if verbs.len() == 1 {
-            format_as!(HTML, who " " said ", showing " join(words) ".")
-        } else {
-            format_as!(HTML, who " " said ", which together show " join(words) ".")
-        })
+        Some(
+            if words.is_empty() {
+                said
+            } else if !several {
+                said + ", showing" + and(words)
+            } else {
+                said + ", which together show" + and(words)
+            }
+            .sentence(),
+        )
     }
 }
 
@@ -241,14 +326,14 @@ struct Candidate {
     /// What the bid means, adjusted for earlier bids.
     meaning: Convention,
     /// For a natural bid, what the partnership needs between them.
-    needs: Option<String>,
+    needs: Option<Text>,
     /// For a natural bid, how what partner has shown bears on it.
-    verdict: Option<String>,
+    verdict: Option<Text>,
     /// For a bid that fits the hand, the position in the table of the entry
     /// that the robot uses, where a lower one is preferred.
     rank: Option<usize>,
     /// The bounds the hand misses, each with what the hand has.
-    misses: String,
+    misses: Text,
     /// How far the hand is from fitting, to find the closest misses.
     distance: u32,
     strain: Strain,
@@ -263,7 +348,7 @@ impl Candidate {
         partner: &Shown,
         rank: Option<usize>,
     ) -> Self {
-        let (min, max) = meaning.bounds();
+        let (min, _) = meaning.bounds();
         let (misses, distance) = closest_misses(&meaning, hand);
         let together = match entry {
             Some(Convention::Natural { min, .. }) => Some(*min),
@@ -272,12 +357,11 @@ impl Candidate {
         Candidate {
             bid,
             needs: together.map(|t| {
-                let words = describe(&t, &HandValuation::MAX);
-                format!("it needs {} between you", join(words))
+                Text::from("it needs") + and(describe(&t, &HandValuation::MAX)) + "between you"
             }),
             verdict: together.map(|t| verdict(&t, hand, partner)),
             rank,
-            misses: join(misses),
+            misses: and(misses),
             distance,
             strain: Strain::of(bid, &min),
             meaning,
@@ -290,7 +374,7 @@ impl Candidate {
     }
 
     /// The bid's name, and its description if it has one.
-    fn title(&self) -> FormattedString<HTML> {
+    fn title(&self) -> Text {
         match &self.meaning {
             Convention::Simple {
                 the_name,
@@ -300,51 +384,55 @@ impl Candidate {
                 ..
             } => {
                 let d = the_description.as_str();
-                if d.is_empty() || d == *the_name || describe(min, max).iter().any(|w| w == d) {
-                    format_as!(HTML, the_name)
+                let name = Text::from(*the_name);
+                if d.is_empty()
+                    || d == *the_name
+                    || describe(min, max).iter().any(|w| w.to_string() == d)
+                {
+                    name
                 } else {
-                    format_as!(HTML, the_name " (" the_description ")")
+                    name + " (" + Raw(the_description.clone()) + ")"
                 }
             }
-            c => c.name(),
+            c => Raw(c.name()).into(),
         }
     }
 
     /// Why the robot makes this bid, which fits the hand.
-    fn reason(&self, hand: &HandValuation) -> FormattedString<HTML> {
+    fn reason(&self, hand: &HandValuation) -> Text {
         if let Some(needs) = &self.needs {
-            return format_as!(HTML, capitalize(needs) ", and you have that.");
+            return needs.clone().capitalized() + ", and you have that.";
         }
         let (min, max) = self.meaning.bounds();
         let mut words = describe(&min, &max);
         words.extend(fitting_shape(&self.meaning, hand));
-        let shows = if words.is_empty() {
-            String::new()
-        } else {
-            format!("It shows {}.", join(words))
-        };
-        let place = place_in_range(&min, &max, hand).unwrap_or_default();
-        let forcing = match self.meaning.is_forcing() {
-            Forcing::Forcing => " Partner must bid again.",
-            Forcing::GameForcing => " It commits you both to game.",
-            _ => "",
-        };
-        format_as!(HTML, shows "" place "" forcing)
+        let mut reason = Text::new();
+        if !words.is_empty() {
+            reason += Text::from("It shows") + and(words) + ".";
+        }
+        reason += place_in_range(&min, &max, hand);
+        match self.meaning.is_forcing() {
+            Forcing::Forcing => reason += "Partner must bid again.",
+            Forcing::GameForcing => reason += "It commits you both to game.",
+            _ => {}
+        }
+        reason
     }
 
     /// How this bid compares with the one the robot would make.
-    fn comparison(&self, chosen: Option<&Candidate>) -> FormattedString<HTML> {
-        let title = format_as!(HTML, "<strong>" self.bid "</strong> " self.title());
+    fn comparison(&self, chosen: Option<&Candidate>) -> Text {
+        let title = Text::from(Strong(self.bid.into())) + self.title();
         if self.fits() {
             return match chosen {
-                Some(chosen) => format_as!(HTML, title ": also fits, but the system prefers "
-                                           chosen.bid "."),
-                None => format_as!(HTML, title ": fits."),
+                Some(chosen) => title + ": also fits, but the system prefers" + chosen.bid + ".",
+                None => title + ": fits.",
             };
         }
         match (&self.needs, &self.verdict) {
-            (Some(needs), Some(verdict)) => format_as!(HTML, title ": " needs "; " verdict "."),
-            _ => format_as!(HTML, title ": needs " self.misses "."),
+            (Some(needs), Some(verdict)) => {
+                title + ":" + needs.clone() + ";" + verdict.clone() + "."
+            }
+            _ => title + ": needs" + self.misses.clone() + ".",
         }
     }
 }
@@ -389,12 +477,12 @@ impl Strain {
         }
     }
     /// The heading for bids about this strain.
-    fn label(self) -> FormattedString<HTML> {
+    fn label(self) -> Text {
         match self {
-            Strain::Suit(suit) => format_as!(HTML, suit),
-            Strain::Notrump => format_as!(HTML, "NT"),
-            Strain::Double => format_as!(HTML, "X"),
-            Strain::Pass => format_as!(HTML, "Pass"),
+            Strain::Suit(suit) => suit.into(),
+            Strain::Notrump => "NT".into(),
+            Strain::Double => "X".into(),
+            Strain::Pass => "Pass".into(),
         }
     }
 }
@@ -449,32 +537,24 @@ impl Measure {
             _ => format!("{}", value),
         }
     }
-    /// The words for `amount` of this measure, as in "5+ spades".
-    fn words(self, amount: &str, one: bool) -> String {
-        let noun = |plural: &'static str| {
-            if one {
-                plural.trim_end_matches('s')
-            } else {
-                plural
-            }
-        };
+    /// A value of this measure as an `Amount` for a quantity.
+    fn quantity(self, value: u8) -> Amount {
         match self {
-            Measure::Length(suit) => format!("{} {}", amount, noun(suit.name())),
-            Measure::Hcp => format!("{} {}", amount, noun("high card points")),
-            Measure::Lhcp => format!("{} {}", amount, noun("long high card points")),
-            Measure::Shcp => format!("{} {}", amount, noun("short high card points")),
-            Measure::Losers => format!("{} {}", amount, noun("losers")),
-            Measure::HcpIn(suit) => {
-                format!("{} {} in {}", amount, noun("high card points"), suit.name())
-            }
-            Measure::HcpOutside(suit) => {
-                format!(
-                    "{} {} outside {}",
-                    amount,
-                    noun("high card points"),
-                    suit.name()
-                )
-            }
+            // The loser count is stored doubled, so it is a number of halves.
+            Measure::Losers => Amount::halves(value.into()),
+            _ => Amount::from(value),
+        }
+    }
+    /// What this measure counts, as in "high card points in spades".
+    fn noun(self) -> Text {
+        match self {
+            Measure::Length(suit) => suit.into(),
+            Measure::Hcp => HCP.into(),
+            Measure::Lhcp => LHCP.into(),
+            Measure::Shcp => SHCP.into(),
+            Measure::Losers => LOSER.into(),
+            Measure::HcpIn(suit) => Text::from(HCP) + "in" + suit,
+            Measure::HcpOutside(suit) => Text::from(HCP) + "outside" + suit,
         }
     }
     /// Is this one of the ways of counting the strength of the whole hand?
@@ -491,10 +571,16 @@ impl Measure {
     }
 }
 
-/// The words for the bounds `min..=max` on `m`, unless they bound nothing.
-fn bound(m: Measure, min: u8, max: u8) -> Option<String> {
-    let amount = range(m, min, max)?;
-    Some(m.words(&amount, max < m.limit() && m.amount(max) == "1"))
+/// The words for the bounds `min..=max` on `m`, as in "5+ spades" or "at most
+/// 1 loser", unless they bound nothing.
+fn bound(m: Measure, min: u8, max: u8) -> Option<Text> {
+    if min == 0 && max >= m.limit() {
+        None
+    } else if max >= m.limit() {
+        Some(at_least(m.quantity(min), m.noun()))
+    } else {
+        Some(between(m.quantity(min), m.quantity(max), m.noun()))
+    }
 }
 
 /// The bounds `min..=max` on `m` as amounts, as in "6–9" or "5+".
@@ -530,11 +616,11 @@ fn beyond_balanced(min: u8, max: u8) -> (u8, u8) {
 }
 
 /// The words for each bound in `min..=max` worth mentioning.
-fn describe(min: &HandValuation, max: &HandValuation) -> Vec<String> {
+fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Text> {
     let balanced = is_balanced(min, max);
     let mut words = Vec::new();
     if balanced {
-        words.push("a balanced hand".to_string());
+        words.push(Text::from("a balanced hand"));
     }
     let mut counted_points = false;
     for m in Measure::all() {
@@ -558,12 +644,12 @@ fn describe(min: &HandValuation, max: &HandValuation) -> Vec<String> {
 
 /// The words for each bound in `min..=max` that `hand` misses, with what the
 /// hand has, and how far it is from fitting.
-fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Vec<String>, u32) {
+fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Vec<Text>, u32) {
     let balanced = is_balanced(min, max);
     let mut words = Vec::new();
     let mut distance = 0;
     if balanced && !is_balanced(hand, hand) {
-        words.push("a balanced hand".to_string());
+        words.push(Text::from("a balanced hand"));
         distance += 3;
     }
     let mut counted_points = false;
@@ -578,32 +664,30 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
             if m.is_points() && std::mem::replace(&mut counted_points, true) {
                 continue;
             }
-            words.push(format!(
-                "{} (you have {})",
-                bound(m, lo, hi).unwrap(),
-                m.amount(have)
-            ));
+            words.push(
+                bound(m, lo, hi).unwrap() + " (" + (you() + Word::HAS + m.amount(have)) + ")",
+            );
         }
     }
     (words, distance)
 }
 
 /// The words for a shape rule, such as "spades at least as long as hearts".
-fn shape_words(rule: ShapeRule) -> String {
+fn shape_words(rule: ShapeRule) -> Text {
     match rule {
-        ShapeRule::AtLeastAsLong(a, b) => format!("{} at least as long as {}", a.name(), b.name()),
-        ShapeRule::Longer(a, b) => format!("{} longer than {}", a.name(), b.name()),
-        ShapeRule::Balanced => "a balanced hand".to_string(),
+        ShapeRule::AtLeastAsLong(a, b) => Text::from(a) + "at least as long as" + b,
+        ShapeRule::Longer(a, b) => Text::from(a) + "longer than" + b,
+        ShapeRule::Balanced => Text::from("a balanced hand"),
     }
 }
 
 /// The bounds and shape rules of `fit` that `hand` misses, and how far it is
 /// from fitting.
-fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<String>, u32) {
+fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Text>, u32) {
     let (mut words, mut distance) = misses(&fit.min, &fit.max, hand);
     for &rule in fit.shape.iter().filter(|r| !r.holds(hand)) {
         let w = shape_words(rule);
-        if !words.contains(&w) {
+        if !words.iter().any(|x| x.to_string() == w.to_string()) {
             words.push(w);
             distance += 3;
         }
@@ -613,7 +697,7 @@ fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<String>, u32) {
 
 /// What `hand` misses of the way of fitting `meaning` that it comes closest
 /// to, and how far it is from fitting that way.
-fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<String>, u32) {
+fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Text>, u32) {
     match meaning {
         Convention::Rule { fits, .. } => fits
             .iter()
@@ -633,7 +717,7 @@ fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<String>, u
 }
 
 /// The words for the shape rules of the way that `hand` fits `meaning`.
-fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<String> {
+fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Text> {
     match meaning {
         Convention::Rule { fits, .. } => fits
             .iter()
@@ -651,41 +735,34 @@ fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<String> {
 
 /// How a natural bid's needs, `together`, compare with the hand plus what
 /// partner has shown.
-fn verdict(together: &HandValuation, hand: &HandValuation, partner: &Shown) -> String {
+fn verdict(together: &HandValuation, hand: &HandValuation, partner_shown: &Shown) -> Text {
     let mut out_of_reach = Vec::new();
     let mut partner_needs = Vec::new();
     for m in Measure::all() {
         let need = m.of(together).saturating_sub(m.of(hand));
-        let (lo, hi) = partner.range(m);
+        let (lo, hi) = partner_shown.range(m);
         if need > hi {
             out_of_reach.push(bound(m, 0, hi).unwrap_or_default());
         } else if need > lo {
             let needs = bound(m, need, m.limit()).unwrap_or_default();
             partner_needs.push(match range(m, lo, hi) {
-                Some(shown) => format!("{} (they have shown {})", needs, shown),
+                Some(shown) => needs + " (" + (they() + Word::HAS + "shown" + shown) + ")",
                 None => needs,
             });
         }
     }
     if !out_of_reach.is_empty() {
-        format!(
-            "partner has shown {}, so that is out of reach",
-            join(out_of_reach)
-        )
+        partner() + Word::HAS + "shown" + and(out_of_reach) + ", so that is out of reach"
     } else if !partner_needs.is_empty() {
-        format!("that works if partner has {}", join(partner_needs))
+        Text::from("that works if") + (partner() + Word::HAS + and(partner_needs))
     } else {
-        "you have that between you".to_string()
+        you() + Word::HAS + "that between you"
     }
 }
 
 /// Where the hand sits in the range of the first point count the bounds
 /// limit on both sides, when it is near one end.
-fn place_in_range(
-    min: &HandValuation,
-    max: &HandValuation,
-    hand: &HandValuation,
-) -> Option<String> {
+fn place_in_range(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> Option<Text> {
     let m = [Measure::Hcp, Measure::Lhcp, Measure::Shcp]
         .iter()
         .copied()
@@ -699,35 +776,27 @@ fn place_in_range(
     } else {
         return None;
     };
-    Some(format!(
-        " Your {} are near the {} of that range.",
-        m.words(&m.amount(have), have == 1),
-        end
-    ))
+    Some(
+        "Your" + count(m.quantity(have), m.noun()) + Word::IS + "near the" + end + "of that range.",
+    )
 }
 
 /// The hand's point counts and shape.
-fn hand_summary(hand: &HandValuation) -> FormattedString<HTML> {
-    let s = |suit: Suit| format_as!(HTML, hand.length[suit] "" suit);
+fn hand_summary(hand: &HandValuation) -> Text {
+    let s = |suit: Suit| Text::from(Length(hand.length[suit], suit));
     use Suit::*;
-    format_as!(HTML, "Your hand: " hand.hcp " HCP, " hand.lhcp " LHCP and " hand.shcp " SHCP, with "
-        s(Spades) " " s(Hearts) " " s(Diamonds) " " s(Clubs) ".")
-}
-
-/// "a", "a and b", "a, b and c".
-fn join(mut words: Vec<String>) -> String {
-    match words.pop() {
-        None => String::new(),
-        Some(last) if words.is_empty() => last,
-        Some(last) => format!("{} and {}", words.join(", "), last),
-    }
-}
-
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    chars
-        .next()
-        .map_or(String::new(), |c| c.to_uppercase().chain(chars).collect())
+    Text::from("Your hand:")
+        + hand.hcp
+        + "HCP,"
+        + hand.lhcp
+        + "LHCP and"
+        + hand.shcp
+        + "SHCP, with"
+        + s(Spades)
+        + s(Hearts)
+        + s(Diamonds)
+        + s(Clubs)
+        + "."
 }
 
 /// Checks the SAYC advice for `hand` after `bids`, as plain text with one
@@ -737,16 +806,7 @@ fn check(bids: &[Bid], hand: &str, expect: Expect) {
     use std::str::FromStr;
     let advice = Convention::sayc().advice(bids, Cards::from_str(hand).unwrap());
     let html = format_as!(HTML, advice).into_string().replace("</th>", " ");
-    let mut text = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => text.push(c),
-            _ => {}
-        }
-    }
+    let text = strip_tags(&html);
     let lines: Vec<&str> = text
         .lines()
         .map(str::trim)
@@ -764,13 +824,13 @@ fn advice_after_a_one_spade_opening() {
         &one_spade,
         "S Q32 H KJ4 D J543 C 654",
         expect![[r#"
-            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+            Partner opened 1♠, showing 5+ ♠ and 13–21 long high card points.
             Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
             You should bid, since a pass would show at most 5 high card points (you have 7).
-            Suggested: 2♠ Single raise. It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
-            ♠ 2NT Jacoby 2NT: needs 4+ spades (you have 3) and 13+ high card points (you have 7).
+            Suggested: 2♠ Single raise. It shows 3+ ♠ and 6–9 high card points. Your 7 high card points are near the bottom of that range.
+            ♠ 2NT Jacoby 2NT: needs 4+ ♠ (you have 3) and 13+ high card points (you have 7).
             ♠ 3♠ Limit raise: needs 10–11 high card points (you have 7).
-            ♠ 4♠ Natural game: it needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
+            ♠ 4♠ Natural game: it needs 8+ ♠ and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
             ♦ 2♦ Two-level response: needs 10+ high card points (you have 7).
             ♣ 2♣ Two-level response: needs 10+ high card points (you have 7).
             NT 1NT Response: also fits, but the system prefers 2♠."#]],
@@ -779,12 +839,12 @@ fn advice_after_a_one_spade_opening() {
         &one_spade,
         "S 32 H 5432 D 432 C 5432",
         expect![[r#"
-            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
+            Partner opened 1♠, showing 5+ ♠ and 13–21 long high card points.
             Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
             Suggested: Pass Response pass. It shows at most 5 high card points.
-            ♠ 2♠ Single raise: needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
-            ♠ 3♠ Limit raise: needs 3+ spades (you have 2) and 10–11 high card points (you have 0).
-            ♥ 2♥ Two-level response: needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
+            ♠ 2♠ Single raise: needs 3+ ♠ (you have 2) and 6–9 high card points (you have 0).
+            ♠ 3♠ Limit raise: needs 3+ ♠ (you have 2) and 10–11 high card points (you have 0).
+            ♥ 2♥ Two-level response: needs 5+ ♥ (you have 4) and 10+ high card points (you have 0).
             ♣ 2♣ Two-level response: needs 10+ high card points (you have 0).
             NT 1NT Response: needs 6–9 high card points (you have 0).
             NT 3NT Response: needs 15–17 high card points (you have 0)."#]],
@@ -802,9 +862,9 @@ fn advice_after_one_notrump() {
             Partner opened 1NT, showing a balanced hand and 15–17 high card points.
             Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
             Suggested: Pass Response pass. It shows at most 7 high card points.
-            ♠ 2♥ Jacoby transfer: needs 5+ spades (you have 4).
-            ♠ 3♠ Natural: it needs 8+ spades and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
-            ♥ 2♦ Jacoby transfer: needs 5+ hearts (you have 4).
+            ♠ 2♥ Jacoby transfer: needs 5+ ♠ (you have 4).
+            ♠ 3♠ Natural: it needs 8+ ♠ and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
+            ♥ 2♦ Jacoby transfer: needs 5+ ♥ (you have 4).
             ♣ 2♣ Stayman: needs 8+ high card points (you have 6).
             NT 2NT Game invite: needs 8–9 high card points (you have 6).
             NT 3NT Game: needs 10–15 high card points (you have 6)."#]],
