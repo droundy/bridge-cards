@@ -3,8 +3,8 @@ use display_as::{format_as, DisplayAs, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{Error, Formatter};
 use wording::{
-    a, at_least, at_most, between, count, text, AddTo, Countable, List, Noun, Number, Quantity,
-    Text, HAS, IS,
+    a, agree, at_least, at_most, between, count, numbered, text, AddTo, List, Number, Plural,
+    Quantity, Text, Word, HAS, IS,
 };
 
 /// A playing card's suit.
@@ -14,57 +14,99 @@ enum Suit {
     Spades,
 }
 
-/// The markup: a suit as a symbol, as in "1♠", or as a noun, as in "5+
-/// spades".  Each format shows it its own way, and only plain text spells
-/// the noun out.
+impl Suit {
+    fn symbol(self) -> &'static str {
+        match self {
+            Suit::Hearts => "♥",
+            Suit::Spades => "♠",
+        }
+    }
+    fn html(self) -> &'static str {
+        match self {
+            Suit::Hearts => r#"<span class="hearts">♥</span>"#,
+            Suit::Spades => r#"<span class="spades">♠</span>"#,
+        }
+    }
+    fn latex(self) -> &'static str {
+        match self {
+            Suit::Hearts => r"\heartsuit{}",
+            Suit::Spades => r"\spadesuit{}",
+        }
+    }
+    fn name(self, number: Number) -> &'static str {
+        let word = match self {
+            Suit::Hearts => ("heart", "hearts"),
+            Suit::Spades => ("spade", "spades"),
+        };
+        match number {
+            Number::Singular => word.0,
+            Number::Plural => word.1,
+        }
+    }
+}
+
+/// The markup: a bid such as "1♠", or a suit as a noun, which plain text
+/// spells out and HTML and LaTeX show as its symbol.
 #[derive(Clone, Copy)]
 enum Mark {
-    Symbol(Suit),
-    Noun(Suit, Number),
+    Bid(u8, Suit),
+    Suit(Suit),
 }
+
+const SPADES: Mark = Mark::Suit(Suit::Spades);
+const HEARTS: Mark = Mark::Suit(Suit::Hearts);
 
 impl DisplayAs<UTF8> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        f.write_str(match self {
-            Mark::Symbol(Suit::Hearts) => "♥",
-            Mark::Symbol(Suit::Spades) => "♠",
-            Mark::Noun(Suit::Hearts, number) => Noun::new("heart", "hearts").agreeing(*number),
-            Mark::Noun(Suit::Spades, number) => Noun::new("spade", "spades").agreeing(*number),
-        })
+        match *self {
+            Mark::Bid(level, suit) => write!(f, "{level}{}", suit.symbol()),
+            Mark::Suit(suit) => f.write_str(suit.name(Number::Singular)),
+        }
+    }
+}
+
+impl DisplayAs<Plural<UTF8>> for Mark {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        match *self {
+            Mark::Suit(suit) => f.write_str(suit.name(Number::Plural)),
+            bid => <Mark as DisplayAs<UTF8>>::fmt(&bid, f),
+        }
     }
 }
 
 impl DisplayAs<HTML> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        f.write_str(match self {
-            Mark::Symbol(Suit::Hearts) | Mark::Noun(Suit::Hearts, _) => {
-                r#"<span class="hearts">♥</span>"#
-            }
-            Mark::Symbol(Suit::Spades) | Mark::Noun(Suit::Spades, _) => {
-                r#"<span class="spades">♠</span>"#
-            }
-        })
+        match *self {
+            Mark::Bid(level, suit) => write!(f, "{level}{}", suit.html()),
+            Mark::Suit(suit) => f.write_str(suit.html()),
+        }
+    }
+}
+
+impl DisplayAs<Plural<HTML>> for Mark {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        <Mark as DisplayAs<HTML>>::fmt(self, f)
     }
 }
 
 impl DisplayAs<LaTeX> for Mark {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        f.write_str(match self {
-            Mark::Symbol(Suit::Hearts) | Mark::Noun(Suit::Hearts, _) => r"\heartsuit{}",
-            Mark::Symbol(Suit::Spades) | Mark::Noun(Suit::Spades, _) => r"\spadesuit{}",
-        })
+        match *self {
+            Mark::Bid(level, suit) => write!(f, "{level}{}", suit.latex()),
+            Mark::Suit(suit) => f.write_str(suit.latex()),
+        }
     }
 }
 
-impl AddTo<Mark> for Suit {
+impl DisplayAs<Plural<LaTeX>> for Mark {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        <Mark as DisplayAs<LaTeX>>::fmt(self, f)
+    }
+}
+
+impl AddTo<Mark> for Mark {
     fn add_to(self, text: &mut Text<Mark>) {
-        text.push_markup(Mark::Symbol(self));
-    }
-}
-
-impl Countable<Mark> for Suit {
-    fn add_agreeing(self, number: Number, text: &mut Text<Mark>) {
-        text.push_markup(Mark::Noun(self, number));
+        text.push_markup(self);
     }
 }
 
@@ -78,29 +120,23 @@ fn check(text: &Text<Mark>, expect: Expect) {
     expect.assert_eq(&shown);
 }
 
-const POINT: Noun = Noun::new("high card point", "high card points");
-const CARD: Noun = Noun::new("card", "cards");
-const LOSER: Noun = Noun::new("loser", "losers");
+const POINT: Word = Word::new("point", "points");
+const CARD: Word = Word::new("card", "cards");
+const LOSER: Word = Word::new("loser", "losers");
 
 #[test]
 fn markup_and_escapes() {
-    let points = count(1u8, POINT);
+    let hand = text!(HAS, " ", count(1u8, text!("high card ", POINT)), " & ")
+        + at_least(5u8, SPADES)
+        + " in 100% of "
+        + Mark::Bid(1, Suit::Spades)
+        + " openings";
     check(
-        &text!(
-            "partner ",
-            HAS.agreeing(points.number()),
-            " ",
-            points,
-            " & 5+ ",
-            Suit::Spades,
-            ", not 100% ",
-            Suit::Hearts,
-        )
-        .sentence(),
+        &agree(numbered("partner", Number::Singular), hand).sentence(),
         expect![[r#"
-            Partner has 1 high card point & 5+ ♠, not 100% ♥.
-            Partner has 1 high card point &amp; 5+ <span class="spades">♠</span>, not 100% <span class="hearts">♥</span>.
-            Partner has 1 high card point \& 5+ \spadesuit{}, not 100\% \heartsuit{}."#]],
+            Partner has 1 high card point & 5+ spades in 100% of 1♠ openings.
+            Partner has 1 high card point &amp; 5+ <span class="spades">♠</span> in 100% of 1<span class="spades">♠</span> openings.
+            Partner has 1 high card point \& 5+ \spadesuit{} in 100\% of 1\spadesuit{} openings."#]],
     );
 }
 
@@ -111,36 +147,64 @@ fn quantities_agree() {
         count(0u8, CARD),
         at_least(1u8, CARD),
         at_most(1u8, CARD),
-        between(6u8, 9u8, POINT),
+        between(6u8, 9u8, text!("high card ", POINT)),
         Quantity::other("6½", Number::Plural, LOSER),
     ];
     let phrases: Vec<Text<Mark>> = quantities
         .into_iter()
-        .map(|q| text!(IS.agreeing(q.number()), " ", q))
+        .map(|q| agree(q, text!(IS, " enough")))
         .collect();
     check(
         &text!(List::with(phrases, "; ", "; ")),
         expect![[r#"
-            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers
-            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers
-            are 7 cards; are 0 cards; are 1+ cards; is at most 1 card; are 6–9 high card points; are 6½ losers"#]],
+        7 cards are enough; 0 cards are enough; 1+ cards are enough; at most 1 card is enough; 6–9 high card points are enough; 6½ losers are enough
+        7 cards are enough; 0 cards are enough; 1+ cards are enough; at most 1 card is enough; 6–9 high card points are enough; 6½ losers are enough
+        7 cards are enough; 0 cards are enough; 1+ cards are enough; at most 1 card is enough; 6–9 high card points are enough; 6½ losers are enough"#]],
     );
 }
 
 #[test]
 fn quantities_of_markup() {
     let phrases: Vec<Text<Mark>> = vec![
-        text!(count(1u8, Suit::Spades)),
-        text!(at_least(5u8, Suit::Spades)),
-        text!(at_most(1u8, Suit::Hearts)),
-        text!(between(2u8, 3u8, Suit::Hearts)),
+        text!(count(1u8, SPADES)),
+        text!(at_least(5u8, SPADES)),
+        text!(at_most(1u8, HEARTS)),
+        text!(between(2u8, 3u8, HEARTS)),
     ];
     check(
         &text!(List::with(phrases, "; ", "; ")),
         expect![[r#"
-            1 spade; 5+ spades; at most 1 heart; 2–3 hearts
-            1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>
-            1 \spadesuit{}; 5+ \spadesuit{}; at most 1 \heartsuit{}; 2–3 \heartsuit{}"#]],
+        1 spade; 5+ spades; at most 1 heart; 2–3 hearts
+        1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>
+        1 \spadesuit{}; 5+ \spadesuit{}; at most 1 \heartsuit{}; 2–3 \heartsuit{}"#]],
+    );
+}
+
+#[test]
+fn subjects_agree() {
+    let north_south = List::and(vec![
+        numbered("North", Number::Singular),
+        numbered("South", Number::Singular),
+    ]);
+    let partner_or_you = List::or(vec![
+        numbered("partner", Number::Singular),
+        numbered("you", Number::Plural),
+    ]);
+    let clauses: Vec<Text<Mark>> = vec![
+        agree(north_south, text!(HAS, " bid")),
+        agree(partner_or_you, text!(IS, " declarer")),
+        agree(numbered(SPADES, Number::Plural), text!(IS, " trumps")),
+        agree(
+            numbered("the opening", Number::Singular),
+            text!(IS, " ", at_least(5u8, SPADES)),
+        ),
+    ];
+    check(
+        &text!(List::with(clauses, "; ", "; ")),
+        expect![[r#"
+        North and South have bid; partner or you are declarer; spades are trumps; the opening is 5+ spades
+        North and South have bid; partner or you are declarer; <span class="spades">♠</span> are trumps; the opening is 5+ <span class="spades">♠</span>
+        North and South have bid; partner or you are declarer; \spadesuit{} are trumps; the opening is 5+ \spadesuit{}"#]],
     );
 }
 
@@ -154,8 +218,8 @@ fn lists() {
         text!(List::and(vec!["a", "b", "c"])),
         text!(List::or(vec!["a", "b", "c"])),
         text!(List::then(vec![
-            text!("opened 1", Suit::Spades),
-            text!("bid 2", Suit::Hearts)
+            text!("opened ", Mark::Bid(1, Suit::Spades)),
+            text!("bid ", Mark::Bid(2, Suit::Hearts))
         ])),
     ];
     check(
@@ -193,17 +257,20 @@ fn articles() {
 
 #[test]
 fn sentences() {
+    let mut forcing: Text<Mark> = text!("is that ");
+    forcing += "forcing?";
     let sentences: Vec<Text<Mark>> = vec![
         text!("bid it").sentence(),
-        text!("is that forcing?").sentence(),
-        text!(Suit::Spades, " are trumps").sentence(),
+        forcing.sentence(),
+        text!(Mark::Bid(1, Suit::Spades), " is natural").sentence(),
         text!(None::<&str>, "nothing optional").sentence(),
+        text!(HAS, " it").capitalized(),
     ];
     check(
         &text!(List::with(sentences, " ", " ")),
         expect![[r#"
-            Bid it. Is that forcing? ♠ are trumps. Nothing optional.
-            Bid it. Is that forcing? <span class="spades">♠</span> are trumps. Nothing optional.
-            Bid it. Is that forcing? \spadesuit{} are trumps. Nothing optional."#]],
+        Bid it. Is that forcing? 1♠ is natural. Nothing optional. Has it
+        Bid it. Is that forcing? 1<span class="spades">♠</span> is natural. Nothing optional. Has it
+        Bid it. Is that forcing? 1\spadesuit{} is natural. Nothing optional. Has it"#]],
     );
 }

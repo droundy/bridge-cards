@@ -1,4 +1,4 @@
-use crate::{AddTo, Text};
+use crate::{AddTo, Number, Subject, Text};
 
 /// Items joined into a list, as in "a, b and c".
 ///
@@ -13,14 +13,21 @@ pub struct List<T> {
     items: Vec<T>,
     separator: &'static str,
     last: &'static str,
+    /// The number of two or more items as a subject, if it is not the last
+    /// item's.
+    many: Option<Number>,
 }
 
 impl<T> List<T> {
-    /// "a", "a and b", "a, b and c".
+    /// "a", "a and b", "a, b and c".  Two or more are plural as a subject.
     pub fn and(items: Vec<T>) -> Self {
-        List::with(items, ", ", " and ")
+        List {
+            many: Some(Number::Plural),
+            ..List::with(items, ", ", " and ")
+        }
     }
-    /// "a", "a or b", "a, b or c".
+    /// "a", "a or b", "a, b or c".  As a subject, a verb agrees with the
+    /// last, as in "partner or you are".
     pub fn or(items: Vec<T>) -> Self {
         List::with(items, ", ", " or ")
     }
@@ -29,11 +36,13 @@ impl<T> List<T> {
         List::with(items, ", then ", ", then ")
     }
     /// Items joined by `separator`, except that `last` comes before the last.
+    /// As a subject, a verb agrees with the last item.
     pub fn with(items: Vec<T>, separator: &'static str, last: &'static str) -> Self {
         List {
             items,
             separator,
             last,
+            many: None,
         }
     }
     /// Is the list empty?
@@ -56,6 +65,16 @@ impl<M, T: AddTo<M>> AddTo<M> for List<T> {
                 text.push_words(self.separator);
             }
             item.add_to(text);
+        }
+    }
+}
+
+impl<M, T: Subject<M>> Subject<M> for List<T> {
+    fn number(&self) -> Number {
+        match (self.many, self.items.last()) {
+            (Some(many), _) if self.items.len() > 1 => many,
+            (_, Some(last)) => last.number(),
+            (_, None) => Number::Plural,
         }
     }
 }

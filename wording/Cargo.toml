@@ -10,6 +10,7 @@ license = "MIT/Apache-2.0"
 
 [dependencies]
 display-as = "0.7.0"
+mime = "0.3.12"
 
 [dev-dependencies]
 expect-test = "1.5"

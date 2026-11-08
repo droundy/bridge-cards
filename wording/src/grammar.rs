@@ -1,4 +1,4 @@
-use crate::{AddTo, Text};
+use crate::{text, AddTo, NoMarkup, Text};
 use std::fmt::{self, Display, Formatter};
 
 /// Whether something is one or many, which nouns and verbs agree with.
@@ -21,79 +21,90 @@ impl Number {
     }
 }
 
-/// A noun, with its singular and plural forms.
+/// A word with a singular and a plural form: a noun such as "point" and
+/// "points", or a verb such as "is" and "are".
+///
+/// It agrees with whatever number a [`Quantity`] or [`agree`] settles for
+/// it, and is singular until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Noun {
-    singular: &'static str,
-    plural: &'static str,
-}
-
-impl Noun {
-    /// A noun such as `Noun::new("spade", "spades")`.
-    pub const fn new(singular: &'static str, plural: &'static str) -> Self {
-        Noun { singular, plural }
-    }
-    /// The form that agrees with `number`.
-    pub fn agreeing(self, number: Number) -> &'static str {
-        match number {
-            Number::Singular => self.singular,
-            Number::Plural => self.plural,
-        }
-    }
-}
-
-/// A verb, with the forms that agree with a singular subject in the third
-/// person and with any other subject.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Verb {
+pub struct Word {
     singular: &'static str,
     plural: &'static str,
 }
 
 /// "is" or "are".
-pub const IS: Verb = Verb::new("is", "are");
+pub const IS: Word = Word::new("is", "are");
 /// "has" or "have".
-pub const HAS: Verb = Verb::new("has", "have");
+pub const HAS: Word = Word::new("has", "have");
 
-impl Verb {
-    /// A verb such as `Verb::new("shows", "show")`.
+impl Word {
+    /// A word such as `Word::new("spade", "spades")` or `Word::new("shows",
+    /// "show")`.  A verb's singular is the form that goes with "it".
     pub const fn new(singular: &'static str, plural: &'static str) -> Self {
-        Verb { singular, plural }
-    }
-    /// The form that agrees with a subject of `number` in the third person.
-    /// "You" takes the plural form.
-    pub fn agreeing(self, number: Number) -> &'static str {
-        match number {
-            Number::Singular => self.singular,
-            Number::Plural => self.plural,
-        }
+        Word { singular, plural }
     }
 }
 
-/// Something that can be counted, such as a [`Noun`].
+impl<M> AddTo<M> for Word {
+    fn add_to(self, text: &mut Text<M>) {
+        text.push_word(self.singular, self.plural);
+    }
+}
+
+/// Something a verb can agree with, because it knows whether it is one or
+/// many: a [`Quantity`], a [`List`](crate::List) of subjects, or a phrase
+/// given its number with [`numbered`].
+pub trait Subject<M>: AddTo<M> {
+    /// Whether this is one or many.
+    fn number(&self) -> Number;
+}
+
+/// `predicate` agreeing with `subject`, as in "partner has 5+ spades" or
+/// "you have 5+ spades".
 ///
-/// Implement it for markup that should agree with a number, such as a suit
-/// that plain text spells "spade" or "spades" and HTML shows as "♠".
-pub trait Countable<M> {
-    /// Adds the form that agrees with `number` to the end of `text`.
-    fn add_agreeing(self, number: Number, text: &mut Text<M>);
+/// Only the words in `predicate` whose number is not already settled
+/// agree, so "5+ spades" stays plural after "partner has".
+pub fn agree<M>(subject: impl Subject<M>, predicate: impl AddTo<M>) -> Text<M> {
+    let number = subject.number();
+    text!(subject, " ", text!(predicate).agreeing(number))
 }
 
-impl<M> Countable<M> for Noun {
-    fn add_agreeing(self, number: Number, text: &mut Text<M>) {
-        text.push_words(self.agreeing(number));
+/// A phrase whose number is given by hand, so that a verb can agree with
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Numbered<T> {
+    phrase: T,
+    number: Number,
+}
+
+/// `phrase`, which is one or many as `number` says, as in
+/// `numbered("partner", Number::Singular)` or `numbered("you",
+/// Number::Plural)`.  Any [`Word`] in it agrees with `number`.
+pub fn numbered<T>(phrase: T, number: Number) -> Numbered<T> {
+    Numbered { phrase, number }
+}
+
+impl<M, T: AddTo<M>> AddTo<M> for Numbered<T> {
+    fn add_to(self, text: &mut Text<M>) {
+        text!(self.phrase).agreeing(self.number).add_to(text);
     }
 }
 
-/// An amount of something [`Countable`], as in "1 spade", "5+ spades" or
-/// "6–9 points".
+impl<M, T: AddTo<M>> Subject<M> for Numbered<T> {
+    fn number(&self) -> Number {
+        self.number
+    }
+}
+
+/// An amount of a noun, as in "1 spade", "5+ spades" or "6–9 high card
+/// points".
 ///
-/// The noun agrees with the amount, so "at most 1 spade" is singular and
-/// "1+ spades" plural.
+/// The noun is any phrase, and its words and markup agree with the amount,
+/// so "at most 1 spade" is singular and "1+ spades" plural.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Quantity<N = Noun> {
+pub struct Quantity<M = NoMarkup> {
     amount: Amount,
-    noun: N,
+    noun: Text<M>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,38 +116,9 @@ enum Amount {
     Other(String, Number),
 }
 
-/// `n` of `noun`, as in "1 spade" or "7 spades".
-pub fn count<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::Exactly(n.into()), noun)
-}
-
-/// `n` or more of `noun`, as in "5+ spades".
-pub fn at_least<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::AtLeast(n.into()), noun)
-}
-
-/// `n` or fewer of `noun`, as in "at most 1 spade".
-pub fn at_most<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::AtMost(n.into()), noun)
-}
-
-/// From `lo` to `hi` of `noun`, as in "6–9 points".
-pub fn between<N>(lo: impl Into<u64>, hi: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::Between(lo.into(), hi.into()), noun)
-}
-
-impl<N> Quantity<N> {
-    fn new(amount: Amount, noun: N) -> Self {
-        Quantity { amount, noun }
-    }
-    /// An amount the other constructors can't write, as in "6½ losers".
-    /// The noun agrees with `number`.
-    pub fn other(amount: impl Display, number: Number, noun: N) -> Self {
-        Quantity::new(Amount::Other(amount.to_string(), number), noun)
-    }
-    /// Whether this is one or many, for a verb to agree with.
-    pub fn number(&self) -> Number {
-        match self.amount {
+impl Amount {
+    fn number(&self) -> Number {
+        match *self {
             Amount::Exactly(n) | Amount::AtMost(n) => Number::of(n),
             Amount::AtLeast(_) | Amount::Between(..) => Number::Plural,
             Amount::Other(_, number) => number,
@@ -156,11 +138,51 @@ impl Display for Amount {
     }
 }
 
-impl<M, N: Countable<M>> AddTo<M> for Quantity<N> {
+/// `n` of `noun`, as in "1 spade" or "7 spades".
+pub fn count<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+    Quantity::new(Amount::Exactly(n.into()), noun)
+}
+
+/// `n` or more of `noun`, as in "5+ spades".
+pub fn at_least<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+    Quantity::new(Amount::AtLeast(n.into()), noun)
+}
+
+/// `n` or fewer of `noun`, as in "at most 1 spade".
+pub fn at_most<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+    Quantity::new(Amount::AtMost(n.into()), noun)
+}
+
+/// From `lo` to `hi` of `noun`, as in "6–9 points".
+pub fn between<M>(lo: impl Into<u64>, hi: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+    Quantity::new(Amount::Between(lo.into(), hi.into()), noun)
+}
+
+impl<M> Quantity<M> {
+    fn new(amount: Amount, noun: impl AddTo<M>) -> Self {
+        Quantity {
+            amount,
+            noun: text!(noun),
+        }
+    }
+    /// An amount the other constructors can't write, as in "6½ losers".
+    /// The noun agrees with `number`.
+    pub fn other(amount: impl Display, number: Number, noun: impl AddTo<M>) -> Self {
+        Quantity::new(Amount::Other(amount.to_string(), number), noun)
+    }
+}
+
+impl<M> AddTo<M> for Quantity<M> {
     fn add_to(self, text: &mut Text<M>) {
-        let number = self.number();
+        let number = self.amount.number();
         text.push_words(&format!("{} ", self.amount));
-        self.noun.add_agreeing(number, text);
+        self.noun.agreeing(number).add_to(text);
+    }
+}
+
+impl<M> Subject<M> for Quantity<M> {
+    fn number(&self) -> Number {
+        self.amount.number()
     }
 }
 

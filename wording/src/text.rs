@@ -1,18 +1,32 @@
+use crate::Number;
 use display_as::{DisplayAs, Format};
 use std::fmt::{Display, Error, Formatter};
+use std::ops::{Add, AddAssign};
 
 /// Words and markup, displayed in any format the markup supports.
 ///
 /// Words are escaped for the format they are displayed in.  Markup is a
 /// value of type `M`, such as a playing card that HTML shows in colour, and
-/// displays itself through [`DisplayAs`].  Build a `Text` with [`text!`](crate::text!).
+/// displays itself through [`DisplayAs`].  A [`Word`](crate::Word) and a
+/// piece of markup agree with whatever number a [`Quantity`](crate::Quantity)
+/// or [`agree`](crate::agree) settles for them, and are singular until then.
+///
+/// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
+/// with `+` or `+=`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Text<M = NoMarkup>(Vec<Piece<M>>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Piece<M> {
     Words(String),
-    Markup(M),
+    /// A word with a plural, and the number it agrees with once that is
+    /// settled.
+    Word {
+        singular: String,
+        plural: String,
+        number: Option<Number>,
+    },
+    Markup(M, Option<Number>),
 }
 
 /// Markup for text that has none.  It has no values, so it displays in
@@ -23,6 +37,59 @@ pub enum NoMarkup {}
 impl<F: Format> DisplayAs<F> for NoMarkup {
     fn fmt(&self, _: &mut Formatter) -> Result<(), Error> {
         match *self {}
+    }
+}
+
+/// The format `F`, for markup that agrees with a plural.
+///
+/// Markup displays in `F` when it is singular and in `Plural<F>` when it is
+/// plural, so a suit might be "spade" and "spades" in plain text but "♠" in
+/// HTML either way.  Markup that never changes can display the same in
+/// both:
+///
+/// ```
+/// use display_as::{format_as, DisplayAs, Format, HTML, UTF8};
+/// use std::fmt::{Error, Formatter};
+/// use wording::{count, Plural, Text};
+///
+/// struct Bid(u8);
+/// # impl DisplayAs<UTF8> for Bid {
+/// #     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+/// #         write!(f, "{}NT", self.0)
+/// #     }
+/// # }
+/// # impl DisplayAs<HTML> for Bid {
+/// #     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+/// #         write!(f, "<b>{}NT</b>", self.0)
+/// #     }
+/// # }
+/// # impl wording::AddTo<Bid> for Bid {
+/// #     fn add_to(self, text: &mut Text<Bid>) { text.push_markup(self) }
+/// # }
+/// impl<F: Format> DisplayAs<Plural<F>> for Bid
+/// where
+///     Bid: DisplayAs<F>,
+/// {
+///     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+///         <Bid as DisplayAs<F>>::fmt(self, f)
+///     }
+/// }
+///
+/// let bids: Text<Bid> = wording::text!(count(2u8, Bid(3)));
+/// assert_eq!(format_as!(HTML, bids).into_string(), "2 <b>3NT</b>");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Plural<F>(F);
+
+impl<F: Format> Format for Plural<F> {
+    fn escape(f: &mut Formatter, s: &str) -> Result<(), Error> {
+        F::escape(f, s)
+    }
+    fn mime() -> mime::Mime {
+        F::mime()
+    }
+    fn this_format() -> Self {
+        Plural(F::this_format())
     }
 }
 
@@ -67,7 +134,24 @@ impl<M> Text<M> {
     }
     /// Adds markup to the end.
     pub fn push_markup(&mut self, markup: M) {
-        self.0.push(Piece::Markup(markup));
+        self.0.push(Piece::Markup(markup, None));
+    }
+    pub(crate) fn push_word(&mut self, singular: &str, plural: &str) {
+        self.0.push(Piece::Word {
+            singular: singular.to_string(),
+            plural: plural.to_string(),
+            number: None,
+        });
+    }
+    /// The text with every word and piece of markup whose number is not yet
+    /// settled agreeing with `number`.
+    pub fn agreeing(mut self, number: Number) -> Self {
+        for piece in self.0.iter_mut() {
+            if let Piece::Word { number: n, .. } | Piece::Markup(_, n) = piece {
+                n.get_or_insert(number);
+            }
+        }
+        self
     }
     /// Is there nothing to display?
     pub fn is_empty(&self) -> bool {
@@ -77,11 +161,15 @@ impl<M> Text<M> {
     }
     /// The text with a capital first letter, if it starts with words.
     pub fn capitalized(mut self) -> Self {
-        if let Some(Piece::Words(w)) = self.0.first_mut() {
-            let mut chars = w.chars();
-            if let Some(c) = chars.next() {
-                *w = c.to_uppercase().chain(chars).collect();
+        match self.0.first_mut() {
+            Some(Piece::Words(w)) => capitalize(w),
+            Some(Piece::Word {
+                singular, plural, ..
+            }) => {
+                capitalize(singular);
+                capitalize(plural);
             }
+            _ => (),
         }
         self
     }
@@ -99,12 +187,26 @@ impl<M> Text<M> {
     }
 }
 
-impl<F: Format, M: DisplayAs<F>> DisplayAs<F> for Text<M> {
+fn capitalize(w: &mut String) {
+    let mut chars = w.chars();
+    if let Some(c) = chars.next() {
+        *w = c.to_uppercase().chain(chars).collect();
+    }
+}
+
+impl<F: Format, M: DisplayAs<F> + DisplayAs<Plural<F>>> DisplayAs<F> for Text<M> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         for piece in self.0.iter() {
             match piece {
                 Piece::Words(w) => F::escape(f, w)?,
-                Piece::Markup(m) => m.fmt(f)?,
+                Piece::Word {
+                    plural,
+                    number: Some(Number::Plural),
+                    ..
+                } => F::escape(f, plural)?,
+                Piece::Word { singular, .. } => F::escape(f, singular)?,
+                Piece::Markup(m, Some(Number::Plural)) => <M as DisplayAs<Plural<F>>>::fmt(m, f)?,
+                Piece::Markup(m, _) => <M as DisplayAs<F>>::fmt(m, f)?,
             }
         }
         Ok(())
@@ -125,9 +227,25 @@ impl<M> AddTo<M> for Text<M> {
         for piece in self.0 {
             match piece {
                 Piece::Words(w) => text.push_words(&w),
-                Piece::Markup(m) => text.push_markup(m),
+                piece => text.0.push(piece),
             }
         }
+    }
+}
+
+/// `text + piece` adds anything that implements [`AddTo`].
+impl<M, T: AddTo<M>> Add<T> for Text<M> {
+    type Output = Text<M>;
+    fn add(mut self, piece: T) -> Text<M> {
+        piece.add_to(&mut self);
+        self
+    }
+}
+
+/// `text += piece` adds anything that implements [`AddTo`].
+impl<M, T: AddTo<M>> AddAssign<T> for Text<M> {
+    fn add_assign(&mut self, piece: T) {
+        piece.add_to(self);
     }
 }
 
