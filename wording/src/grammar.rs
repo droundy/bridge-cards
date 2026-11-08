@@ -33,12 +33,11 @@ pub struct Word {
     noun: bool,
 }
 
-/// "is" or "are".
-pub const IS: Word = Word::verb("is", "are");
-/// "has" or "have".
-pub const HAS: Word = Word::verb("has", "have");
-
 impl Word {
+    /// "is" or "are".
+    pub const IS: Word = Word::verb("is", "are");
+    /// "has" or "have".
+    pub const HAS: Word = Word::verb("has", "have");
     /// A noun such as `Word::noun("spade", "spades")`.
     pub const fn noun(singular: &'static str, plural: &'static str) -> Self {
         Word {

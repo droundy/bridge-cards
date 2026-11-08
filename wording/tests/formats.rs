@@ -4,7 +4,7 @@ use expect_test::{expect, Expect};
 use std::fmt::{self, Formatter};
 use wording::{
     a, agree, and, at_least, at_most, between, count, numbered, or, text, then, Amount, Form,
-    Markup, Number, Text, Word, HAS, IS,
+    Markup, Number, Text, Word,
 };
 
 /// A playing card's suit as a noun, which plain text spells out and HTML and
@@ -113,7 +113,7 @@ const LOSER: Word = Word::noun("loser", "losers");
 
 #[test]
 fn markup_and_escapes() {
-    let hand = text!(HAS, " ", 1 * text!("high card ", POINT), " & ")
+    let hand = text!(Word::HAS, " ", 1 * text!("high card ", POINT), " & ")
         + (5..) * SPADES
         + " in 100% of "
         + Bid(1, Suit::Spades)
@@ -130,7 +130,7 @@ fn markup_and_escapes() {
 #[test]
 fn quantities_agree() {
     fn enough(quantity: Text) -> Text {
-        agree(quantity, text!(IS, " enough"))
+        agree(quantity, text!(Word::IS, " enough"))
     }
     check(
         joined(
@@ -193,17 +193,20 @@ fn subjects_agree() {
                         numbered("North", Number::Singular),
                         numbered("South", Number::Singular),
                     ]),
-                    text!(HAS, " bid"),
+                    text!(Word::HAS, " bid"),
                 ),
-                agree(or([partner(), you()]), text!(IS, " declarer")),
-                agree(SPADES, text!(IS, " trumps")),
-                agree(partner(), text!(IS, " short in ", HEARTS)),
-                agree(you(), text!(HAS, " opened and ", IS, " forcing")),
-                agree(partner(), text!(HAS, " ", five_spades.clone())),
-                agree(five_spades, text!(IS, " enough")),
+                agree(or([partner(), you()]), text!(Word::IS, " declarer")),
+                agree(SPADES, text!(Word::IS, " trumps")),
+                agree(partner(), text!(Word::IS, " short in ", HEARTS)),
                 agree(
                     you(),
-                    text!("know that ", agree(partner(), text!(HAS, " bid"))),
+                    text!(Word::HAS, " opened and ", Word::IS, " forcing"),
+                ),
+                agree(partner(), text!(Word::HAS, " ", five_spades.clone())),
+                agree(five_spades, text!(Word::IS, " enough")),
+                agree(
+                    you(),
+                    text!("know that ", agree(partner(), text!(Word::HAS, " bid"))),
                 ),
             ],
             "; ",
@@ -222,35 +225,39 @@ fn noun_phrases_keep_their_number() {
     let partner = || numbered("partner", Number::Singular);
     let you = || numbered("you", Number::Plural);
     // Each phrase reads the same whoever holds it.
-    let balanced = || a(text!(HAND, " that ", IS, " balanced"));
-    let high = || count(5, text!(CARD, " that ", IS, " high"));
+    let balanced = || a(text!(HAND, " that ", Word::IS, " balanced"));
+    let high = || count(5, text!(CARD, " that ", Word::IS, " high"));
     check(
         joined(
             vec![
-                agree(you(), text!(HAS, " ", balanced())),
-                agree(partner(), text!(HAS, " ", balanced())),
-                agree(you(), text!(HAS, " ", high())),
-                agree(partner(), text!(HAS, " ", high())),
-                agree(high(), text!(IS, " enough")),
+                agree(you(), text!(Word::HAS, " ", balanced())),
+                agree(partner(), text!(Word::HAS, " ", balanced())),
+                agree(you(), text!(Word::HAS, " ", high())),
+                agree(partner(), text!(Word::HAS, " ", high())),
+                agree(high(), text!(Word::IS, " enough")),
                 // A clause with a subject of its own keeps its own verbs.
                 agree(
                     you(),
                     text!(
-                        HAS,
+                        Word::HAS,
                         " ",
-                        a(text!(SUIT, " that ", agree(partner(), text!(HAS, " bid"))))
+                        a(text!(
+                            SUIT,
+                            " that ",
+                            agree(partner(), text!(Word::HAS, " bid"))
+                        ))
                     ),
                 ),
                 // The first noun or noun phrase decides a subject's number.
                 agree(
                     a(text!(HAND, " with ", (5..) * SPADES)),
-                    text!(IS, " strong"),
+                    text!(Word::IS, " strong"),
                 ),
                 agree(
                     text!("the ", CARD, " with ", count(5, POINT)),
-                    text!(IS, " led"),
+                    text!(Word::IS, " led"),
                 ),
-                agree(text!("your ", count(7, POINT)), text!(IS, " enough")),
+                agree(text!("your ", count(7, POINT)), text!(Word::IS, " enough")),
             ],
             "; ",
         ),
@@ -334,12 +341,12 @@ fn sentences() {
                 forcing.sentence(),
                 text!(Bid(1, Suit::Spades), " is natural").sentence(),
                 text!(None::<&str>, "nothing optional").sentence(),
-                text!(HAS, " it").capitalized(),
-                text!(String::new(), HAS, " it").sentence(),
+                text!(Word::HAS, " it").capitalized(),
+                text!(String::new(), Word::HAS, " it").sentence(),
                 text!("bid it. ").sentence(),
                 text!("say \"pass.\"").sentence(),
                 text!("(", "maybe)").sentence(),
-                agree(SPADES, text!(IS, " trumps")).sentence(),
+                agree(SPADES, text!(Word::IS, " trumps")).sentence(),
                 text!(a("ace"), " is high").sentence(),
             ],
             " ",
