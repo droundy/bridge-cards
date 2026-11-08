@@ -346,6 +346,52 @@ pub enum Forcing {
 #[with_template("" if *self == Forcing::Forcing { "<br/><strong>Forcing</strong>" } else if *self == Forcing::GameForcing { "<br/><strong>Game forcing</strong>" } )]
 impl DisplayAs<HTML> for Forcing {}
 
+// Limits of this representation, and changes that would lift them.
+//
+// The approximations listed at the top of `sayc.rs` come from three limits:
+//
+// 1. A bid is described by one box, a `min` and a `max` `HandValuation`.  A
+//    box cannot compare suits ("spades at least as long as hearts"), cannot
+//    say "this or that" ("at most two trumps, or 13+ hcp"), and cannot say
+//    balanced: lengths of 2-5 in every suit let in 5-4-2-2.
+// 2. Only one entry per auction counts.  `refine` takes the first entry whose
+//    regex matches, so a later entry for the same auction is never seen, not
+//    even as a fallback.
+// 3. Choosing a bid is tied to forcing.  `ConventionalBid` tries the stronger
+//    forcing levels first and, within a level, the highest bid that fits, so
+//    how forcing a bid is also decides how much the robot prefers it.  That
+//    is why SAYC needs bounds such as `hides_no_major`, and `Forced` entries
+//    for the bids left when nothing else fits.
+//
+// Changes that would lift them, smallest first:
+//
+// 1. Shape constraints: an optional list beside the box, such as a suit at
+//    least as long as another, a suit longer than another, truly balanced, or
+//    an exact shape such as 4-4-3-2.  A small enum stays `Clone` and `Debug`
+//    and can describe itself ("♠ ≥ ♥"), replacing descriptions that only say
+//    so in text, as Sheets' `Spades ">" Hearts` does.  What partner infers
+//    stays the box, so `adjust_for_earlier_bids` is unchanged, and so is
+//    Sheets.  This would fix SAYC's 1D versus 1C, 5-5 and 6-5 hands, and
+//    balanced notrump bids.
+// 2. Alternatives within an entry: several boxes, of which the hand must fit
+//    one.  What partner infers is their hull, which is no worse than today.
+//    This would let Jacoby 2NT take four trumps again, beside a new suit with
+//    three trumps and 13+, and give SAYC its 6-9 1NT and 10-11 limit raise.
+// 3. Choosing bids in table order: let every entry for an auction count, and
+//    bid the first one in the table that matches and fits, as a bridge book
+//    reads ("with four trumps raise; else with a four card major you can show
+//    at the one level, bid it; else ...").  Forcing then only says what a bid
+//    means.  Fallbacks become the last entry, which replaces `hides_no_major`
+//    and the `Forced` fallbacks, and covers what 1 and 2 cannot: up the line
+//    with 4-4 majors, raising a minor with three only when 2NT does not fit,
+//    and rebidding a five card suit when nothing else fits.  Descriptions and
+//    `bid_understood2` would combine all entries for a bid.  Sheets could keep
+//    today's rule by a per-system choice, checked with `dump_auctions`.
+//
+// Also: dummy points for raises (a `HandValuation` field for shortness, once
+// the entry names the trump suit), which the booklet's raises are counted
+// in; and, with table order, telling players that a bid denies every entry
+// before it.
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {

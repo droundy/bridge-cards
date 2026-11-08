@@ -16,7 +16,8 @@
 //! bounds that the bidder's hand must fit, and bidding picks the highest legal
 //! bid that fits (see `ConventionalBid`).  A bid therefore has to be described
 //! by a single box of hand bounds, which cannot say "more diamonds than clubs".
-//! Where SAYC makes such a comparison the table approximates it:
+//! Where SAYC makes such a comparison the table approximates it (a comment
+//! above `Convention` in `ai.rs` sketches changes that would remove these):
 //!
 //! * 1D shows four or more diamonds and at most four clubs, so 1C is also
 //!   opened with 3-2 in the minors (the booklet opens 1D with 4-4-3-2), and
