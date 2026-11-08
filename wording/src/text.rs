@@ -3,7 +3,7 @@ use crate::{Number, Word};
 use display_as::{DisplayAs, Format, LaTeX, HTML, UTF8};
 use std::fmt::{self, Display, Formatter};
 use std::ops::{Add, AddAssign};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A phrase: words and markup, displayed as HTML, plain text or LaTeX.
 ///
@@ -13,7 +13,9 @@ use std::rc::Rc;
 /// such as a playing card that HTML shows in colour, displays itself.
 ///
 /// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
-/// with `+` or `+=`.  `Display` shows it as plain text.
+/// with `+` or `+=`.  `Display` shows it as plain text.  A `Text` is `Send`
+/// and `Sync`, so a server can keep one in shared state or across an
+/// `.await`.
 #[derive(Clone, Default)]
 pub struct Text {
     pieces: Vec<Piece>,
@@ -28,7 +30,7 @@ enum Piece {
     /// A word, and the number it agrees with once that is settled.
     Word(Word, Option<Number>),
     /// Markup, and the number it agrees with once that is settled.
-    Markup(Rc<dyn Markup>, Option<Number>),
+    Markup(Arc<dyn Markup>, Option<Number>),
     /// The next letter shown is a capital.
     Capital,
     /// "a" or "an", whichever goes before what is shown next.
@@ -38,7 +40,9 @@ enum Piece {
 /// Something that displays itself differently in each format, such as a bid,
 /// or a suit that plain text spells out and HTML shows as a symbol.
 ///
-/// Anything that implements `Markup` can be added to a [`Text`]:
+/// Anything that implements `Markup` can be added to a [`Text`].  Markup is
+/// `Send` and `Sync`, as plain data such as a bid or a suit is, so that a
+/// `Text` is too:
 ///
 /// ```
 /// use display_as::{format_as, HTML};
@@ -63,7 +67,7 @@ enum Piece {
 /// assert_eq!(t.to_string(), "Partner opened 1NT.");
 /// assert_eq!(format_as!(HTML, t).into_string(), "Partner opened <b>1NT</b>.");
 /// ```
-pub trait Markup {
+pub trait Markup: Send + Sync {
     /// Writes this as HTML.
     fn html(&self, form: Form, f: &mut Formatter) -> fmt::Result;
     /// Writes this as plain text.
@@ -364,7 +368,7 @@ impl AddTo for Text {
 
 impl<T: Markup + 'static> AddTo for T {
     fn add_to(self, text: &mut Text) {
-        text.pieces.push(Piece::Markup(Rc::new(self), None));
+        text.pieces.push(Piece::Markup(Arc::new(self), None));
     }
 }
 
