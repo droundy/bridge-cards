@@ -13,15 +13,15 @@ use std::sync::Arc;
 /// such as a playing card that HTML shows in colour, displays itself.
 ///
 /// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
-/// with `+` or `+=`.  `Display` shows it as plain text.  A `Text` is `Send`
+/// with `+` or `+=`.  A piece is anything that converts into a `Text`:
+/// strings, numbers, [`Word`]s, `Option`s, other `Text`, and anything that
+/// implements [`Markup`].  For a type of your own, implement `From<YourType>
+/// for Text`.  `Display` shows it as plain text.  A `Text` is `Send`
 /// and `Sync`, so a server can keep one in shared state or across an
 /// `.await`.
 #[derive(Clone, Default)]
 pub struct Text {
     pieces: Vec<Piece>,
-    /// The number of this phrase as a subject, once a quantity, a list or
-    /// [`numbered`](crate::numbered) has settled it.
-    number: Option<Number>,
 }
 
 #[derive(Clone)]
@@ -31,6 +31,10 @@ enum Piece {
     Word(Word, Option<Number>),
     /// Markup, and the number it agrees with once that is settled.
     Markup(Arc<dyn Markup>, Option<Number>),
+    /// The number, as a subject, of the phrase that starts here: a quantity,
+    /// a list, or a phrase given to [`a`](crate::a) or
+    /// [`numbered`](crate::numbered).
+    Number(Number),
     /// The next letter shown is a capital.
     Capital,
     /// "a" or "an", whichever goes before what is shown next.
@@ -40,7 +44,7 @@ enum Piece {
 /// Something that displays itself differently in each format, such as a bid,
 /// or a suit that plain text spells out and HTML shows as a symbol.
 ///
-/// Anything that implements `Markup` can be added to a [`Text`].  Markup is
+/// Anything that implements `Markup` converts into a [`Text`].  Markup is
 /// `Send` and `Sync`, as plain data such as a bid or a suit is, so that a
 /// `Text` is too:
 ///
@@ -77,9 +81,9 @@ pub trait Markup: Send + Sync {
     /// If this is a noun, the number it takes when nothing settles one.
     ///
     /// A noun agrees with a quantity it is the noun of, as in "1 spade", and
-    /// decides the number of a subject it starts, as in "spades are trumps".
-    /// Markup that is not a noun, such as a bid, keeps the default `None` and
-    /// is always given [`Number::Singular`].
+    /// decides the number of a subject it is the first noun of, as in "spades
+    /// are trumps".  Markup that is not a noun, such as a bid, keeps the
+    /// default `None` and is always given [`Number::Singular`].
     fn noun(&self) -> Option<Number> {
         None
     }
@@ -109,7 +113,7 @@ pub struct Form {
 }
 
 /// Text made of words, quantities, lists and markup: anything that
-/// implements [`AddTo`].
+/// converts into a [`Text`].
 ///
 /// ```
 /// use display_as::{format_as, HTML};
@@ -124,7 +128,7 @@ macro_rules! text {
     ($($piece:expr),* $(,)?) => {{
         #[allow(unused_mut)]
         let mut text = $crate::Text::new();
-        $( $crate::AddTo::add_to($piece, &mut text); )*
+        $( text += $piece; )*
         text
     }};
 }
@@ -135,7 +139,7 @@ impl Text {
         Text::default()
     }
     /// Adds words to the end.
-    pub fn push_words(&mut self, words: &str) {
+    pub(crate) fn push_words(&mut self, words: &str) {
         match self.pieces.last_mut() {
             Some(Piece::Words(w)) => w.push_str(words),
             _ => self.pieces.push(Piece::Words(words.to_string())),
@@ -151,28 +155,49 @@ impl Text {
     pub fn is_empty(&self) -> bool {
         self.pieces.iter().all(|p| match p {
             Piece::Words(w) => w.is_empty(),
-            Piece::Capital | Piece::Article => true,
+            Piece::Number(_) | Piece::Capital | Piece::Article => true,
             Piece::Word(..) | Piece::Markup(..) => false,
         })
     }
     /// Whether this is one or many as the subject of a verb.
     ///
-    /// That is the number a quantity, a list or [`numbered`](crate::numbered)
-    /// settled for it, or else the number of its first noun, or else
-    /// singular, as for "partner".
+    /// That is the number of the first noun or noun phrase in it, so "the
+    /// card with 5 points" is singular and "your 7 points" plural.  A noun
+    /// phrase is a quantity, a list, or a phrase given to [`a`](crate::a) or
+    /// [`numbered`](crate::numbered).  Text with neither is singular, as for
+    /// "partner".
     pub fn number(&self) -> Number {
-        self.number
-            .or_else(|| {
-                self.pieces.iter().find_map(|p| match p {
-                    Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
-                    Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
-                    _ => None,
-                })
+        self.pieces
+            .iter()
+            .find_map(|p| match p {
+                Piece::Number(n) => Some(*n),
+                Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
+                Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
+                _ => None,
             })
             .unwrap_or(Number::Singular)
     }
-    pub(crate) fn set_number(&mut self, number: Number) {
-        self.number = Some(number);
+    /// Makes this a phrase that is one or many as `number` says, as a
+    /// subject, without changing the words in it.
+    pub(crate) fn mark_number(&mut self, number: Number) {
+        self.pieces.insert(0, Piece::Number(number));
+    }
+    /// Makes this a noun phrase that is one or many as `number` says.  Its
+    /// head, the first noun whose number is not yet settled, agrees with
+    /// `number`, as in "1 card in hearts", and so do the verbs whose number
+    /// is not yet settled, as in "5 cards that are high", so that the phrase
+    /// reads the same in any sentence.
+    pub(crate) fn settle(&mut self, number: Number) {
+        self.settle_verbs(number);
+        let head = self.pieces.iter_mut().find_map(|p| match p {
+            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
+            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
+            _ => None,
+        });
+        if let Some(n) = head {
+            *n = Some(number);
+        }
+        self.mark_number(number);
     }
     /// Makes every verb whose number is not yet settled agree with `number`.
     pub(crate) fn settle_verbs(&mut self, number: Number) {
@@ -182,18 +207,6 @@ impl Text {
                     *n = Some(number);
                 }
             }
-        }
-    }
-    /// Makes the first noun whose number is not yet settled, the head of a
-    /// phrase such as "card in hearts", agree with `number`.
-    pub(crate) fn settle_head(&mut self, number: Number) {
-        let head = self.pieces.iter_mut().find_map(|p| match p {
-            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
-            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
-            _ => None,
-        });
-        if let Some(n) = head {
-            *n = Some(number);
         }
     }
     /// The text starting with a capital letter.
@@ -227,6 +240,7 @@ impl Text {
         let mut next = Next::default();
         for piece in self.pieces.iter() {
             match piece {
+                Piece::Number(_) => {}
                 Piece::Capital => next.capital = true,
                 Piece::Article => next.article = true,
                 Piece::Words(w) => next.write_words(out, w, f)?,
@@ -342,76 +356,59 @@ impl fmt::Debug for Text {
     }
 }
 
-/// Something that can be added to a [`Text`].
-///
-/// Strings, numbers, [`Word`]s, `Option`s and other `Text` are added
-/// already, and so is anything that implements [`Markup`].  Implement it for your own types, or wrap
-/// a value in [`Plain`] to add the words its `Display` gives.
-pub trait AddTo {
-    /// Adds this to the end of `text`.
-    fn add_to(self, text: &mut Text);
-}
-
-impl AddTo for Text {
-    fn add_to(self, text: &mut Text) {
-        if text.number.is_none() {
-            text.number = self.number;
-        }
-        for piece in self.pieces {
+impl Text {
+    /// Adds `other` to the end, keeping the numbers its words have settled.
+    pub(crate) fn append(&mut self, other: Text) {
+        for piece in other.pieces {
             match piece {
-                Piece::Words(w) => text.push_words(&w),
-                piece => text.pieces.push(piece),
+                Piece::Words(w) => self.push_words(&w),
+                piece => self.pieces.push(piece),
             }
         }
     }
 }
 
-impl<T: Markup + 'static> AddTo for T {
-    fn add_to(self, text: &mut Text) {
-        text.pieces.push(Piece::Markup(Arc::new(self), None));
-    }
-}
-
-/// `text + piece` adds anything that implements [`AddTo`].
-impl<T: AddTo> Add<T> for Text {
+/// `text + piece` adds anything that converts into a `Text`.
+impl<T: Into<Text>> Add<T> for Text {
     type Output = Text;
     fn add(mut self, piece: T) -> Text {
-        piece.add_to(&mut self);
+        self += piece;
         self
     }
 }
 
-/// `text += piece` adds anything that implements [`AddTo`].
-impl<T: AddTo> AddAssign<T> for Text {
+/// `text += piece` adds anything that converts into a `Text`.
+impl<T: Into<Text>> AddAssign<T> for Text {
     fn add_assign(&mut self, piece: T) {
-        piece.add_to(self);
+        self.append(piece.into());
     }
 }
 
-impl<T: AddTo> AddTo for Option<T> {
-    fn add_to(self, text: &mut Text) {
-        if let Some(t) = self {
-            t.add_to(text);
+/// Markup as a `Text`, so that it can go anywhere a phrase can.
+impl<T: Markup + 'static> From<T> for Text {
+    fn from(markup: T) -> Self {
+        Text {
+            pieces: vec![Piece::Markup(Arc::new(markup), None)],
         }
     }
 }
 
-/// A value added as the words its [`Display`] gives.
-pub struct Plain<T>(pub T);
-
-impl<T: Display> AddTo for Plain<T> {
-    fn add_to(self, text: &mut Text) {
-        text.push_words(&self.0.to_string());
+/// Nothing, or the phrase.
+impl<T: Into<Text>> From<Option<T>> for Text {
+    fn from(piece: Option<T>) -> Self {
+        piece.map_or_else(Text::new, Into::into)
     }
 }
 
-macro_rules! add_as_words {
+macro_rules! from_words {
     ($($t:ty),*) => {
-        $(impl AddTo for $t {
-            fn add_to(self, text: &mut Text) {
-                text.push_words(&self.to_string());
+        $(impl From<$t> for Text {
+            fn from(words: $t) -> Self {
+                let mut text = Text::new();
+                text.push_words(&words.to_string());
+                text
             }
         })*
     };
 }
-add_as_words!(&str, String, &String, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+from_words!(&str, String, &String, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
