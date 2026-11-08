@@ -94,61 +94,66 @@ impl BidAI for AllPass {
 /// The bids that may follow `history`, lowest priority first: Pass, then
 /// Double, then contract bids from lowest to highest.
 fn legal_bids(history: &[Bid]) -> Vec<Bid> {
-    let mut candidates = vec![Bid::Pass, Bid::Double, Bid::Redouble];
-    for level in 1..8 {
-        for suit in Suit::ALL.iter().cloned() {
-            candidates.push(Bid::Suit(level, suit));
-        }
-        candidates.push(Bid::NT(level));
-    }
+    let mut candidates = all_bids();
     candidates.retain(|&b| bid_follows(history, b));
     candidates
 }
 
+/// Every bid, in the order of `legal_bids`.
+fn all_bids() -> Vec<Bid> {
+    let mut bids = vec![Bid::Pass, Bid::Double, Bid::Redouble];
+    for level in 1..8 {
+        for suit in Suit::ALL.iter().cloned() {
+            bids.push(Bid::Suit(level, suit));
+        }
+        bids.push(Bid::NT(level));
+    }
+    bids
+}
+
+/// Bids by a table of conventions: the first entry in the table that
+/// describes a legal bid and fits the hand is the one used, and when that
+/// entry describes several legal bids the highest is chosen.  With no such
+/// entry it passes.
 #[derive(Debug)]
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        let legal_bids = legal_bids(history);
-        let len = history.len();
-        let mut bids = Vec::with_capacity(len + 1);
-        bids.extend_from_slice(history);
+        let hand = hand.values();
+        let mut bids = history.to_vec();
         bids.push(Bid::Pass);
-        for forcing_level in [
-            Forcing::GameForcing,
-            Forcing::Forcing,
-            Forcing::Passable,
-            Forcing::Forced,
-        ]
-        .iter()
-        .cloned()
-        {
-            // First we check if we have a valid game-forcing bid, and pick the
-            // highest such bid.  Otherwise we pick the highest valid forcing
-            // bid.  If no such bid exists, we pick the highest valid passable
-            // bid.
-            for b in legal_bids.iter().cloned().rev() {
-                bids[len] = b;
-                if let Some(c) = self.0.refine(&bids) {
-                    if c.is_forcing() == forcing_level {
-                        let min = c.min_valuation(&bids);
-                        let max = c.max_valuation(&bids);
-                        let handvalue = hand.values();
-                        if !handvalue.exceeds(max) && !min.exceeds(handvalue) {
-                            println!(
-                                "Bidding {:?} with convention {}",
-                                b,
-                                format_as!(HTML, c.description()).into_string()
-                            );
-                            println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
-                            println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
-                            return b;
-                        }
+        let mut best: Option<(usize, Bid, Convention)> = None;
+        for b in legal_bids(history).into_iter().rev() {
+            *bids.last_mut().unwrap() = b;
+            let auction = bids_string(&bids);
+            for (i, entry) in self.0.entries().iter().enumerate() {
+                if best.as_ref().is_some_and(|&(j, _, _)| j <= i) {
+                    break;
+                }
+                if !entry.matches(&auction, &bids) {
+                    continue;
+                }
+                if let Some(c) = self.0.resolve(entry, &auction, &bids) {
+                    if c.fits(&hand) {
+                        best = Some((i, b, c));
+                        break;
                     }
+                }
+                if self.0.overlap() == Overlap::FirstOnly {
+                    break;
                 }
             }
         }
-        Bid::Pass
+        if let Some((_, b, c)) = best {
+            println!(
+                "Bidding {:?} with convention {}",
+                b,
+                format_as!(HTML, c.description()).into_string()
+            );
+            b
+        } else {
+            Bid::Pass
+        }
     }
 }
 
@@ -346,52 +351,106 @@ pub enum Forcing {
 #[with_template("" if *self == Forcing::Forcing { "<br/><strong>Forcing</strong>" } else if *self == Forcing::GameForcing { "<br/><strong>Game forcing</strong>" } )]
 impl DisplayAs<HTML> for Forcing {}
 
-// Limits of this representation, and changes that would lift them.
-//
-// The approximations listed at the top of `sayc.rs` come from three limits:
-//
-// 1. A bid is described by one box, a `min` and a `max` `HandValuation`.  A
-//    box cannot compare suits ("spades at least as long as hearts"), cannot
-//    say "this or that" ("at most two trumps, or 13+ hcp"), and cannot say
-//    balanced: lengths of 2-5 in every suit let in 5-4-2-2.
-// 2. Only one entry per auction counts.  `refine` takes the first entry whose
-//    regex matches, so a later entry for the same auction is never seen, not
-//    even as a fallback.
-// 3. Choosing a bid is tied to forcing.  `ConventionalBid` tries the stronger
-//    forcing levels first and, within a level, the highest bid that fits, so
-//    how forcing a bid is also decides how much the robot prefers it.  That
-//    is why SAYC needs bounds such as `hides_no_major`, and `Forced` entries
-//    for the bids left when nothing else fits.
-//
-// Changes that would lift them, smallest first:
-//
-// 1. Shape constraints: an optional list beside the box, such as a suit at
-//    least as long as another, a suit longer than another, truly balanced, or
-//    an exact shape such as 4-4-3-2.  A small enum stays `Clone` and `Debug`
-//    and can describe itself ("♠ ≥ ♥"), replacing descriptions that only say
-//    so in text, as Sheets' `Spades ">" Hearts` does.  What partner infers
-//    stays the box, so `adjust_for_earlier_bids` is unchanged, and so is
-//    Sheets.  This would fix SAYC's 1D versus 1C, 5-5 and 6-5 hands, and
-//    balanced notrump bids.
-// 2. Alternatives within an entry: several boxes, of which the hand must fit
-//    one.  What partner infers is their hull, which is no worse than today.
-//    This would let Jacoby 2NT take four trumps again, beside a new suit with
-//    three trumps and 13+, and give SAYC its 6-9 1NT and 10-11 limit raise.
-// 3. Choosing bids in table order: let every entry for an auction count, and
-//    bid the first one in the table that matches and fits, as a bridge book
-//    reads ("with four trumps raise; else with a four card major you can show
-//    at the one level, bid it; else ...").  Forcing then only says what a bid
-//    means.  Fallbacks become the last entry, which replaces `hides_no_major`
-//    and the `Forced` fallbacks, and covers what 1 and 2 cannot: up the line
-//    with 4-4 majors, raising a minor with three only when 2NT does not fit,
-//    and rebidding a five card suit when nothing else fits.  Descriptions and
-//    `bid_understood2` would combine all entries for a bid.  Sheets could keep
-//    today's rule by a per-system choice, checked with `dump_auctions`.
-//
-// Also: dummy points for raises (a `HandValuation` field for shortness, once
-// the entry names the trump suit), which the booklet's raises are counted
-// in; and, with table order, telling players that a bid denies every entry
-// before it.
+/// A rule about the shape of a hand that bounds on each suit cannot say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeRule {
+    /// The first suit is at least as long as the second.
+    AtLeastAsLong(Suit, Suit),
+    /// The first suit is longer than the second.
+    Longer(Suit, Suit),
+    /// No singleton or void, at most one doubleton and no six card suit, so
+    /// 4-3-3-3, 4-4-3-2 or 5-3-3-2.
+    Balanced,
+}
+
+impl ShapeRule {
+    fn holds(self, hand: &HandValuation) -> bool {
+        let length = hand.length;
+        match self {
+            ShapeRule::AtLeastAsLong(a, b) => length[a] >= length[b],
+            ShapeRule::Longer(a, b) => length[a] > length[b],
+            ShapeRule::Balanced => {
+                length.iter().all(|&l| (2..=5).contains(&l))
+                    && length.iter().filter(|&&l| l == 2).count() <= 1
+            }
+        }
+    }
+    fn describe(self) -> FormattedString<HTML> {
+        match self {
+            ShapeRule::AtLeastAsLong(a, b) => format_as!(HTML, a "≥" b),
+            ShapeRule::Longer(a, b) => format_as!(HTML, a ">" b),
+            ShapeRule::Balanced => format_as!(HTML, "Balanced"),
+        }
+    }
+}
+
+/// One way that a hand can fit a bid: bounds on its values, and rules about
+/// its shape that the bounds cannot say.
+#[derive(Clone, Debug)]
+pub struct Fit {
+    min: HandValuation,
+    max: HandValuation,
+    shape: Vec<ShapeRule>,
+}
+
+impl Fit {
+    /// A hand within `min` and `max`.
+    pub fn new(min: HandValuation, max: HandValuation) -> Self {
+        Fit {
+            min,
+            max,
+            shape: Vec::new(),
+        }
+    }
+    /// A hand that also follows `rule`.
+    pub fn with(mut self, rule: ShapeRule) -> Self {
+        self.shape.push(rule);
+        self
+    }
+    fn holds(&self, hand: &HandValuation) -> bool {
+        !hand.exceeds(self.max)
+            && !self.min.exceeds(*hand)
+            && self.shape.iter().all(|r| r.holds(hand))
+    }
+    fn describe(&self) -> FormattedString<HTML> {
+        let mut shape = String::new();
+        for rule in self.shape.iter() {
+            shape.push_str(&rule.describe().into_string());
+            shape.push_str("<br/>");
+        }
+        format_as!(HTML,
+            ValueRange::new(self.min.hcp, self.max.hcp, HandValuation::MAX.hcp, "hcp") ""
+            ValueRange::new(self.min.shcp, self.max.shcp, HandValuation::MAX.lhcp, "shcp") ""
+            ValueRange::new(self.min.lhcp, self.max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+            suit_ranges(&self.min, &self.max) ""
+            FormattedString::<HTML>::from_formatted(shape)
+        )
+    }
+}
+
+/// What happens when several entries of a table match the same bid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Overlap {
+    /// Every one of them describes it, so that a later one is a fallback for
+    /// hands that do not fit an earlier one.
+    Every,
+    /// Only the first of them describes it, and the others never apply to
+    /// that bid.  Sheets was written this way.
+    FirstOnly,
+}
+
+/// The meaning of bids, as a table of entries that each match auctions with
+/// a regex over `bids_string`.  The table is an `Ordered` list, and its order
+/// is the robot's order of preference: `ConventionalBid` bids the first entry
+/// that matches a legal bid and fits the hand.  Unless the table's `Overlap`
+/// says otherwise, every entry that matches a bid describes it, so a later
+/// entry for the same bid is a fallback, and what a bid tells partner is
+/// everything its entries allow.  `Natural` and `Forced` entries are
+/// defaults, for bids that no other entry describes, and only the first of
+/// them to match a bid applies.
+///
+/// What this cannot yet say: points for shortness when raising ("dummy
+/// points"), and that a bid denies the entries before it.
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
@@ -400,6 +459,14 @@ pub enum Convention {
         the_name: &'static str,
         max: HandValuation,
         min: HandValuation,
+        forcing: Forcing,
+    },
+    /// Like `Simple`, but the hand may fit in any of several ways.
+    Rule {
+        regex: RegexSet,
+        the_description: FormattedString<HTML>,
+        the_name: &'static str,
+        fits: Vec<Fit>,
         forcing: Forcing,
     },
     Natural {
@@ -417,7 +484,11 @@ pub enum Convention {
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
+        overlap: Overlap,
     },
+    /// Several entries that describe the same bid, of which the bidder may
+    /// have used any.
+    Either(Vec<Convention>),
 }
 
 fn bids_string(bids: &[Bid]) -> String {
@@ -498,76 +569,231 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
     )
 }
 
+/// The smallest bounds that hold all of `bounds`.
+fn hull(
+    bounds: impl Iterator<Item = (HandValuation, HandValuation)>,
+) -> (HandValuation, HandValuation) {
+    bounds.fold(
+        (HandValuation::MAX, HandValuation::MIN),
+        |(lo, hi), (min, max)| (lo.min(min), hi.max(max)),
+    )
+}
+
+/// The bid that `pattern` ends in, if it names one bid.
+fn final_bid(pattern: &str) -> Option<Bid> {
+    let p = pattern.strip_suffix('$')?;
+    let last = p.rsplit([' ', '*']).next()?;
+    match last {
+        "P" => return Some(Bid::Pass),
+        "X" => return Some(Bid::Double),
+        "XX" => return Some(Bid::Redouble),
+        _ => (),
+    }
+    let mut chars = last.chars().rev();
+    let strain = chars.next()?;
+    let level = chars.next()?.to_digit(10)? as usize;
+    match strain {
+        'N' => Some(Bid::NT(level)),
+        s => Suit::ALL
+            .iter()
+            .find(|suit| suit.latin() == s)
+            .map(|&suit| Bid::Suit(level, suit)),
+    }
+}
+
+/// `pattern`, with a final group of alternatives such as `(1N [PX] 2|2N [PX]
+/// 3)C$` written out as one pattern per alternative.
+fn expand_final_group(pattern: &str) -> Vec<String> {
+    let close = match pattern.strip_suffix('$') {
+        Some(p) if p.len() > 2 && p[..p.len() - 1].ends_with(')') => p.len() - 2,
+        _ => return vec![pattern.to_string()],
+    };
+    let bytes = pattern.as_bytes();
+    let mut depth = 0;
+    let mut open = close;
+    loop {
+        match bytes[open] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => (),
+        }
+        open -= 1;
+    }
+    let (prefix, inner, rest) = (
+        &pattern[..open],
+        &pattern[open + 1..close],
+        &pattern[close + 1..],
+    );
+    inner
+        .split('|')
+        .map(|alternative| format!("{prefix}{alternative}{rest}"))
+        .collect()
+}
+
 impl Convention {
-    fn min_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
-        match self.refine(actual_bids) {
-            None => HandValuation::MIN,
-            Some(Convention::Simple { min, .. }) => min,
-            Some(Convention::Natural { min, .. }) => min,
-            Some(Convention::Forced { min, .. }) => min,
-            _ => unreachable!(),
+    /// The entries of a table, or this convention alone.
+    fn entries(&self) -> &[Convention] {
+        match self {
+            Convention::Ordered { conventions, .. } => conventions,
+            _ => std::slice::from_ref(self),
         }
     }
-    fn max_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
-        match self.refine(actual_bids) {
-            None => HandValuation::MAX,
-            Some(Convention::Simple { max, .. }) => max,
-            Some(Convention::Natural { max, .. }) => max,
-            Some(Convention::Forced { max, .. }) => max,
-            _ => unreachable!(),
+    /// Does this entry's regex match `auction`, whose bids are `bids`?
+    fn matches(&self, auction: &str, bids: &[Bid]) -> bool {
+        match self.regex() {
+            Some(regex) => regex.is_match(auction),
+            None => self.applies(bids),
         }
+    }
+    /// What happens when several entries of this table match one bid.
+    fn overlap(&self) -> Overlap {
+        match self {
+            Convention::Ordered { overlap, .. } => *overlap,
+            _ => Overlap::Every,
+        }
+    }
+    /// The bounds that every way of fitting this bid lies within, which are
+    /// what partner learns from it.
+    fn bounds(&self) -> (HandValuation, HandValuation) {
+        match self {
+            Convention::Simple { min, max, .. }
+            | Convention::Natural { min, max, .. }
+            | Convention::Forced { min, max, .. } => (*min, *max),
+            Convention::Rule { fits, .. } => hull(fits.iter().map(|f| (f.min, f.max))),
+            Convention::Either(options) => hull(options.iter().map(|c| c.bounds())),
+            Convention::Ordered { .. } => (HandValuation::MIN, HandValuation::MAX),
+        }
+    }
+    /// Does a hand with these values fit this bid?
+    fn fits(&self, hand: &HandValuation) -> bool {
+        match self {
+            Convention::Rule { fits, .. } => fits.iter().any(|f| f.holds(hand)),
+            Convention::Either(options) => options.iter().any(|c| c.fits(hand)),
+            _ => {
+                let (min, max) = self.bounds();
+                !hand.exceeds(max) && !min.exceeds(*hand)
+            }
+        }
+    }
+    fn min_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
+        self.refine(actual_bids)
+            .map_or(HandValuation::MIN, |c| c.bounds().0)
+    }
+    fn max_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
+        self.refine(actual_bids)
+            .map_or(HandValuation::MAX, |c| c.bounds().1)
     }
     fn check_forcing(&self, actual_bids: &[Bid]) -> Forcing {
         self.refine(actual_bids)
             .map_or(Forcing::Passable, |c| c.is_forcing())
     }
+    /// What the last of `actual_bids` means: the entry that describes it, or
+    /// `Either` of them when several do (see `Overlap`).
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
-        match self {
-            Convention::Simple { regex, .. }
-            | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. } => {
-                if regex.is_match(&bids_string(actual_bids)) {
-                    Some(self.clone())
-                } else {
-                    None
-                }
-            }
-            Convention::Ordered { conventions, .. } => {
-                match conventions.iter().find(|c| c.applies(actual_bids)) {
-                    Some(Convention::Natural {
-                        the_name,
-                        regex,
-                        min,
-                        max,
-                    }) => {
-                        let (min, max) = self.adjust_for_earlier_bids(actual_bids, *min, *max);
-                        Some(Convention::Natural {
-                            the_name,
-                            regex: regex.clone(),
-                            min,
-                            max,
-                        })
+        let auction = bids_string(actual_bids);
+        let mut matching = self
+            .entries()
+            .iter()
+            .filter(|entry| entry.matches(&auction, actual_bids));
+        let mut found: Vec<Convention> = if self.overlap() == Overlap::FirstOnly {
+            let first = matching.next()?;
+            self.resolve(first, &auction, actual_bids)
+                .into_iter()
+                .collect()
+        } else {
+            matching
+                .filter_map(|entry| self.resolve(entry, &auction, actual_bids))
+                .collect()
+        };
+        match found.len() {
+            0 => None,
+            1 => found.pop(),
+            _ => Some(Convention::Either(found)),
+        }
+    }
+    /// Is `entry` the default for the last bid of `auction`: the first
+    /// `Natural` or `Forced` entry of this table to match it, when no
+    /// `Simple` or `Rule` entry does?
+    fn is_default_for(&self, entry: &Convention, auction: &str) -> bool {
+        let mut first_default = None;
+        for e in self.entries() {
+            match e {
+                Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
+                    if regex.is_match(auction) {
+                        return false;
                     }
-                    Some(Convention::Forced {
-                        the_name,
-                        regex,
-                        min,
-                        max,
-                    }) => {
-                        if self.partner_forcing(actual_bids) == Forcing::Passable {
-                            return None;
-                        }
-                        let (min, max) = self.adjust_for_earlier_bids(actual_bids, *min, *max);
-                        Some(Convention::Forced {
-                            the_name,
-                            regex: regex.clone(),
-                            min,
-                            max,
-                        })
-                    }
-                    o => o.cloned(),
                 }
+                Convention::Natural { regex, .. } | Convention::Forced { regex, .. }
+                    if first_default.is_none() && regex.is_match(auction) =>
+                {
+                    first_default = Some(e);
+                }
+                _ => (),
             }
+        }
+        first_default.is_some_and(|e| std::ptr::eq(e, entry))
+    }
+    /// What `entry` of this table says about the last of `bids`, whose
+    /// `bids_string` is `auction`, if it describes it.  `Natural` and
+    /// `Forced` entries are defaults: the first of them to match a bid
+    /// describes it, if no `Simple` or `Rule` entry does.  They are adjusted
+    /// for what was shown earlier, and a `Forced` one only describes a bid
+    /// that partner forced.
+    fn resolve(&self, entry: &Convention, auction: &str, bids: &[Bid]) -> Option<Convention> {
+        let in_table = matches!(self, Convention::Ordered { .. });
+        match entry {
+            Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
+                regex.is_match(auction).then(|| entry.clone())
+            }
+            Convention::Natural {
+                the_name,
+                regex,
+                min,
+                max,
+            } if regex.is_match(auction) => {
+                if !in_table {
+                    return Some(entry.clone());
+                }
+                if !self.is_default_for(entry, auction) {
+                    return None;
+                }
+                let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
+                Some(Convention::Natural {
+                    the_name,
+                    regex: regex.clone(),
+                    min,
+                    max,
+                })
+            }
+            Convention::Forced {
+                the_name,
+                regex,
+                min,
+                max,
+            } if regex.is_match(auction) => {
+                if !in_table {
+                    return Some(entry.clone());
+                }
+                if !self.is_default_for(entry, auction)
+                    || self.partner_forcing(bids) == Forcing::Passable
+                {
+                    return None;
+                }
+                let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
+                Some(Convention::Forced {
+                    the_name,
+                    regex: regex.clone(),
+                    min,
+                    max,
+                })
+            }
+            Convention::Ordered { .. } => entry.refine(bids),
+            _ => None,
         }
     }
     /// How forcing partner's earlier bids were. A game force sticks once
@@ -635,7 +861,7 @@ impl Convention {
         self.refine(actual_bids).is_some()
     }
     /// A short description of the meaning of this bid.
-    pub fn description(&self) -> impl DisplayAs<HTML> {
+    pub fn description(&self) -> FormattedString<HTML> {
         match self {
             Convention::Simple {
                 the_name,
@@ -655,6 +881,25 @@ impl Convention {
                 the_description
                 ""
                 forcing
+                )
+            }
+            Convention::Rule {
+                the_name,
+                the_description,
+                fits,
+                forcing,
+                ..
+            } => {
+                let fits = fits
+                    .iter()
+                    .map(|f| f.describe().into_string())
+                    .collect::<Vec<_>>()
+                    .join("<em>or</em><br/>");
+                format_as!(HTML,
+                    "<strong>" the_name "</strong><br/>"
+                    FormattedString::<HTML>::from_formatted(fits) ""
+                    the_description ""
+                    forcing
                 )
             }
             Convention::Natural {
@@ -678,15 +923,24 @@ impl Convention {
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
+            Convention::Either(options) => FormattedString::from_formatted(
+                options
+                    .iter()
+                    .map(|c| c.description().into_string())
+                    .collect::<Vec<_>>()
+                    .join("<br/><em>or</em><br/>"),
+            ),
         }
     }
     /// Name of the convention
     pub fn name(&self) -> FormattedString<HTML> {
         match self {
             Convention::Simple { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Rule { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Either(options) => options[0].name(),
         }
     }
     /// Does this bid work for this hand?
@@ -694,13 +948,15 @@ impl Convention {
         todo!()
     }
 
-    /// How forcing is this bid?
+    /// How forcing is this bid?  When several entries describe it, the most
+    /// forcing of them.
     fn is_forcing(&self) -> Forcing {
         match self {
-            Convention::Simple { forcing, .. } => *forcing,
+            Convention::Simple { forcing, .. } | Convention::Rule { forcing, .. } => *forcing,
             Convention::Natural { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
             Convention::Ordered { .. } => Forcing::Passable,
+            Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
         }
     }
 
@@ -709,6 +965,7 @@ impl Convention {
         Convention::Ordered {
             the_name: name,
             conventions: Vec::new(),
+            overlap: Overlap::Every,
         }
     }
     /// Add another possibility to the OrderedConvention
@@ -717,13 +974,84 @@ impl Convention {
             Convention::Ordered { conventions, .. } => {
                 conventions.push(convention);
             }
-            Convention::Simple { .. } | Convention::Natural { .. } | Convention::Forced { .. } => {
+            _ => {
                 let s = self.clone();
                 *self = Convention::Ordered {
                     conventions: vec![s, convention],
                     the_name: "",
+                    overlap: Overlap::Every,
                 }
             }
+        }
+    }
+    /// Add the entries of `table` after those already here.
+    fn append(&mut self, table: Convention) {
+        for entry in table.entries().iter().cloned() {
+            self.add(entry);
+        }
+    }
+    /// The regex of an entry.
+    fn regex(&self) -> Option<&RegexSet> {
+        match self {
+            Convention::Simple { regex, .. }
+            | Convention::Rule { regex, .. }
+            | Convention::Natural { regex, .. }
+            | Convention::Forced { regex, .. } => Some(regex),
+            _ => None,
+        }
+    }
+    /// This entry, matching only `pattern`.
+    fn with_pattern(&self, pattern: &str) -> Convention {
+        let mut entry = self.clone();
+        match &mut entry {
+            Convention::Simple { regex, .. }
+            | Convention::Rule { regex, .. }
+            | Convention::Natural { regex, .. }
+            | Convention::Forced { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
+            _ => unreachable!(),
+        }
+        entry
+    }
+    /// This table, for one written to bid the most forcing bid that fits
+    /// and, among equally forcing bids, the highest, with the first entry
+    /// that matches a bid the only one for it.  Sheets was written that way.
+    /// The entries are sorted most forcing first and, among those, highest
+    /// bid first, and the table takes `Overlap::FirstOnly`.  An entry whose
+    /// regex names several bids becomes an entry for each, so that each has
+    /// one place in the order, and a pattern that repeats an earlier one is
+    /// dropped, since it never applied.  Seeded auctions bid this way are the
+    /// same as before tables were read in order.
+    ///
+    /// Panics if an entry's regex does not end in a bid.
+    fn most_forcing_then_highest(self) -> Convention {
+        let ranks = all_bids();
+        let rank = |bid: Bid| ranks.iter().position(|&b| b == bid).unwrap();
+        let mut keyed = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for entry in self.entries() {
+            let regex = entry.regex().expect("only entries can be sorted");
+            for pattern in regex.patterns() {
+                for pattern in expand_final_group(pattern) {
+                    if !seen.insert(pattern.clone()) {
+                        // An earlier entry has this very pattern, so this
+                        // one never described any bid.
+                        continue;
+                    }
+                    let bid = final_bid(&pattern)
+                        .unwrap_or_else(|| panic!("no final bid in {}", pattern));
+                    let key = (entry.is_forcing(), rank(bid));
+                    keyed.push((key, entry.with_pattern(&pattern)));
+                }
+            }
+        }
+        keyed.sort_by_key(|&(key, _)| std::cmp::Reverse(key));
+        Convention::Ordered {
+            conventions: keyed.into_iter().map(|(_, entry)| entry).collect(),
+            the_name: match &self {
+                Convention::Ordered { the_name, .. } => the_name,
+                _ => "",
+            },
+            overlap: Overlap::FirstOnly,
         }
     }
 }
@@ -732,7 +1060,14 @@ impl Convention {
     /// Notrump openings with Stayman, Jacobi transfers and invitations.  The
     /// maximum `(hcp, shcp, lhcp)` for a 2NT opening is `two_nt_max`, and
     /// Stayman takes at least `stayman_hcp` points.
-    fn add_notrump(&mut self, two_nt_max: (u8, u8, u8), stayman_hcp: u8) {
+    ///
+    /// The notrump openings also follow `opening_shape`, if any.
+    fn add_notrump(
+        &mut self,
+        two_nt_max: (u8, u8, u8),
+        stayman_hcp: u8,
+        opening_shape: Option<ShapeRule>,
+    ) {
         let sheets = self;
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
@@ -741,25 +1076,38 @@ impl Convention {
         min_nt.length = [2, 2, 2, 2].into();
         let mut max_nt = max;
         max_nt.length = [5, 5, 5, 5].into();
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1N$"]).unwrap(),
-            max: max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
-            min: min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
-            the_description: format_as!(HTML, ""),
-            the_name: "Opening 1NT",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2N$"]).unwrap(),
-            max: max_nt
+        let opening = |regex: &str, the_name, min, max| match opening_shape {
+            None => Convention::Simple {
+                regex: RegexSet::new([regex]).unwrap(),
+                max,
+                min,
+                the_description: format_as!(HTML, ""),
+                the_name,
+                forcing: Forcing::Passable,
+            },
+            Some(rule) => Convention::Rule {
+                regex: RegexSet::new([regex]).unwrap(),
+                fits: vec![Fit::new(min, max).with(rule)],
+                the_description: format_as!(HTML, ""),
+                the_name,
+                forcing: Forcing::Passable,
+            },
+        };
+        sheets.add(opening(
+            r"^(P )*1N$",
+            "Opening 1NT",
+            min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
+            max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
+        ));
+        sheets.add(opening(
+            r"^(P )*2N$",
+            "Opening 2NT",
+            min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
+            max_nt
                 .with_hcp(two_nt_max.0)
                 .with_shcp(two_nt_max.1)
                 .with_lhcp(two_nt_max.2),
-            min: min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
-            the_description: format_as!(HTML, ""),
-            the_name: "Opening 2NT",
-            forcing: Forcing::Passable,
-        });
+        ));
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*1N [PX] 2N$"]).unwrap(),
             max: max.with_hcp(10),
@@ -1698,7 +2046,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
 
-        sheets.add_notrump((22, 23, 23), 0);
+        sheets.add_notrump((22, 23, 23), 0, None);
 
         sheets.add_strong_two_clubs(23);
 
@@ -1819,7 +2167,7 @@ impl Convention {
         }
 
         sheets.add_natural_bids();
-        sheets
+        sheets.most_forcing_then_highest()
     }
 }
 
@@ -2053,8 +2401,9 @@ fn test_two_over_one_differs_from_sayc() {
     let ten = Cards::from_str("S 32 H AKJ32 D Q32 C 432").unwrap();
     assert_eq!(Suit(2, Hearts), sayc.bid(&auction, ten));
     assert_eq!(NT(1), two_over_one.bid(&auction, ten));
-    // With a game force both bid the suit.
-    let fifteen = Cards::from_str("S 32 H AKQ32 D Q32 C KJ2").unwrap();
+    // With a game force both bid the suit (balanced, with two spades, it
+    // would be 3NT).
+    let fifteen = Cards::from_str("S 3 H AKQ32 D Q32 C KJ32").unwrap();
     assert_eq!(Suit(2, Hearts), sayc.bid(&auction, fifteen));
     assert_eq!(Suit(2, Hearts), two_over_one.bid(&auction, fifteen));
     // A two over one opener must not pass the forcing notrump.
@@ -2190,7 +2539,9 @@ fn robot_bids_are_what_the_server_accepts() {
 #[cfg(test)]
 fn system_bid(system: BiddingSystem, auction: &[Bid], hand: &str) -> Bid {
     use std::str::FromStr;
-    ConventionalBid(system.convention()).bid(auction, Cards::from_str(hand).unwrap())
+    let cards = Cards::from_str(hand).unwrap();
+    assert_eq!(13, cards.len(), "{} is not a hand", hand);
+    ConventionalBid(system.convention()).bid(auction, cards)
 }
 
 #[test]
@@ -2290,8 +2641,16 @@ fn sayc_raises_a_major_as_the_booklet_says() {
         // A limit raise, with four trumps or three, rather than a new suit.
         ("S KJ43 H 32 D A32 C Q432", Suit(3, Spades), Suit(3, Spades)),
         ("S KJ4 H 32 D A32 C Q5432", Suit(3, Spades), Suit(3, Spades)),
-        // A game force with three trumps.
-        ("S KJ4 H 32 D AK32 C Q432", NT(2), Suit(2, Diamonds)),
+        // A game force with three trumps bids a new suit, and Jacoby 2NT
+        // takes four.
+        (
+            "S KJ4 H 32 D AK32 C Q432",
+            Suit(2, Diamonds),
+            Suit(2, Diamonds),
+        ),
+        ("S KJ43 H 32 D AK3 C Q432", NT(2), NT(2)),
+        // Twelve with three trumps is too strong for SAYC's limit raise.
+        ("S KJ4 H 32 D AK3 C J5432", Suit(2, Clubs), Suit(3, Spades)),
     ] {
         assert_eq!(sayc, system_bid(BiddingSystem::Sayc, &auction, hand));
         assert_eq!(
@@ -2363,7 +2722,7 @@ fn sayc_opener_rebids_as_the_booklet_says() {
         // A four card spade suit is shown at the one level.
         ("S KJ32 H 3 D AQ43 C KJ32", Suit(1, Spades)),
         // 16 points with six diamonds is a jump rebid.
-        ("S Q2 H 3 D AKJ432 C KJ3", Suit(3, Diamonds)),
+        ("S Q2 H 3 D AKJ432 C KJ32", Suit(3, Diamonds)),
     ] {
         assert_eq!(
             rebid,
@@ -2381,4 +2740,180 @@ fn sayc_opener_rebids_as_the_booklet_says() {
             "S AQ3 H KJ4 D Q54 C K432"
         )
     );
+}
+
+#[test]
+fn sheets_regexes_each_end_in_one_bid() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    assert_eq!(Some(Suit(2, Clubs)), final_bid(r"^(P )*1N [PX] 2C$"));
+    assert_eq!(Some(NT(4)), final_bid(r"^(P )*2C [PX] 2D ..? 4N$"));
+    assert_eq!(Some(Suit(3, Spades)), final_bid(r"[123]. [123]. .*3S$"));
+    assert_eq!(Some(Double), final_bid(r"^(P )?[123]C X$"));
+    assert_eq!(None, final_bid(r"^(P )*1N [PX] [23]C$"));
+    assert_eq!(
+        vec![r"^(P )*1N [PX] 2C$", r"^(P )*2N [PX] 3C$"],
+        expand_final_group(r"^(P )*(1N [PX] 2|2N [PX] 3)C$")
+    );
+    // Sorting Sheets panics if any entry names more than one bid.
+    let sheets = Convention::sheets();
+    assert_eq!(Overlap::FirstOnly, sheets.overlap());
+}
+
+#[test]
+fn shape_rules_and_alternatives() {
+    use bridge_deck::Suit::*;
+    use std::str::FromStr;
+    let values = |hand: &str| Cards::from_str(hand).unwrap().values();
+    let balanced = |hand: &str| ShapeRule::Balanced.holds(&values(hand));
+    assert!(balanced("S AK3 H KQ4 D QJ5 C J932"));
+    assert!(balanced("S AK32 H KQ4 D QJ C J932"));
+    assert!(balanced("S AK432 H KQ4 D QJ C J93"));
+    assert!(!balanced("S AK43 H KQ42 D QJ32 C J"));
+    assert!(!balanced("S AK432 H KQ42 D QJ C J9"));
+    assert!(ShapeRule::AtLeastAsLong(Spades, Hearts).holds(&values("S AK432 H KQ432 D Q C J2")));
+    assert!(!ShapeRule::Longer(Spades, Hearts).holds(&values("S AK432 H KQ432 D Q C J2")));
+    // A rule fits a hand that fits any of its ways.
+    let rule = Convention::Rule {
+        regex: RegexSet::new(["1C"]).unwrap(),
+        the_description: format_as!(HTML, ""),
+        the_name: "Test",
+        fits: vec![
+            Fit::new(HandValuation::MIN.with_hcp(15), HandValuation::MAX),
+            Fit::new(HandValuation::MIN, HandValuation::MAX.with_hcp(5)).with(ShapeRule::Balanced),
+        ],
+        forcing: Forcing::Passable,
+    };
+    assert!(rule.fits(&values("S AK3 H KQ4 D QJ5 C J932")));
+    assert!(rule.fits(&values("S 432 H 432 D 432 C 5432")));
+    assert!(!rule.fits(&values("S 5432 H 5432 D 5432 C 2")));
+    assert!(!rule.fits(&values("S K32 H Q32 D J32 C K432")));
+    // What partner learns is the hull of the ways.
+    let (min, max) = rule.bounds();
+    assert_eq!((0, 37), (min.hcp, max.hcp));
+}
+
+#[test]
+fn sayc_opens_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for (hand, opening) in [
+        // Four spades, four hearts, three diamonds and two clubs open 1D.
+        ("S AK32 H KQ32 D J32 C 32", Suit(1, Diamonds)),
+        // 3-3 in the minors opens 1C, and 4-4 opens 1D.
+        ("S AK32 H KQ3 D J32 C 432", Suit(1, Clubs)),
+        ("S AK3 H K2 D QJ32 C 5432", Suit(1, Diamonds)),
+        // The higher of two long suits of the same length, or the longer.
+        ("S AK432 H KQ432 D 2 C 32", Suit(1, Spades)),
+        ("S AK8765 H KQ8765 D C 2", Suit(1, Spades)),
+        ("S AK432 H KQ8765 D C 32", Suit(1, Hearts)),
+        ("S 2 H 32 D AK432 C KQ432", Suit(1, Diamonds)),
+        ("S 32 H D AK8765 C KQ432", Suit(1, Diamonds)),
+        // A 5-4-2-2 hand is not balanced, so it does not open 1NT.
+        ("S AK432 H KQ42 D Q2 C 32", Suit(1, Spades)),
+    ] {
+        assert_eq!(
+            opening,
+            system_bid(BiddingSystem::Sayc, &[], hand),
+            "{}",
+            hand
+        );
+    }
+}
+
+#[test]
+fn sayc_responds_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let over =
+        |opening: crate::Bid, hand: &str| system_bid(BiddingSystem::Sayc, &[opening, Pass], hand);
+    // Up the line with 4-4 in the majors, the higher with 5-5, and the
+    // longer with 5-4.
+    assert_eq!(
+        Suit(1, Hearts),
+        over(Suit(1, Clubs), "S KJ32 H Q432 D 432 C 32")
+    );
+    assert_eq!(
+        Suit(1, Spades),
+        over(Suit(1, Clubs), "S KJ432 H Q5432 D 3 C 32")
+    );
+    assert_eq!(
+        Suit(1, Spades),
+        over(Suit(1, Clubs), "S KJ432 H Q432 D 32 C 32")
+    );
+    // 16-18 balanced with no major responds 3NT to a minor, and 15-17 with
+    // two trumps responds 3NT to a major.
+    assert_eq!(NT(3), over(Suit(1, Clubs), "S AQ3 H KJ2 D KQ54 C Q32"));
+    assert_eq!(NT(3), over(Suit(1, Spades), "S 32 H AKQ2 D Q32 C KJ32"));
+    // Responder with values never passes for want of a bid.
+    assert_eq!(
+        Suit(2, Clubs),
+        over(Suit(1, Spades), "S A73 H AK83 D J103 C 964")
+    );
+    assert_eq!(
+        Suit(1, Diamonds),
+        over(Suit(1, Clubs), "S AQ10 H 4 D KQ5 C K108743")
+    );
+    // The waiting response to a strong 2C.
+    assert_eq!(
+        Suit(2, Diamonds),
+        system_bid(
+            BiddingSystem::Sayc,
+            &[Suit(2, Clubs), Pass],
+            "S J32 H Q432 D 432 C 432"
+        )
+    );
+}
+
+#[test]
+fn opener_rebids_a_five_card_suit_when_nothing_else_fits() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        assert_eq!(
+            Suit(2, Hearts),
+            system_bid(
+                system,
+                &[Suit(1, Hearts), Pass, Suit(2, Clubs), Pass],
+                "S KJ32 H AQ876 D K32 C 3"
+            )
+        );
+        assert_eq!(
+            Suit(2, Diamonds),
+            system_bid(
+                system,
+                &[Suit(1, Diamonds), Pass, Suit(1, Spades), Pass],
+                "S 3 H KJ32 D AQ876 C K32"
+            )
+        );
+    }
+}
+
+#[test]
+fn sayc_competes_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let over = |hand: &str| system_bid(BiddingSystem::Sayc, &[Suit(1, Hearts)], hand);
+    // A 1NT overcall before a takeout double, an overcall in a five card
+    // suit before one, and a double with a hand too strong to overcall.
+    assert_eq!(NT(1), over("S AQ3 H KJ4 D KQ54 C 432"));
+    assert_eq!(Suit(1, Spades), over("S AQ432 H 4 D KQ54 C 432"));
+    assert_eq!(Double, over("S AK2 H 4 D AKQ54 C K432"));
+}
+
+#[test]
+fn bids_with_several_entries_describe_them_all() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    // 2C over a forcing notrump is a new suit, or what is left.
+    let two_over_one = Convention::two_over_one();
+    let auction = [Suit(1, Spades), Pass, NT(1), Pass, Suit(2, Clubs)];
+    let description = two_over_one.refine(&auction).unwrap().description();
+    let description = description.into_string();
+    assert!(description.contains("<em>or</em>"), "{}", description);
+    assert!(description.contains("may be short"), "{}", description);
 }
