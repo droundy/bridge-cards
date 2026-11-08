@@ -12,8 +12,10 @@ use std::sync::Arc;
 /// Words are escaped for the format they are displayed in, and [`Markup`],
 /// such as a playing card that HTML shows in colour, displays itself.
 ///
-/// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
-/// with `+` or `+=`.  A piece is anything that converts into a `Text`:
+/// Build a `Text` by adding pieces with `+` or `+=`, starting from a
+/// [`Word`], a string followed by a `Word` or `Text`, markup that
+/// [`markup!`](crate::markup!) was given, or `Text::from(...)`.  A piece is
+/// anything that converts into a `Text`:
 /// strings, numbers, [`Word`]s, `Option`s, other `Text`, and anything that
 /// implements [`Markup`].  For a type of your own, implement `From<YourType>
 /// for Text`.  `Display` shows it as plain text.  A `Text` is `Send`
@@ -84,7 +86,7 @@ enum Agreement {
 /// ```
 /// use display_as::{format_as, HTML};
 /// use std::fmt::{self, Formatter};
-/// use wording::{text, Form, Markup};
+/// use wording::{Form, Markup, Text};
 ///
 /// struct Notrump(u8);
 ///
@@ -100,7 +102,7 @@ enum Agreement {
 ///     }
 /// }
 ///
-/// let t = text!("Partner opened ", Notrump(1), ".");
+/// let t = Text::from("Partner opened ") + Notrump(1) + ".";
 /// assert_eq!(t.to_string(), "Partner opened 1NT.");
 /// assert_eq!(format_as!(HTML, t).into_string(), "Partner opened <b>1NT</b>.");
 /// ```
@@ -143,27 +145,6 @@ pub struct Form {
     /// Does this start a sentence, so that any words in it start with a
     /// capital?
     pub capital: bool,
-}
-
-/// Text made of words, quantities, lists and markup: anything that
-/// converts into a [`Text`].
-///
-/// ```
-/// use display_as::{format_as, HTML};
-/// use wording::text;
-///
-/// let name = "Smith & Wesson";
-/// let t = text!("Made by ", name, ".");
-/// assert_eq!(format_as!(HTML, t).into_string(), "Made by Smith &amp; Wesson.");
-/// ```
-#[macro_export]
-macro_rules! text {
-    ($($piece:expr),* $(,)?) => {{
-        #[allow(unused_mut)]
-        let mut text = $crate::Text::new();
-        $( text += $piece; )*
-        text
-    }};
 }
 
 impl Text {
@@ -506,6 +487,30 @@ impl<T: Into<Text>> Add<T> for Text {
     fn add(mut self, piece: T) -> Text {
         self += piece;
         self
+    }
+}
+
+/// `"words" + word` starts a text with words, as in `"partner" + Word::HAS`.
+impl Add<Word> for &str {
+    type Output = Text;
+    fn add(self, word: Word) -> Text {
+        Text::from(self) + word
+    }
+}
+
+/// `"words" + text` starts a text with words, escaped for each format:
+///
+/// ```
+/// use display_as::{format_as, HTML};
+/// use wording::Text;
+///
+/// let t = "Made by" + Text::from("Smith & Wesson") + ".";
+/// assert_eq!(format_as!(HTML, t).into_string(), "Made by Smith &amp; Wesson.");
+/// ```
+impl Add<Text> for &str {
+    type Output = Text;
+    fn add(self, text: Text) -> Text {
+        Text::from(self) + text
     }
 }
 

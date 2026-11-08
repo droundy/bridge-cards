@@ -3,8 +3,8 @@ use display_as::{format_as, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{self, Formatter};
 use wording::{
-    a, and, at_least, at_most, between, count, numbered, or, text, then, Amount, Form, Markup,
-    Number, Text, Word,
+    a, and, at_least, at_most, between, count, numbered, or, then, Amount, Form, Markup, Number,
+    Text, Word,
 };
 
 /// A playing card's suit as a noun, which plain text spells out and HTML and
@@ -66,7 +66,7 @@ impl Markup for Suit {
     }
 }
 
-wording::countable!(Suit);
+wording::markup!(Suit);
 
 /// A bid such as "1♠", which is not a noun.
 #[derive(Clone, Copy)]
@@ -83,6 +83,8 @@ impl Markup for Bid {
         write!(f, "{}{}", self.0, self.1.latex())
     }
 }
+
+wording::markup!(Bid);
 
 fn check(text: impl Into<Text>, expect: Expect) {
     let text: Text = text.into();
@@ -116,7 +118,7 @@ fn markup_and_escapes() {
     let partner = numbered("partner", Number::Singular);
     let sentence = partner
         + Word::HAS
-        + 1 * text!("high card ", POINT)
+        + 1 * ("high card" + POINT)
         + " & "
         + (5..) * SPADES
         + " in 100% of "
@@ -144,7 +146,7 @@ fn quantities_agree() {
                 enough(at_least(1, CARD)),
                 enough(at_most(1, CARD)),
                 enough(at_most(0, CARD)),
-                enough(between(6, 9, text!("high card ", POINT))),
+                enough(between(6, 9, "high card" + POINT)),
                 enough(between(4, 4, CARD)),
                 enough(between(1, 1, CARD)),
                 enough(between(0, 3, CARD)),
@@ -171,9 +173,9 @@ fn only_the_head_noun_agrees() {
                 (5..) * SPADES,
                 (..=1) * HEARTS,
                 (n..=n + 1) * HEARTS,
-                3 * text!("long ", SPADES),
-                1 * text!(CARD, " in ", HEARTS),
-                count(7, text!("high card ", POINT, " in ", SPADES)),
+                3 * (Text::from("long") + SPADES),
+                1 * (CARD + "in" + HEARTS),
+                count(7, "high card" + POINT + "in" + SPADES),
             ],
             "; ",
         ),
@@ -199,11 +201,11 @@ fn subjects_agree() {
                 ]) + Word::HAS
                     + "bid",
                 or([partner(), you()]) + Word::IS + "declarer",
-                text!(SPADES) + Word::IS + "trumps",
+                SPADES + Word::IS + "trumps",
                 partner() + Word::IS + "short in " + HEARTS,
                 // A predicate of its own, whose verbs all agree with the
                 // subject it is added to.
-                you() + text!(Word::HAS, " opened and ", Word::IS, " forcing"),
+                you() + (Word::HAS + "opened and" + Word::IS + "forcing"),
                 you() + Word::HAS + "opened and" + Word::IS + "forcing",
                 partner() + Word::HAS + five_spades.clone(),
                 five_spades + Word::IS + "enough",
@@ -226,8 +228,8 @@ fn noun_phrases_keep_their_number() {
     let partner = || numbered("partner", Number::Singular);
     let you = || numbered("you", Number::Plural);
     // Each phrase reads the same whoever holds it.
-    let balanced = || a(text!(HAND, " that ", Word::IS, " balanced"));
-    let high = || count(5, text!(CARD, " that ", Word::IS, " high"));
+    let balanced = || a(HAND + "that" + Word::IS + "balanced");
+    let high = || count(5, CARD + "that" + Word::IS + "high");
     check(
         joined(
             vec![
@@ -237,11 +239,11 @@ fn noun_phrases_keep_their_number() {
                 partner() + Word::HAS + high(),
                 high() + Word::IS + "enough",
                 // A clause with a subject of its own keeps its own verbs.
-                you() + Word::HAS + a(text!(SUIT, " that ") + (partner() + Word::HAS + "bid")),
+                you() + Word::HAS + a(SUIT + "that" + (partner() + Word::HAS + "bid")),
                 // The first noun or noun phrase decides a subject's number.
-                a(text!(HAND, " with ", (5..) * SPADES)) + Word::IS + "strong",
-                text!("the ", CARD, " with ", count(5, POINT)) + Word::IS + "led",
-                text!("your ", count(7, POINT)) + Word::IS + "enough",
+                a(HAND + "with" + (5..) * SPADES) + Word::IS + "strong",
+                "the" + CARD + "with" + count(5, POINT) + Word::IS + "led",
+                "your" + count(7, POINT) + Word::IS + "enough",
             ],
             "; ",
         ),
@@ -263,8 +265,8 @@ fn lists() {
                 and(["a", "b", "c"]),
                 or(["a", "b", "c"]),
                 then([
-                    text!("opened ", Bid(1, Suit::Spades)),
-                    text!("bid ", Bid(2, Suit::Hearts)),
+                    Text::from("opened ") + Bid(1, Suit::Spades),
+                    Text::from("bid ") + Bid(2, Suit::Hearts),
                 ]),
             ],
             " | ",
@@ -303,8 +305,8 @@ fn articles() {
     ];
     let mut phrases: Vec<Text> = words.iter().map(|&w| a(w)).collect();
     phrases.push(a(Bid(1, Suit::Spades)));
-    phrases.push(a(text!(SPADES, " bid")));
-    phrases.push(a(text!(CARD, " in ", HEARTS)));
+    phrases.push(a(SPADES + "bid"));
+    phrases.push(a(CARD + "in" + HEARTS));
     check(
         and(phrases),
         expect![[r#"
@@ -316,23 +318,23 @@ fn articles() {
 
 #[test]
 fn sentences() {
-    let mut forcing = text!("is that ");
+    let mut forcing = Text::from("is that ");
     forcing += "forcing?";
     check(
         joined(
             [
-                text!("bid it").sentence(),
+                Text::from("bid it").sentence(),
                 forcing.sentence(),
-                text!(Bid(1, Suit::Spades), " is natural").sentence(),
-                text!(None::<&str>, "nothing optional").sentence(),
-                text!(Word::HAS, " it").capitalized(),
-                text!(String::new(), Word::HAS, " it").sentence(),
-                text!("bid it. ").sentence(),
-                text!("say \"pass.\"").sentence(),
-                text!("(", "maybe)").sentence(),
-                (text!(SPADES) + Word::IS + "trumps").sentence(),
-                text!("(") + Word::IS + "it?)",
-                text!(a("ace"), " is high").sentence(),
+                (Bid(1, Suit::Spades) + "is natural").sentence(),
+                (Text::from(None::<&str>) + "nothing optional").sentence(),
+                (Word::HAS + "it").capitalized(),
+                (Text::from(String::new()) + Word::HAS + " it").sentence(),
+                Text::from("bid it. ").sentence(),
+                Text::from("say \"pass.\"").sentence(),
+                (Text::from("(") + "maybe)").sentence(),
+                (SPADES + Word::IS + "trumps").sentence(),
+                "(" + Word::IS + "it?)",
+                (a("ace") + "is high").sentence(),
             ],
             " ",
         ),

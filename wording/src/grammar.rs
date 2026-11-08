@@ -1,4 +1,4 @@
-use crate::{text, Text};
+use crate::Text;
 use std::fmt::{self, Display, Formatter};
 
 /// Whether something is one or many, which nouns and verbs agree with.
@@ -80,7 +80,7 @@ impl From<Word> for Text {
 /// Number::Plural)`.  Its first noun and its verbs agree with `number`, and
 /// so do the verbs added to it.
 pub fn numbered(phrase: impl Into<Text>, number: Number) -> Text {
-    let mut text = text!(phrase);
+    let mut text: Text = phrase.into();
     text.settle(number);
     text
 }
@@ -154,23 +154,23 @@ fn quantity(amount: impl Display, number: Number, noun: impl Into<Text>) -> Text
 /// The noun is any phrase.  Its first noun agrees with the amount, as in "7
 /// high card points in spades", and so do its verbs, as in "5 cards that
 /// are high".  A clause in it with a subject of its own goes in parentheses,
-/// as in `count(5, text!(CARD, " that ") + (partner + Word::HAS + "led"))`.
+/// as in `count(5, CARD + "that" + (partner + Word::HAS + "led"))`.
 /// Multiplying does the same: `n * noun` is `count(n, noun)`, and so on for
 /// the other quantities:
 ///
 /// ```
-/// use wording::{text, Word};
+/// use wording::{Text, Word};
 ///
 /// const POINT: Word = Word::noun("point", "points");
 /// let n: u8 = 3;
-/// let t = text!(1 * POINT, ", ", n * POINT, ", ", 0 * POINT, ", ")
+/// let t: Text = 1 * POINT + ", " + n * POINT + ", " + 0 * POINT + ", "
 ///     + (5..) * POINT
 ///     + ", "
 ///     + (..=1) * POINT
 ///     + ", "
 ///     + (4..=4) * POINT
 ///     + " or "
-///     + (6..=9) * text!("high card ", POINT);
+///     + (6..=9) * ("high card" + POINT);
 /// assert_eq!(
 ///     t.to_string(),
 ///     "1 point, 3 points, no points, 5+ points, at most 1 point, \
@@ -179,7 +179,7 @@ fn quantity(amount: impl Display, number: Number, noun: impl Into<Text>) -> Text
 /// ```
 ///
 /// [`Word`] and [`Text`] multiply already, and
-/// [`countable!`](crate::countable!) makes your own markup multiply.
+/// [`markup!`](crate::markup!) makes your own markup multiply.
 pub fn count(n: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     let n = n.into();
     if n.is_zero() {
@@ -219,13 +219,14 @@ pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl Into<Tex
     }
 }
 
-/// Lets a number or a range multiply a noun into a quantity: `5 * noun` is
-/// [`count`], `(5..) * noun` [`at_least`], `(..=1) * noun` [`at_most`] and
-/// `(6..=9) * noun` [`between`].
+/// Lets markup of your own, as in `wording::markup!(Suit)`, do what a
+/// [`Word`] does: start a text with `+`, as in `SPADES + Word::IS +
+/// "trumps"`, and be multiplied by a number or a range into a quantity:
+/// `5 * noun` is [`count`], `(5..) * noun` [`at_least`], `(..=1) * noun`
+/// [`at_most`] and `(6..=9) * noun` [`between`].
 ///
-/// [`Word`] and [`Text`] already multiply.  Use this for markup of your own,
-/// as in `wording::countable!(Suit)`.  Rust allows these impls only in the
-/// crate that defines the noun's type.  A negative number is shown as it is.
+/// Rust allows these impls only in the crate that defines the markup's type.
+/// A negative number is shown as it is.
 ///
 /// A range of any integer type has one impl, so its product is known to be a
 /// [`Text`] at once:
@@ -242,9 +243,18 @@ pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl Into<Tex
 /// allows no generic one, so `let t = 5 * POINT;` needs `let t: Text` when
 /// `t` is used before the number's type is known.
 #[macro_export]
-macro_rules! countable {
+macro_rules! markup {
     ($noun:ty) => {
-        $crate::countable!(@each $noun; u8, u16, u32, u64, usize, i32);
+        $crate::markup!(@mul $noun);
+        impl<T: ::core::convert::Into<$crate::Text>> ::core::ops::Add<T> for $noun {
+            type Output = $crate::Text;
+            fn add(self, piece: T) -> $crate::Text {
+                $crate::Text::from(self) + piece
+            }
+        }
+    };
+    (@mul $noun:ty) => {
+        $crate::markup!(@each $noun; u8, u16, u32, u64, usize, i32);
         impl<T: ::core::convert::Into<$crate::Amount>> ::core::ops::Mul<$noun>
             for ::core::ops::RangeFrom<T>
         {
@@ -272,7 +282,7 @@ macro_rules! countable {
         }
     };
     (@each $noun:ty; $($int:ty),*) => {
-        $( $crate::countable!(@one $noun; $int); )*
+        $( $crate::markup!(@one $noun; $int); )*
     };
     (@one $noun:ty; $int:ty) => {
         impl ::core::ops::Mul<$noun> for $int {
@@ -284,8 +294,8 @@ macro_rules! countable {
     };
 }
 
-countable!(Word);
-countable!(Text);
+markup!(Word);
+markup!(@mul Text);
 
 /// `phrase` with "a" or "an" in front, as in "an ace", "a king" or "an
 /// 8-card fit".  The phrase is singular, its first noun and its verbs too,
