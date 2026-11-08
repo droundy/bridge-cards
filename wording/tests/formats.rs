@@ -198,6 +198,49 @@ fn subjects_agree() {
 }
 
 #[test]
+fn noun_phrases_keep_their_number() {
+    const HAND: Word = Word::noun("hand", "hands");
+    const SUIT: Word = Word::noun("suit", "suits");
+    let partner = || numbered("partner", Number::Singular);
+    let you = || numbered("you", Number::Plural);
+    // Each phrase reads the same whoever holds it.
+    let balanced = || a(text!(HAND, " that ", IS, " balanced"));
+    let high = || count(5, text!(CARD, " that ", IS, " high"));
+    check(
+        joined(vec![
+            agree(you(), text!(HAS, " ", balanced())),
+            agree(partner(), text!(HAS, " ", balanced())),
+            agree(you(), text!(HAS, " ", high())),
+            agree(partner(), text!(HAS, " ", high())),
+            agree(high(), text!(IS, " enough")),
+            // A clause with a subject of its own keeps its own verbs.
+            agree(
+                you(),
+                text!(
+                    HAS,
+                    " ",
+                    a(text!(SUIT, " that ", agree(partner(), text!(HAS, " bid"))))
+                ),
+            ),
+            // The first noun or noun phrase decides a subject's number.
+            agree(
+                a(text!(HAND, " with ", (5..) * SPADES)),
+                text!(IS, " strong"),
+            ),
+            agree(
+                text!("the ", CARD, " with ", count(5, POINT)),
+                text!(IS, " led"),
+            ),
+            agree(text!("your ", count(7, POINT)), text!(IS, " enough")),
+        ]),
+        expect![[r#"
+            you have a hand that is balanced; partner has a hand that is balanced; you have 5 cards that are high; partner has 5 cards that are high; 5 cards that are high are enough; you have a suit that partner has bid; a hand with 5+ spades is strong; the card with 5 points is led; your 7 points are enough
+            you have a hand that is balanced; partner has a hand that is balanced; you have 5 cards that are high; partner has 5 cards that are high; 5 cards that are high are enough; you have a suit that partner has bid; a hand with 5+ <span class="spades">♠</span> is strong; the card with 5 points is led; your 7 points are enough
+            you have a hand that is balanced; partner has a hand that is balanced; you have 5 cards that are high; partner has 5 cards that are high; 5 cards that are high are enough; you have a suit that partner has bid; a hand with 5+ \spadesuit{} is strong; the card with 5 points is led; your 7 points are enough"#]],
+    );
+}
+
+#[test]
 fn lists() {
     assert!(text!(List::and(Vec::<&str>::new())).is_empty());
     check(
