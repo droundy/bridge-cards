@@ -647,7 +647,7 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
     let balanced = is_balanced(min, max);
     let mut words = Vec::new();
     let mut distance = 0;
-    if balanced && !is_balanced(hand, hand) {
+    if balanced && !ShapeRule::Balanced.holds(hand) {
         words.push(Text::from("a balanced hand"));
         distance += 3;
     }
@@ -930,5 +930,19 @@ fn a_balanced_hand_is_said_once() {
         suggestion.matches("balanced hand").count(),
         1,
         "{suggestion}"
+    );
+}
+
+#[test]
+fn a_hand_that_is_not_balanced_misses_a_balanced_opening() {
+    use std::str::FromStr;
+    // Two doubletons are not balanced, though no suit is short or long.
+    let advice =
+        Convention::sayc().advice(&[], Cards::from_str("S AKJ32 H KQ32 D A2 C 32").unwrap());
+    let text = plain(&format_as!(HTML, advice).into_string());
+    assert!(
+        text.contains("Opening 1NT: needs a balanced hand."),
+        "{}",
+        text
     );
 }
