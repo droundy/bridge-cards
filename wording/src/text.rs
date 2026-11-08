@@ -1,96 +1,107 @@
-use crate::Number;
-use display_as::{DisplayAs, Format};
-use std::fmt::{Display, Error, Formatter};
+use crate::grammar::vowel_sound;
+use crate::{Number, Word};
+use display_as::{DisplayAs, Format, LaTeX, HTML, UTF8};
+use std::fmt::{self, Display, Formatter};
 use std::ops::{Add, AddAssign};
+use std::rc::Rc;
 
-/// Words and markup, displayed in any format the markup supports.
+/// A phrase: words and markup, displayed as HTML, plain text or LaTeX.
 ///
-/// Words are escaped for the format they are displayed in.  Markup is a
-/// value of type `M`, such as a playing card that HTML shows in colour, and
-/// displays itself through [`DisplayAs`].  A [`Word`](crate::Word) and a
-/// piece of markup agree with whatever number a [`Quantity`](crate::Quantity)
-/// or [`agree`](crate::agree) settles for them, and are singular until then.
+/// Every piece of wording is a `Text`, so any phrase can go inside any other:
+/// a quantity can be the object of one sentence and the subject of the next.
+/// Words are escaped for the format they are displayed in, and [`Markup`],
+/// such as a playing card that HTML shows in colour, displays itself.
 ///
 /// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
-/// with `+` or `+=`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Text<M = NoMarkup>(Vec<Piece<M>>);
+/// with `+` or `+=`.  `Display` shows it as plain text.
+#[derive(Clone, Default)]
+pub struct Text {
+    pieces: Vec<Piece>,
+    /// The number of this phrase as a subject, once a quantity, a list or
+    /// [`numbered`](crate::numbered) has settled it.
+    number: Option<Number>,
+}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Piece<M> {
+#[derive(Clone)]
+enum Piece {
     Words(String),
-    /// A word with a plural, and the number it agrees with once that is
-    /// settled.
-    Word {
-        singular: String,
-        plural: String,
-        number: Option<Number>,
-    },
-    Markup(M, Option<Number>),
+    /// A word, and the number it agrees with once that is settled.
+    Word(Word, Option<Number>),
+    /// Markup, and the number it agrees with once that is settled.
+    Markup(Rc<dyn Markup>, Option<Number>),
+    /// The next letter shown is a capital.
+    Capital,
+    /// "a" or "an", whichever goes before what is shown next.
+    Article,
 }
 
-/// Markup for text that has none.  It has no values, so it displays in
-/// every format.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoMarkup {}
-
-impl<F: Format> DisplayAs<F> for NoMarkup {
-    fn fmt(&self, _: &mut Formatter) -> Result<(), Error> {
-        match *self {}
-    }
-}
-
-/// The format `F`, for markup that agrees with a plural.
+/// Something that displays itself differently in each format, such as a bid,
+/// or a suit that plain text spells out and HTML shows as a symbol.
 ///
-/// Markup displays in `F` when it is singular and in `Plural<F>` when it is
-/// plural, so a suit might be "spade" and "spades" in plain text but "♠" in
-/// HTML either way.  Markup that never changes can display the same in
-/// both:
+/// Anything that implements `Markup` can be added to a [`Text`]:
 ///
 /// ```
-/// use display_as::{format_as, DisplayAs, Format, HTML, UTF8};
-/// use std::fmt::{Error, Formatter};
-/// use wording::{count, Plural, Text};
+/// use display_as::{format_as, HTML};
+/// use std::fmt::{self, Formatter};
+/// use wording::{text, Form, Markup};
 ///
-/// struct Bid(u8);
-/// # impl DisplayAs<UTF8> for Bid {
-/// #     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-/// #         write!(f, "{}NT", self.0)
-/// #     }
-/// # }
-/// # impl DisplayAs<HTML> for Bid {
-/// #     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-/// #         write!(f, "<b>{}NT</b>", self.0)
-/// #     }
-/// # }
-/// # impl wording::AddTo<Bid> for Bid {
-/// #     fn add_to(self, text: &mut Text<Bid>) { text.push_markup(self) }
-/// # }
-/// impl<F: Format> DisplayAs<Plural<F>> for Bid
-/// where
-///     Bid: DisplayAs<F>,
-/// {
-///     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-///         <Bid as DisplayAs<F>>::fmt(self, f)
+/// struct Notrump(u8);
+///
+/// impl Markup for Notrump {
+///     fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+///         write!(f, "<b>{}NT</b>", self.0)
+///     }
+///     fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+///         write!(f, "{}NT", self.0)
+///     }
+///     fn latex(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+///         write!(f, r"\textbf{{{}NT}}", self.0)
 ///     }
 /// }
 ///
-/// let bids: Text<Bid> = wording::text!(count(2u8, Bid(3)));
-/// assert_eq!(format_as!(HTML, bids).into_string(), "2 <b>3NT</b>");
+/// let t = text!("Partner opened ", Notrump(1), ".");
+/// assert_eq!(t.to_string(), "Partner opened 1NT.");
+/// assert_eq!(format_as!(HTML, t).into_string(), "Partner opened <b>1NT</b>.");
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Plural<F>(F);
+pub trait Markup {
+    /// Writes this as HTML.
+    fn html(&self, form: Form, f: &mut Formatter) -> fmt::Result;
+    /// Writes this as plain text.
+    fn utf8(&self, form: Form, f: &mut Formatter) -> fmt::Result;
+    /// Writes this as LaTeX.
+    fn latex(&self, form: Form, f: &mut Formatter) -> fmt::Result;
+    /// If this is a noun, the number it takes when nothing settles one.
+    ///
+    /// A noun agrees with a quantity it is the noun of, as in "1 spade", and
+    /// decides the number of a subject it starts, as in "spades are trumps".
+    /// Markup that is not a noun, such as a bid, keeps the default `None` and
+    /// is always given [`Number::Singular`].
+    fn noun(&self) -> Option<Number> {
+        None
+    }
+    /// Does this start with a vowel sound, so that "an" goes before it?  By
+    /// default this goes by how it is written as plain text.
+    fn vowel_sound(&self, form: Form) -> bool {
+        struct Shown<'a, M: ?Sized>(&'a M, Form);
+        impl<M: Markup + ?Sized> Display for Shown<'_, M> {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                self.0.utf8(self.1, f)
+            }
+        }
+        vowel_sound(&Shown(self, form).to_string())
+    }
+}
 
-impl<F: Format> Format for Plural<F> {
-    fn escape(f: &mut Formatter, s: &str) -> Result<(), Error> {
-        F::escape(f, s)
-    }
-    fn mime() -> mime::Mime {
-        F::mime()
-    }
-    fn this_format() -> Self {
-        Plural(F::this_format())
-    }
+/// How [`Markup`] is to be written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Form {
+    /// Singular or plural, for markup that is a noun.  Other markup is always
+    /// singular.
+    pub number: Number,
+    /// Does this start a sentence, so that any words in it start with a
+    /// capital?
+    pub capital: bool,
 }
 
 /// Text made of words, quantities, lists and markup: anything that
@@ -98,10 +109,10 @@ impl<F: Format> Format for Plural<F> {
 ///
 /// ```
 /// use display_as::{format_as, HTML};
-/// use wording::{text, Text};
+/// use wording::text;
 ///
 /// let name = "Smith & Wesson";
-/// let t: Text = text!("Made by ", name, ".");
+/// let t = text!("Made by ", name, ".");
 /// assert_eq!(format_as!(HTML, t).into_string(), "Made by Smith &amp; Wesson.");
 /// ```
 #[macro_export]
@@ -114,70 +125,92 @@ macro_rules! text {
     }};
 }
 
-impl<M> Default for Text<M> {
-    fn default() -> Self {
-        Text(Vec::new())
-    }
-}
-
-impl<M> Text<M> {
+impl Text {
     /// Empty text.
     pub fn new() -> Self {
         Text::default()
     }
     /// Adds words to the end.
     pub fn push_words(&mut self, words: &str) {
-        match self.0.last_mut() {
+        match self.pieces.last_mut() {
             Some(Piece::Words(w)) => w.push_str(words),
-            _ => self.0.push(Piece::Words(words.to_string())),
+            _ => self.pieces.push(Piece::Words(words.to_string())),
         }
     }
-    /// Adds markup to the end.
-    pub fn push_markup(&mut self, markup: M) {
-        self.0.push(Piece::Markup(markup, None));
+    pub(crate) fn push_word(&mut self, word: Word) {
+        self.pieces.push(Piece::Word(word, None));
     }
-    pub(crate) fn push_word(&mut self, singular: &str, plural: &str) {
-        self.0.push(Piece::Word {
-            singular: singular.to_string(),
-            plural: plural.to_string(),
-            number: None,
-        });
-    }
-    /// The text with every word and piece of markup whose number is not yet
-    /// settled agreeing with `number`.
-    pub fn agreeing(mut self, number: Number) -> Self {
-        for piece in self.0.iter_mut() {
-            if let Piece::Word { number: n, .. } | Piece::Markup(_, n) = piece {
-                n.get_or_insert(number);
-            }
-        }
-        self
+    pub(crate) fn push_article(&mut self) {
+        self.pieces.push(Piece::Article);
     }
     /// Is there nothing to display?
     pub fn is_empty(&self) -> bool {
-        self.0
-            .iter()
-            .all(|p| matches!(p, Piece::Words(w) if w.is_empty()))
+        self.pieces.iter().all(|p| match p {
+            Piece::Words(w) => w.is_empty(),
+            Piece::Capital | Piece::Article => true,
+            Piece::Word(..) | Piece::Markup(..) => false,
+        })
     }
-    /// The text with a capital first letter, if it starts with words.
-    pub fn capitalized(mut self) -> Self {
-        match self.0.first_mut() {
-            Some(Piece::Words(w)) => capitalize(w),
-            Some(Piece::Word {
-                singular, plural, ..
-            }) => {
-                capitalize(singular);
-                capitalize(plural);
+    /// Whether this is one or many as the subject of a verb.
+    ///
+    /// That is the number a quantity, a list or [`numbered`](crate::numbered)
+    /// settled for it, or else the number of its first noun, or else
+    /// singular, as for "partner".
+    pub fn number(&self) -> Number {
+        self.number
+            .or_else(|| {
+                self.pieces.iter().find_map(|p| match p {
+                    Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
+                    Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
+                    _ => None,
+                })
+            })
+            .unwrap_or(Number::Singular)
+    }
+    pub(crate) fn set_number(&mut self, number: Number) {
+        self.number = Some(number);
+    }
+    /// Makes every verb whose number is not yet settled agree with `number`.
+    pub(crate) fn settle_verbs(&mut self, number: Number) {
+        for piece in self.pieces.iter_mut() {
+            if let Piece::Word(w, n @ None) = piece {
+                if !w.is_noun() {
+                    *n = Some(number);
+                }
             }
-            _ => (),
         }
+    }
+    /// Makes the first noun whose number is not yet settled, the head of a
+    /// phrase such as "card in hearts", agree with `number`.
+    pub(crate) fn settle_head(&mut self, number: Number) {
+        let head = self.pieces.iter_mut().find_map(|p| match p {
+            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
+            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
+            _ => None,
+        });
+        if let Some(n) = head {
+            *n = Some(number);
+        }
+    }
+    /// The text starting with a capital letter.
+    ///
+    /// The capital goes on the first letter displayed, so that it works after
+    /// an empty phrase, and markup is told to start with a capital.
+    pub fn capitalized(mut self) -> Self {
+        self.pieces.insert(0, Piece::Capital);
         self
     }
     /// The text as a sentence: capitalized, and ending in a full stop unless
-    /// it already ends in one, a question mark or an exclamation mark.
+    /// it already ends in one, a question mark or an exclamation mark (inside
+    /// any closing quotes or brackets).  Trailing spaces are dropped.
     pub fn sentence(mut self) -> Self {
-        let ended = match self.0.last() {
-            Some(Piece::Words(w)) => w.ends_with(['.', '?', '!']),
+        if let Some(Piece::Words(w)) = self.pieces.last_mut() {
+            w.truncate(w.trim_end().len());
+        }
+        let ended = match self.pieces.last() {
+            Some(Piece::Words(w)) => w
+                .trim_end_matches(['"', '\'', '”', '’', ')', ']'])
+                .ends_with(['.', '?', '!']),
             _ => false,
         };
         if !ended {
@@ -185,72 +218,174 @@ impl<M> Text<M> {
         }
         self.capitalized()
     }
-}
 
-fn capitalize(w: &mut String) {
-    let mut chars = w.chars();
-    if let Some(c) = chars.next() {
-        *w = c.to_uppercase().chain(chars).collect();
-    }
-}
-
-impl<F: Format, M: DisplayAs<F> + DisplayAs<Plural<F>>> DisplayAs<F> for Text<M> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        for piece in self.0.iter() {
+    fn write(&self, out: Out, f: &mut Formatter) -> fmt::Result {
+        let mut next = Next::default();
+        for piece in self.pieces.iter() {
             match piece {
-                Piece::Words(w) => F::escape(f, w)?,
-                Piece::Word {
-                    plural,
-                    number: Some(Number::Plural),
-                    ..
-                } => F::escape(f, plural)?,
-                Piece::Word { singular, .. } => F::escape(f, singular)?,
-                Piece::Markup(m, Some(Number::Plural)) => <M as DisplayAs<Plural<F>>>::fmt(m, f)?,
-                Piece::Markup(m, _) => <M as DisplayAs<F>>::fmt(m, f)?,
+                Piece::Capital => next.capital = true,
+                Piece::Article => next.article = true,
+                Piece::Words(w) => next.write_words(out, w, f)?,
+                Piece::Word(word, n) => {
+                    next.write_words(out, word.form(n.unwrap_or(Number::Singular)), f)?
+                }
+                Piece::Markup(m, n) => {
+                    let number = n.or(m.noun()).unwrap_or(Number::Singular);
+                    if std::mem::take(&mut next.article) {
+                        let form = Form {
+                            number,
+                            capital: false,
+                        };
+                        let article = if m.vowel_sound(form) { "an " } else { "a " };
+                        next.write_words(out, article, f)?;
+                    }
+                    let form = Form {
+                        number,
+                        capital: std::mem::take(&mut next.capital),
+                    };
+                    match out {
+                        Out::Html => m.html(form, f)?,
+                        Out::Utf8 => m.utf8(form, f)?,
+                        Out::Latex => m.latex(form, f)?,
+                    }
+                }
             }
         }
         Ok(())
     }
 }
 
-/// Something that can be added to a [`Text`] with markup `M`.
-///
-/// Words, numbers, quantities and lists are added for any `M`.  Implement it
-/// for your own types, or wrap them in [`Plain`] or [`Markup`].
-pub trait AddTo<M> {
-    /// Adds this to the end of `text`.
-    fn add_to(self, text: &mut Text<M>);
+/// The formats a `Text` displays in.
+#[derive(Clone, Copy)]
+enum Out {
+    Html,
+    Utf8,
+    Latex,
 }
 
-impl<M> AddTo<M> for Text<M> {
-    fn add_to(self, text: &mut Text<M>) {
-        for piece in self.0 {
+impl Out {
+    fn escape(self, f: &mut Formatter, s: &str) -> fmt::Result {
+        match self {
+            Out::Html => HTML::escape(f, s),
+            Out::Utf8 => UTF8::escape(f, s),
+            Out::Latex => LaTeX::escape(f, s),
+        }
+    }
+}
+
+/// What has to happen to the next letter displayed.
+#[derive(Default)]
+struct Next {
+    capital: bool,
+    article: bool,
+}
+
+impl Next {
+    /// Writes `words`, putting any pending article and capital on its first
+    /// letter or digit.  Words with neither, such as "(", leave them pending.
+    fn write_words(&mut self, out: Out, words: &str, f: &mut Formatter) -> fmt::Result {
+        let Some(start) = words.find(char::is_alphanumeric) else {
+            return out.escape(f, words);
+        };
+        if !self.capital && !self.article {
+            return out.escape(f, words);
+        }
+        let (before, rest) = words.split_at(start);
+        let mut shown = String::new();
+        if std::mem::take(&mut self.article) {
+            shown.push_str(if vowel_sound(rest) { "an " } else { "a " });
+        }
+        shown.push_str(rest);
+        if std::mem::take(&mut self.capital) {
+            let mut chars = shown.chars();
+            if let Some(c) = chars.next() {
+                shown = c.to_uppercase().chain(chars).collect();
+            }
+        }
+        out.escape(f, before)?;
+        out.escape(f, &shown)
+    }
+}
+
+impl DisplayAs<HTML> for Text {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.write(Out::Html, f)
+    }
+}
+
+impl DisplayAs<UTF8> for Text {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.write(Out::Utf8, f)
+    }
+}
+
+impl DisplayAs<LaTeX> for Text {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.write(Out::Latex, f)
+    }
+}
+
+/// The text as plain text.
+impl Display for Text {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.write(Out::Utf8, f)
+    }
+}
+
+impl fmt::Debug for Text {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_tuple("Text").field(&self.to_string()).finish()
+    }
+}
+
+/// Something that can be added to a [`Text`].
+///
+/// Strings, numbers, [`Word`]s, `Option`s and other `Text` are added
+/// already, and so is anything that implements [`Markup`].  Implement it for your own types, or wrap
+/// a value in [`Plain`] to add the words its `Display` gives.
+pub trait AddTo {
+    /// Adds this to the end of `text`.
+    fn add_to(self, text: &mut Text);
+}
+
+impl AddTo for Text {
+    fn add_to(self, text: &mut Text) {
+        if text.number.is_none() {
+            text.number = self.number;
+        }
+        for piece in self.pieces {
             match piece {
                 Piece::Words(w) => text.push_words(&w),
-                piece => text.0.push(piece),
+                piece => text.pieces.push(piece),
             }
         }
     }
 }
 
+impl<T: Markup + 'static> AddTo for T {
+    fn add_to(self, text: &mut Text) {
+        text.pieces.push(Piece::Markup(Rc::new(self), None));
+    }
+}
+
 /// `text + piece` adds anything that implements [`AddTo`].
-impl<M, T: AddTo<M>> Add<T> for Text<M> {
-    type Output = Text<M>;
-    fn add(mut self, piece: T) -> Text<M> {
+impl<T: AddTo> Add<T> for Text {
+    type Output = Text;
+    fn add(mut self, piece: T) -> Text {
         piece.add_to(&mut self);
         self
     }
 }
 
 /// `text += piece` adds anything that implements [`AddTo`].
-impl<M, T: AddTo<M>> AddAssign<T> for Text<M> {
+impl<T: AddTo> AddAssign<T> for Text {
     fn add_assign(&mut self, piece: T) {
         piece.add_to(self);
     }
 }
 
-impl<M, T: AddTo<M>> AddTo<M> for Option<T> {
-    fn add_to(self, text: &mut Text<M>) {
+impl<T: AddTo> AddTo for Option<T> {
+    fn add_to(self, text: &mut Text) {
         if let Some(t) = self {
             t.add_to(text);
         }
@@ -260,25 +395,16 @@ impl<M, T: AddTo<M>> AddTo<M> for Option<T> {
 /// A value added as the words its [`Display`] gives.
 pub struct Plain<T>(pub T);
 
-impl<M, T: Display> AddTo<M> for Plain<T> {
-    fn add_to(self, text: &mut Text<M>) {
+impl<T: Display> AddTo for Plain<T> {
+    fn add_to(self, text: &mut Text) {
         text.push_words(&self.0.to_string());
-    }
-}
-
-/// A value added as markup.
-pub struct Markup<M>(pub M);
-
-impl<M> AddTo<M> for Markup<M> {
-    fn add_to(self, text: &mut Text<M>) {
-        text.push_markup(self.0);
     }
 }
 
 macro_rules! add_as_words {
     ($($t:ty),*) => {
-        $(impl<M> AddTo<M> for $t {
-            fn add_to(self, text: &mut Text<M>) {
+        $(impl AddTo for $t {
+            fn add_to(self, text: &mut Text) {
                 text.push_words(&self.to_string());
             }
         })*

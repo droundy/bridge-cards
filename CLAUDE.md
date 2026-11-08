@@ -10,12 +10,12 @@ A Cargo workspace with four bridge crates, layered bottom to top, and one genera
 - **`bridge-solver`**: a card-play solver (`Naive`, `Starting`, `Score`). It samples possible deals for the cards nobody can see.
 - **`robot`**: the game model (`GameState`, `Seat`, `Seated<T>`, `Bid`, `Action`) and the AI (`src/ai.rs`). It builds as an rlib and also as a `cdylib` for WebAssembly.
 - **`abridge`**: the axum web server for the online bridge game (abridgegame.com). `abridge/src/lib.rs` holds the tables, templates and websocket logic, and `abridge/src/axum_server.rs` holds the routes and TLS, whose certificate `rustls-acme` obtains from Let's Encrypt.
-- **`wording`**: builds English sentences from pieces that know their own grammar (`Quantity` picks singular or plural, `Verb` agrees, `a` picks "a" or "an", `List` joins items) into a `Text` of words and markup, which displays as HTML, UTF8 or LaTeX through display-as. It knows nothing about bridge, so that it can move to its own repository later; bridge supplies the markup type (bids, suits).
+- **`wording`**: builds English sentences from pieces that know their own grammar into a `Text`, the one type of phrase, which displays as HTML, UTF8 or LaTeX through display-as. Quantities (`count`, `at_least`, `between`, or `5 * noun`) make their head noun agree, `agree` makes a predicate's verbs (`Word::verb`) agree with its subject, `a` picks "a" or "an" when displayed, and `List` joins items. It knows nothing about bridge, so that it can move to its own repository later; bridge's bids and suits implement `wording::Markup`, which has one method per format.
 
 ## Commands
 
 ```bash
-cargo test -p bridge-deck -p bridge-solver -p robot   # all real tests (avoid --workspace, see below)
+cargo test -p bridge-deck -p bridge-solver -p robot -p wording   # all real tests (avoid --workspace, see below)
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
