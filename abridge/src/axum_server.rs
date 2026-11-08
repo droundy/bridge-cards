@@ -57,9 +57,13 @@ struct AppState {
     table_updates: Sender<()>,
 }
 
-/// Render `page` as an html response.
-fn html<T: DisplayAs<HTML>>(page: &T) -> Response {
-    Html(display(HTML, page).to_string()).into_response()
+/// A page that is rendered as html when it is returned from a handler.
+struct Page<T>(T);
+
+impl<T: DisplayAs<HTML> + Sync> IntoResponse for Page<T> {
+    fn into_response(self) -> Response {
+        display(HTML, &self.0).into_response()
+    }
 }
 
 /// Redirect (temporarily) to a path on this site, in which `segments` are
@@ -72,7 +76,11 @@ fn redirect_to(segments: &[&str]) -> Response {
         uri.extend(utf8_percent_encode(s, NON_ALPHANUMERIC));
     }
     let location = HeaderValue::try_from(uri).expect("a percent-encoded path is a valid header");
-    (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, location)]).into_response()
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, location)],
+    )
+        .into_response()
 }
 
 /// The response when a path doesn't name anything: a page that links back to
@@ -126,7 +134,10 @@ fn router(app: AppState) -> Router {
 }
 
 async fn style_css() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css")], include_str!("style.css"))
+    (
+        [(header::CONTENT_TYPE, "text/css")],
+        include_str!("style.css"),
+    )
 }
 
 async fn audio() -> impl IntoResponse {
@@ -160,22 +171,24 @@ async fn room(tables: &TableMap) -> Room {
         .collect::<Vec<_>>();
     let mut room = Room { tables: Vec::new() };
     for (name, game) in games {
-        room.tables.push(TableToJoin::new(name, &*game.read().await));
+        room.tables
+            .push(TableToJoin::new(name, &*game.read().await));
     }
     room
 }
 
 async fn index(State(app): State<AppState>, RawQuery(query): RawQuery) -> Response {
     if query.as_deref().map_or(true, str::is_empty) {
-        html(&Index {
+        Page(Index {
             room: room(&app.tables).await,
         })
+        .into_response()
     } else {
         // The page asks for this to learn about the next change to a table.
         println!("Someone is long polling");
         app.table_updates.subscribe().recv().await.ok();
         println!("Got a change.");
-        html(&room(&app.tables).await)
+        Page(room(&app.tables).await).into_response()
     }
 }
 
@@ -192,14 +205,15 @@ async fn table_seat(
         jar.get("name")
             .map_or_else(random_name, |c| c.value().to_string()),
     );
-    Ok(html(&PlayerPage(Player { seat, game: &g })))
+    // Render while `g` is held, since the page borrows from it.
+    Ok(Page(PlayerPage(Player { seat, game: &g })).into_response())
 }
 
 async fn table_robot_tab(
     Path((_table, seat)): Path<(String, String)>,
-) -> Result<Response, NotFound> {
+) -> Result<Page<RobotPage>, NotFound> {
     parse_seat(&seat)?;
-    Ok(html(&RobotPage))
+    Ok(Page(RobotPage))
 }
 
 async fn random_seat(State(app): State<AppState>) -> Response {
@@ -230,11 +244,17 @@ async fn table_random_seat(State(app): State<AppState>, Path(table): Path<String
 async fn table_sock(
     State(app): State<AppState>,
     Path((table, seat)): Path<(String, String)>,
+    jar: CookieJar,
     ws: WebSocketUpgrade,
 ) -> Result<Response, NotFound> {
     let seat = parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
-    Ok(ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, app.table_updates)))
+    let name = jar.get("name").map(|c| c.value().to_string());
+    Ok(
+        ws.on_upgrade(move |socket| {
+            ws_connected(Some(seat), name, socket, game, app.table_updates)
+        }),
+    )
 }
 
 async fn table_robot_sock(
@@ -244,7 +264,7 @@ async fn table_robot_sock(
 ) -> Result<Response, NotFound> {
     parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
-    Ok(ws.on_upgrade(move |socket| ws_connected(None, socket, game, app.table_updates)))
+    Ok(ws.on_upgrade(move |socket| ws_connected(None, None, socket, game, app.table_updates)))
 }
 
 /// Sends everything on port 80 to the same path on `domain` over https.

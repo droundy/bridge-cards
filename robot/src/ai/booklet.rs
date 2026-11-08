@@ -8,7 +8,7 @@
 //! reached in several ways.  Which auctions come up, and how often each call is
 //! made, come from letting the robot bid seeded random deals.
 
-use super::{first_fitting, seeded_hands, Convention, Forcing};
+use super::{robot_choice, seeded_hands, Convention, Described, Forcing};
 use crate::Bid;
 use bridge_deck::HandValuation;
 use std::collections::HashMap;
@@ -29,7 +29,8 @@ pub struct Booklet {
 /// An auction the robot reached: what the system understands next, how often
 /// the robot got there and what it bid.
 struct Auction {
-    ranked: Vec<(Bid, Convention)>,
+    /// The legal calls the system understands, highest first.
+    described: Vec<Described>,
     reached: u64,
     calls: HashMap<Bid, u64>,
 }
@@ -89,12 +90,12 @@ impl Booklet {
             let mut bids = Vec::new();
             while !auction_over(&bids) {
                 let auction = auctions.entry(bids.clone()).or_insert_with(|| Auction {
-                    ranked: convention.ranked_bids(&bids),
+                    described: convention.described_bids(&bids),
                     reached: 0,
                     calls: HashMap::new(),
                 });
                 let hand = hands[bids.len() % 4].values();
-                let call = first_fitting(&auction.ranked, hand).map_or(Bid::Pass, |(b, _)| *b);
+                let call = robot_choice(&auction.described, &hand).unwrap_or(Bid::Pass);
                 auction.reached += 1;
                 *auction.calls.entry(call).or_default() += 1;
                 bids.push(call);
@@ -104,7 +105,14 @@ impl Booklet {
 
         let mut by_table: HashMap<Vec<Meaning>, Vec<Vec<Bid>>> = HashMap::new();
         for (bids, auction) in auctions.iter() {
-            let table = auction.ranked.iter().map(|(b, c)| Meaning::new(*b, c));
+            // The calls in the order the robot considers them: by where the
+            // table first mentions them, and the higher call first when it
+            // is the same entry.
+            let mut in_order: Vec<&Described> = auction.described.iter().collect();
+            in_order.sort_by_key(|d| d.position());
+            let table = in_order
+                .into_iter()
+                .map(|d| Meaning::new(d.bid, &d.meaning));
             by_table
                 .entry(table.collect())
                 .or_default()
@@ -399,6 +407,25 @@ fn every_link_continues_the_auctions_of_its_page() {
                         booklet.pages[next].auctions.contains(&continued)
                     }));
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_booklet_chooses_the_calls_the_robot_makes() {
+    for system in super::BiddingSystem::ALL {
+        let convention = system.convention();
+        for (_, hands, bids) in super::seeded_deals(system.convention(), 60) {
+            for i in 0..bids.len() {
+                let described = convention.described_bids(&bids[..i]);
+                let hand = hands[i % 4].values();
+                assert_eq!(
+                    super::robot_choice(&described, &hand).unwrap_or(Bid::Pass),
+                    bids[i],
+                    "{:?}",
+                    &bids[..i]
+                );
             }
         }
     }
