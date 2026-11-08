@@ -263,15 +263,15 @@ impl Text {
         self.capitalized()
     }
 
-    fn write(&self, out: Out, f: &mut Formatter) -> fmt::Result {
+    fn write<F: MarkupFormat>(&self, f: &mut Formatter) -> fmt::Result {
         let mut next = Next::default();
         for (i, piece) in self.pieces.iter().enumerate() {
             match piece {
                 Piece::Number(_) => {}
                 Piece::Capital => next.capital = true,
                 Piece::Article => next.article = true,
-                Piece::Words(w) => next.write_words(out, w, f)?,
-                Piece::Word(word, _) => next.write_words(out, word.form(self.number_at(i)), f)?,
+                Piece::Words(w) => next.write_words::<F>(w, f)?,
+                Piece::Word(word, _) => next.write_words::<F>(word.form(self.number_at(i)), f)?,
                 Piece::Markup(m, n) => {
                     let number = n.or(m.noun()).unwrap_or(Number::Singular);
                     if std::mem::take(&mut next.article) {
@@ -280,17 +280,13 @@ impl Text {
                             capital: false,
                         };
                         let article = if m.vowel_sound(form) { "an " } else { "a " };
-                        next.write_words(out, article, f)?;
+                        next.write_words::<F>(article, f)?;
                     }
                     let form = Form {
                         number,
                         capital: std::mem::take(&mut next.capital),
                     };
-                    match out {
-                        Out::Html => m.html(form, f)?,
-                        Out::Utf8 => m.utf8(form, f)?,
-                        Out::Latex => m.latex(form, f)?,
-                    }
+                    F::markup(m.as_ref(), form, f)?;
                 }
             }
         }
@@ -298,21 +294,26 @@ impl Text {
     }
 }
 
-/// The formats a `Text` displays in.
-#[derive(Clone, Copy)]
-enum Out {
-    Html,
-    Utf8,
-    Latex,
+/// A format that a `Text` displays in, and that [`Markup`] has a method for.
+trait MarkupFormat: Format {
+    fn markup(markup: &dyn Markup, form: Form, f: &mut Formatter) -> fmt::Result;
 }
 
-impl Out {
-    fn escape(self, f: &mut Formatter, s: &str) -> fmt::Result {
-        match self {
-            Out::Html => HTML::escape(f, s),
-            Out::Utf8 => UTF8::escape(f, s),
-            Out::Latex => LaTeX::escape(f, s),
-        }
+impl MarkupFormat for HTML {
+    fn markup(markup: &dyn Markup, form: Form, f: &mut Formatter) -> fmt::Result {
+        markup.html(form, f)
+    }
+}
+
+impl MarkupFormat for UTF8 {
+    fn markup(markup: &dyn Markup, form: Form, f: &mut Formatter) -> fmt::Result {
+        markup.utf8(form, f)
+    }
+}
+
+impl MarkupFormat for LaTeX {
+    fn markup(markup: &dyn Markup, form: Form, f: &mut Formatter) -> fmt::Result {
+        markup.latex(form, f)
     }
 }
 
@@ -326,12 +327,12 @@ struct Next {
 impl Next {
     /// Writes `words`, putting any pending article and capital on its first
     /// letter or digit.  Words with neither, such as "(", leave them pending.
-    fn write_words(&mut self, out: Out, words: &str, f: &mut Formatter) -> fmt::Result {
+    fn write_words<F: Format>(&mut self, words: &str, f: &mut Formatter) -> fmt::Result {
         let Some(start) = words.find(char::is_alphanumeric) else {
-            return out.escape(f, words);
+            return F::escape(f, words);
         };
         if !self.capital && !self.article {
-            return out.escape(f, words);
+            return F::escape(f, words);
         }
         let (before, rest) = words.split_at(start);
         let mut shown = String::new();
@@ -345,33 +346,33 @@ impl Next {
                 shown = c.to_uppercase().chain(chars).collect();
             }
         }
-        out.escape(f, before)?;
-        out.escape(f, &shown)
+        F::escape(f, before)?;
+        F::escape(f, &shown)
     }
 }
 
 impl DisplayAs<HTML> for Text {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.write(Out::Html, f)
+        self.write::<HTML>(f)
     }
 }
 
 impl DisplayAs<UTF8> for Text {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.write(Out::Utf8, f)
+        self.write::<UTF8>(f)
     }
 }
 
 impl DisplayAs<LaTeX> for Text {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.write(Out::Latex, f)
+        self.write::<LaTeX>(f)
     }
 }
 
 /// The text as plain text.
 impl Display for Text {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.write(Out::Utf8, f)
+        self.write::<UTF8>(f)
     }
 }
 
