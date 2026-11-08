@@ -169,7 +169,7 @@ fn only_the_head_noun_agrees() {
 fn subjects_agree() {
     let partner = || numbered("partner", Number::Singular);
     let you = || numbered("you", Number::Plural);
-    let five_spades: Text = (5..) * SPADES;
+    let five_spades = (5..) * SPADES;
     check(
         joined(vec![
             agree(

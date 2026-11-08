@@ -236,10 +236,50 @@ pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl AddTo) -
 /// [`Word`] and [`Text`] already multiply.  Use this for markup of your own,
 /// as in `wording::countable!(Suit)`.  Rust allows these impls only in the
 /// crate that defines the noun's type.  A negative number panics.
+///
+/// A range of any integer type has one impl, so its product is known to be a
+/// [`Text`] at once:
+///
+/// ```
+/// use wording::Word;
+///
+/// const POINT: Word = Word::noun("point", "points");
+/// let points = (5..) * POINT;
+/// assert_eq!(points.to_string(), "5+ points");
+/// ```
+///
+/// A bare number has an impl for each integer type instead, because Rust
+/// allows no generic one, so `let t = 5 * POINT;` needs `let t: Text` when
+/// `t` is used before the number's type is known.
 #[macro_export]
 macro_rules! countable {
     ($noun:ty) => {
         $crate::countable!(@each $noun; u8, u16, u32, u64, usize, i32);
+        impl<T: ::core::convert::Into<$crate::Amount>> ::core::ops::Mul<$noun>
+            for ::core::ops::RangeFrom<T>
+        {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                $crate::at_least(self.start, noun)
+            }
+        }
+        impl<T: ::core::convert::Into<$crate::Amount>> ::core::ops::Mul<$noun>
+            for ::core::ops::RangeToInclusive<T>
+        {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                $crate::at_most(self.end, noun)
+            }
+        }
+        impl<T: ::core::convert::Into<$crate::Amount>> ::core::ops::Mul<$noun>
+            for ::core::ops::RangeInclusive<T>
+        {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                let (lo, hi) = self.into_inner();
+                $crate::between(lo, hi, noun)
+            }
+        }
     };
     (@each $noun:ty; $($int:ty),*) => {
         $( $crate::countable!(@one $noun; $int); )*
@@ -249,25 +289,6 @@ macro_rules! countable {
             type Output = $crate::Text;
             fn mul(self, noun: $noun) -> $crate::Text {
                 $crate::count(self, noun)
-            }
-        }
-        impl ::core::ops::Mul<$noun> for ::core::ops::RangeFrom<$int> {
-            type Output = $crate::Text;
-            fn mul(self, noun: $noun) -> $crate::Text {
-                $crate::at_least(self.start, noun)
-            }
-        }
-        impl ::core::ops::Mul<$noun> for ::core::ops::RangeToInclusive<$int> {
-            type Output = $crate::Text;
-            fn mul(self, noun: $noun) -> $crate::Text {
-                $crate::at_most(self.end, noun)
-            }
-        }
-        impl ::core::ops::Mul<$noun> for ::core::ops::RangeInclusive<$int> {
-            type Output = $crate::Text;
-            fn mul(self, noun: $noun) -> $crate::Text {
-                let (lo, hi) = self.into_inner();
-                $crate::between(lo, hi, noun)
             }
         }
     };
