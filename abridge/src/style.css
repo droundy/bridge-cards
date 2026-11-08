@@ -269,6 +269,64 @@ button:disabled {
     padding-right: 0.5em;
 }
 
+/* The board holds the auction (side), the hands and bid buttons (play) and
+   the advice.  The advice comes last in the page, so while the window is
+   narrow the three parts take no box of their own and the page flows as one
+   column, with the advice under the bid buttons. */
+.board,
+.side,
+.play {
+    display: contents;
+}
+
+/* In a wide window the auction goes on the left with the advice under it, so
+   that the advice has the whole of that side to itself and the hands and bid
+   buttons stay in the middle. */
+@media (min-width: 70em) {
+    .board {
+        display: grid;
+        grid-template-columns: 1fr max-content 1fr;
+        grid-template-rows: auto 1fr;
+        grid-template-areas:
+            "side play ."
+            "advice play .";
+        align-items: start;
+    }
+
+    .side {
+        display: flow-root;
+        grid-area: side;
+    }
+
+    .play {
+        display: block;
+        grid-area: play;
+    }
+
+    /* Floats would make the board narrower, and so push the middle off the
+       middle of the window. */
+    .robots,
+    .redeal {
+        float: none;
+        position: absolute;
+        top: 0;
+    }
+
+    .robots {
+        right: 0;
+    }
+
+    .redeal {
+        right: 5.5em;
+    }
+
+    .advice {
+        grid-area: advice;
+        max-width: 40em;
+        margin: 0.5em 0.5em 0.5em 0.25rem;
+    }
+}
+
 .redeal {
     float: right;
     width: 5em;
