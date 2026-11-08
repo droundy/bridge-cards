@@ -1,6 +1,6 @@
 pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention};
 use bridge_deck::{Card, Cards};
-use display_as::{with_template, DisplayAs, HTML};
+use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};
 
 mod ai;
@@ -104,13 +104,8 @@ fn bids_go_from_one_to_seven() {
 #[with_template("[%" "%]" "bid.html")]
 impl<'a> DisplayAs<HTML> for Bid {}
 
-/// A bid as `wording::Markup`, so that it goes into sentences.  It is not a
-/// noun, so it is always singular.
-impl wording::Markup for Bid {
-    fn html(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        <Bid as DisplayAs<HTML>>::fmt(self, f)
-    }
-    fn utf8(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl DisplayAs<UTF8> for Bid {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match self {
             Bid::Pass => f.write_str("Pass"),
             Bid::Double => f.write_str("X"),
@@ -118,6 +113,17 @@ impl wording::Markup for Bid {
             Bid::Suit(level, suit) => write!(f, "{}{}", level, suit.unicode()),
             Bid::NT(level) => write!(f, "{}NT", level),
         }
+    }
+}
+
+/// A bid as `wording::Markup`, so that it goes into sentences.  It is not a
+/// noun, so it is always singular.
+impl wording::Markup for Bid {
+    fn html(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        <Bid as DisplayAs<HTML>>::fmt(self, f)
+    }
+    fn utf8(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        <Bid as DisplayAs<UTF8>>::fmt(self, f)
     }
     fn latex(&self, form: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {

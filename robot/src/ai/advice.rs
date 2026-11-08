@@ -7,14 +7,14 @@
 //! or break a tie with another bid, such as the "at most 5 hearts" of a 1S
 //! opening.  The bid the robot would make is the fitting one whose table entry
 //! comes first (`first_fit`), and the other bids are explained by the bounds
-//! the hand misses.  Natural bids state what the partnership needs between
-//! them, so for those the advice weighs the hand against what partner has
-//! shown.
-//!
-//! The sentences are built with `wording`, so that counts, lists and verbs
-//! agree wherever a phrase ends up, and the advice can be shown as HTML, plain
-//! text or LaTeX.
-use super::{legal_bids, Convention, Fit, Forcing, ShapeRule};
+//! the hand misses.  Natural bids state what the partnership needs between them, so
+//! for those the advice weighs the hand against what partner has shown, and
+//! turns them into the contracts worth aiming for (see `contracts`).  The
+//! advice is arranged by strain: for each, the contracts to aim for and then
+//! the closest bids about it.  The sentences are built with `wording`, so
+//! counts, lists and verbs agree wherever a phrase ends up, and the advice
+//! reads the same as HTML or plain text.
+use super::{bids_string, legal_bids, Convention, Fit, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 #[cfg(test)]
@@ -27,28 +27,15 @@ use wording::{
     and, at_least, between, count, numbered, then, Amount, Form, Markup, Number, Text, Word,
 };
 
-/// Advice on the next bid of an auction.
-pub(crate) struct Advice {
-    /// What each player has shown, the hand, and whether it must bid.
-    situation: Vec<Text>,
-    /// The bid the robot would make, and why.
-    suggestion: Text,
-    /// The other bids closest to fitting, each with the suit it is about.
-    others: Vec<(Text, Text)>,
-}
-
-#[with_template("[%" "%]" "advice.html")]
-impl DisplayAs<HTML> for Advice {}
-
-/// How many other bids the advice lists, so that it fits on a screen.
-const OTHERS: usize = 6;
+mod contracts;
 
 const HCP: Word = Word::noun("high card point", "high card points");
 const LHCP: Word = Word::noun("long high card point", "long high card points");
 const SHCP: Word = Word::noun("short high card point", "short high card points");
 const LOSER: Word = Word::noun("loser", "losers");
+const KNOW: Word = Word::verb("knows", "know");
 
-fn partner() -> Text {
+fn partner_text() -> Text {
     numbered("partner", Number::Singular)
 }
 
@@ -64,7 +51,7 @@ fn they() -> Text {
 /// text in it.
 struct Raw(FormattedString<HTML>);
 
-/// `html` as plain text: without its tags, and with its escapes undone.
+/// HTML as plain text: without its tags, and with its escapes undone.
 fn plain(html: &str) -> String {
     let mut text = String::new();
     let mut in_tag = false;
@@ -100,25 +87,6 @@ impl Markup for Raw {
     }
 }
 
-/// A phrase in bold.
-struct Strong(Text);
-
-impl Markup for Strong {
-    fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
-        f.write_str("<strong>")?;
-        <Text as DisplayAs<HTML>>::fmt(&self.0, f)?;
-        f.write_str("</strong>")
-    }
-    fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
-        <Text as DisplayAs<UTF8>>::fmt(&self.0, f)
-    }
-    fn latex(&self, _: Form, f: &mut Formatter) -> fmt::Result {
-        f.write_str(r"\textbf{")?;
-        <Text as DisplayAs<LaTeX>>::fmt(&self.0, f)?;
-        f.write_str("}")
-    }
-}
-
 /// How many cards a hand has in a suit, as in "3♠", with nothing between the
 /// number and the suit.
 struct Length(u8, Suit);
@@ -126,16 +94,62 @@ struct Length(u8, Suit);
 impl Markup for Length {
     fn html(&self, form: Form, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.0)?;
-        self.1.html(form, f)
+        Markup::html(&self.1, form, f)
     }
     fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}{}", self.0, self.1.unicode())
     }
     fn latex(&self, form: Form, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.0)?;
-        self.1.latex(form, f)
+        Markup::latex(&self.1, form, f)
     }
 }
+
+/// A suit's symbol, as a heading, which is not a noun and so is never spelled
+/// out in plain text.
+struct Symbol(Suit);
+
+impl Markup for Symbol {
+    fn html(&self, form: Form, f: &mut Formatter) -> fmt::Result {
+        Markup::html(&self.0, form, f)
+    }
+    fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0.unicode())
+    }
+    fn latex(&self, form: Form, f: &mut Formatter) -> fmt::Result {
+        Markup::latex(&self.0, form, f)
+    }
+}
+
+/// Advice on the next bid of an auction.
+pub(crate) struct Advice {
+    /// What each player has shown, the hand, and whether it must bid.
+    situation: Vec<Text>,
+    /// The bid the robot would make, and why, unless no bid fits.
+    suggestion: Option<(Bid, Text)>,
+    /// For each strain worth mentioning, its heading, then the contracts in
+    /// it to aim for and the other bids about it that come closest to fitting.
+    strains: Vec<(Text, Vec<Line>)>,
+    /// Every other bid the convention understands, with its strain's heading.
+    every_bid: Vec<(Text, Line)>,
+}
+
+#[with_template("[%" "%]" "advice.html")]
+impl DisplayAs<HTML> for Advice {}
+
+#[with_template("[%" "%]" "advice.txt")]
+impl DisplayAs<UTF8> for Advice {}
+
+/// A bid, and what to say about it.
+#[derive(Clone)]
+struct Line {
+    bid: Bid,
+    text: Text,
+}
+
+/// How many other bids the advice lists by strain, so that it fits on a
+/// screen.
+const OTHERS: usize = 5;
 
 impl Convention {
     /// Advice for the player holding `hand` on the next bid after `history`.
@@ -154,6 +168,7 @@ impl Convention {
             .filter_map(|&(who, offset)| self.what_was_shown(history, who, offset))
             .collect();
         situation.push(hand_summary(&hand));
+        situation.extend(contracts::together(&hand, &partner));
 
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
@@ -178,7 +193,7 @@ impl Convention {
         // the highest of those when one entry describes several.
         let chosen = candidates
             .iter()
-            .filter(|c| c.rank.is_some())
+            .filter(|c| c.fits())
             .min_by_key(|c| c.rank);
 
         // Partner's bid forces us only if the opponent after them passed.
@@ -199,23 +214,51 @@ impl Convention {
             _ => None,
         });
 
-        let suggestion = match chosen {
-            Some(c) => {
-                Text::from("Suggested:") + Strong(c.bid.into()) + c.title() + "." + c.reason(&hand)
-            }
-            None => Text::from("No bid fits your hand, so the robot would pass."),
-        };
+        let suggestion = chosen.map(|c| (c.bid, c.title() + "." + c.reason(&hand)));
 
-        let mut others: Vec<&Candidate> = candidates
-            .iter()
-            .filter(|c| Some(c.bid) != chosen.map(|c| c.bid))
-            // Why not to pass is said above.
-            .filter(|c| c.bid != Bid::Pass || c.fits())
+        let chosen_bid = chosen.map(|c| c.bid);
+        let others = candidates.iter().filter(|c| Some(c.bid) != chosen_bid);
+        let mut closest: Vec<&Candidate> = others
+            .clone()
+            // Natural bids are said as contracts, and why not to pass above.
+            .filter(|c| c.needs.is_none() && (c.bid != Bid::Pass || c.fits()))
             .collect();
-        others.sort_by_key(|c| (!c.fits(), c.distance));
-        others.truncate(OTHERS);
-        others.sort_by_key(|c| (c.strain.order(), c.bid.level()));
-        let others = others
+        closest.sort_by_key(|c| (!c.fits(), c.distance));
+        closest.truncate(OTHERS);
+        closest.sort_by_key(|c| c.bid.level());
+
+        let contracts = self.contracts(
+            history,
+            &hand,
+            &partner,
+            &self.shown(history, 0),
+            &candidates,
+        );
+        let strains = Strain::all()
+            .filter_map(|strain| {
+                let lines: Vec<Line> = contracts
+                    .iter()
+                    // The suggestion already says why to bid it.
+                    .filter(|(s, line)| *s == strain && Some(line.bid) != chosen_bid)
+                    .map(|(_, line)| line.clone())
+                    .chain(
+                        closest
+                            .iter()
+                            .filter(|c| c.strain == strain)
+                            .map(|c| c.comparison(chosen)),
+                    )
+                    .collect();
+                if lines.is_empty() {
+                    None
+                } else {
+                    Some((strain.label(), lines))
+                }
+            })
+            .collect();
+
+        let mut every_bid: Vec<&Candidate> = others.collect();
+        every_bid.sort_by_key(|c| (c.strain.order(), c.bid.level()));
+        let every_bid = every_bid
             .into_iter()
             .map(|c| (c.strain.label(), c.comparison(chosen)))
             .collect();
@@ -223,7 +266,8 @@ impl Convention {
         Advice {
             situation,
             suggestion,
-            others,
+            strains,
+            every_bid,
         }
     }
 
@@ -244,7 +288,11 @@ impl Convention {
     /// `refine` adjusts it for earlier bids.
     fn entry(&self, bids: &[Bid]) -> Option<&Convention> {
         match self {
-            Convention::Ordered { conventions, .. } => conventions.iter().find(|c| c.applies(bids)),
+            Convention::Ordered { conventions, .. } => self
+                .candidates(&bids_string(bids))
+                .into_iter()
+                .map(|i| &conventions[i])
+                .find(|c| c.applies(bids)),
             c => Some(c),
         }
     }
@@ -277,7 +325,7 @@ impl Convention {
             return None;
         }
         let opening = history.iter().position(|&b| b != Bid::Pass);
-        let verbs: Vec<Text> = shown
+        let said: Vec<Text> = shown
             .bids
             .iter()
             .enumerate()
@@ -291,23 +339,27 @@ impl Convention {
                 _ => Text::from("bid") + bid,
             })
             .collect();
-        let several = verbs.len() > 1;
-        let said = Text::from(who) + then(verbs);
-        let words = describe(&shown.min, &shown.max);
+        let several = said.len() > 1;
+        let features = describe(&shown.min, &shown.max);
+        let said = Text::from(who) + then(said);
         Some(
-            if words.is_empty() {
+            if features.is_empty() {
                 said
-            } else if !several {
-                said + ", showing" + and(words)
+            } else if several {
+                said + ", which together show" + phrases(features)
             } else {
-                said + ", which together show" + and(words)
+                said + ", showing" + phrases(features)
             }
             .sentence(),
         )
     }
 }
 
-/// What a player has shown with their bids.
+/// What a player has shown with their bids, as bounds combined from the
+/// table entries for each bid.  This is everything the advice knows about the
+/// other hands, so it is the place for a better estimate, such as one drawn
+/// from deals simulated to fit the whole auction.
+#[derive(Clone)]
 struct Shown {
     /// Their bids, with where each sits in the auction.
     bids: Vec<(usize, Bid)>,
@@ -326,6 +378,22 @@ impl Shown {
             ),
             _ => (m.of(&self.min), m.of(&self.max)),
         }
+    }
+    /// The least they have shown, counting long points as `range` does.
+    fn least(&self) -> HandValuation {
+        HandValuation {
+            hcp: self.range(Measure::Hcp).0,
+            ..self.min
+        }
+    }
+    /// What they will have shown after also making a bid that means `meaning`.
+    fn and(&self, meaning: &Convention) -> Shown {
+        let mut shown = self.clone();
+        if let Some((min, max)) = meaning.stated() {
+            shown.min = shown.min.max(min);
+            shown.max = shown.max.min(max);
+        }
+        shown
     }
 }
 
@@ -366,13 +434,15 @@ impl Candidate {
         Candidate {
             bid,
             needs: together.map(|t| {
-                Text::from("it needs") + and(describe(&t, &HandValuation::MAX)) + "between you"
+                Text::from("it needs") + phrases(describe(&t, &HandValuation::MAX)) + "between you"
             }),
-            verdict: together.map(|t| verdict(&t, hand, partner)),
+            verdict: together.map(|t| Reach::of(&t, hand, partner).verdict()),
             rank,
-            misses: and(misses),
+            misses: and(misses.into_iter().map(Miss::text)),
             distance,
-            strain: Strain::of(bid, &min),
+            // A natural bid's own bounds are reduced by what partner has
+            // shown, so its entry says better what it is about.
+            strain: Strain::of(bid, together.as_ref().unwrap_or(&min)),
             meaning,
         }
     }
@@ -386,6 +456,11 @@ impl Candidate {
     fn title(&self) -> Text {
         match &self.meaning {
             Convention::Simple {
+                the_name,
+                the_description,
+                ..
+            }
+            | Convention::Rule {
                 the_name,
                 the_description,
                 ..
@@ -408,11 +483,11 @@ impl Candidate {
             return needs.clone().capitalized() + ", and you have that.";
         }
         let (min, max) = self.meaning.bounds();
-        let mut words = describe(&min, &max);
-        words.extend(fitting_shape(&self.meaning, hand));
+        let mut features = describe(&min, &max);
+        features.extend(fitting_shape(&self.meaning, hand));
         let mut reason = Text::new();
-        if !words.is_empty() {
-            reason += Text::from("It shows") + and(words) + ".";
+        if !features.is_empty() {
+            reason += Text::from("It shows") + phrases(features) + ".";
         }
         reason += place_in_range(&min, &max, hand);
         match self.meaning.is_forcing() {
@@ -424,19 +499,21 @@ impl Candidate {
     }
 
     /// How this bid compares with the one the robot would make.
-    fn comparison(&self, chosen: Option<&Candidate>) -> Text {
-        let title = Text::from(Strong(self.bid.into())) + self.title();
-        if self.fits() {
-            return match chosen {
-                Some(chosen) => title + ": also fits, but the system prefers" + chosen.bid + ".",
-                None => title + ": fits.",
-            };
-        }
-        match (&self.needs, &self.verdict) {
-            (Some(needs), Some(verdict)) => {
+    fn comparison(&self, chosen: Option<&Candidate>) -> Line {
+        let title = self.title();
+        let text = match (chosen, &self.needs, &self.verdict) {
+            (Some(chosen), ..) if self.fits() => {
+                title + ": also fits, but the system prefers" + chosen.bid + "."
+            }
+            (None, ..) if self.fits() => title + ": fits.",
+            (_, Some(needs), Some(verdict)) => {
                 title + ":" + needs.clone() + ";" + verdict.clone() + "."
             }
             _ => title + ": needs" + self.misses.clone() + ".",
+        };
+        Line {
+            bid: self.bid,
+            text,
         }
     }
 }
@@ -447,12 +524,17 @@ enum Strain {
     Suit(Suit),
     Notrump,
     Double,
+    /// An artificial bid that shows no suit, such as Stayman.
+    Other,
     Pass,
 }
 
 impl Strain {
-    /// The suit a bid shows: the longest one its bounds ask for, if that is
-    /// three or more cards, so that a transfer counts as the suit it shows.
+    /// What a bid with lower bounds `min` is about.  A suit bid that asks for
+    /// a card or more of its suit is about that suit.  Otherwise a bid is
+    /// about the longest suit it asks for, if that is three or more cards, so
+    /// that a transfer counts as the suit it shows.  A suit bid that shows no
+    /// suit, such as Stayman, is about something else.
     fn of(bid: Bid, min: &HandValuation) -> Self {
         let own = match bid {
             Bid::Pass => return Strain::Pass,
@@ -460,32 +542,49 @@ impl Strain {
             Bid::Suit(_, suit) => Some(suit),
             Bid::NT(_) => None,
         };
+        match own {
+            Some(suit) if min.length[suit] > 0 => return Strain::Suit(suit),
+            _ => {}
+        }
         let longest = Suit::ALL
             .iter()
             .copied()
-            .max_by_key(|&s| (min.length[s], Some(s) == own))
+            .max_by_key(|&s| min.length[s])
             .unwrap();
         if min.length[longest] >= 3 {
             Strain::Suit(longest)
+        } else if own.is_some() {
+            Strain::Other
         } else {
-            own.map_or(Strain::Notrump, Strain::Suit)
+            Strain::Notrump
         }
     }
-    /// Spades first, as on a convention card.
-    fn order(self) -> u8 {
+    /// Every strain, spades first as on a convention card.
+    fn all() -> impl Iterator<Item = Strain> {
+        let suits = Suit::ALL.iter().rev().map(|&s| Strain::Suit(s));
+        suits.chain(
+            [Strain::Notrump, Strain::Double, Strain::Other, Strain::Pass]
+                .iter()
+                .copied(),
+        )
+    }
+    /// Where this strain comes in `all`.
+    fn order(self) -> usize {
         match self {
-            Strain::Suit(suit) => 3 - suit as u8,
+            Strain::Suit(suit) => 3 - suit as usize,
             Strain::Notrump => 4,
             Strain::Double => 5,
-            Strain::Pass => 6,
+            Strain::Other => 6,
+            Strain::Pass => 7,
         }
     }
     /// The heading for bids about this strain.
     fn label(self) -> Text {
         match self {
-            Strain::Suit(suit) => suit.into(),
+            Strain::Suit(suit) => Symbol(suit).into(),
             Strain::Notrump => "NT".into(),
             Strain::Double => "X".into(),
+            Strain::Other => "Other".into(),
             Strain::Pass => "Pass".into(),
         }
     }
@@ -532,10 +631,6 @@ impl Measure {
     fn limit(self) -> u8 {
         self.of(&HandValuation::MAX)
     }
-    /// A value of this measure as a number of cards, points or losers.
-    fn amount(self, value: u8) -> String {
-        self.quantity(value).to_string()
-    }
     /// A value of this measure as an `Amount` for a quantity.
     fn quantity(self, value: u8) -> Amount {
         match self {
@@ -543,6 +638,11 @@ impl Measure {
             Measure::Losers => Amount::halves(value.into()),
             _ => Amount::from(value),
         }
+    }
+    /// A value of this measure as a number of cards, points or losers, as in
+    /// "7" or "6½".
+    fn amount(self, value: u8) -> String {
+        self.quantity(value).to_string()
     }
     /// What this measure counts, as in "high card points in spades".
     fn noun(self) -> Text {
@@ -570,33 +670,94 @@ impl Measure {
     }
 }
 
-/// The words for the bounds `min..=max` on `m`, as in "5+ spades" or "at most
-/// 1 loser", unless they bound nothing.
-fn bound(m: Measure, min: u8, max: u8) -> Option<Text> {
-    if min == 0 && max >= m.limit() {
-        None
-    } else if max >= m.limit() {
-        Some(at_least(m.quantity(min), m.noun()))
-    } else {
-        Some(between(m.quantity(min), m.quantity(max), m.noun()))
+/// The bounds on one measure, as in "5+ spades" or "6–9 high card points".
+#[derive(Clone, Copy)]
+struct Bound {
+    m: Measure,
+    min: u8,
+    max: u8,
+}
+
+impl Bound {
+    /// The bounds `min..=max` on `m`, unless they bound nothing.
+    fn new(m: Measure, min: u8, max: u8) -> Option<Self> {
+        if min == 0 && max >= m.limit() {
+            None
+        } else {
+            Some(Bound { m, min, max })
+        }
+    }
+    /// At least `min` of `m`.
+    fn at_least(m: Measure, min: u8) -> Option<Self> {
+        Bound::new(m, min, m.limit())
+    }
+    /// The bounds in words, as in "5+ spades" or "at most 1 loser".
+    fn text(self) -> Text {
+        let Bound { m, min, max } = self;
+        if max >= m.limit() && min != max {
+            at_least(m.quantity(min), m.noun())
+        } else {
+            between(m.quantity(min), m.quantity(max), m.noun())
+        }
+    }
+    /// Just the amounts, as in "6–9" or "5+".
+    fn amounts(self) -> String {
+        let Bound { m, min, max } = self;
+        if max == 0 {
+            "no".to_string()
+        } else if min == max {
+            format!("exactly {}", m.amount(min))
+        } else if max >= m.limit() {
+            format!("{}+", m.amount(min))
+        } else if min == 0 {
+            format!("at most {}", m.amount(max))
+        } else {
+            format!("{}–{}", m.amount(min), m.amount(max))
+        }
     }
 }
 
-/// The bounds `min..=max` on `m` as amounts, as in "6–9" or "5+".
-fn range(m: Measure, min: u8, max: u8) -> Option<String> {
-    Some(if min == 0 && max >= m.limit() {
-        return None;
-    } else if max == 0 {
-        "no".to_string()
-    } else if min == max {
-        format!("exactly {}", m.amount(min))
-    } else if max >= m.limit() {
-        format!("{}+", m.amount(min))
-    } else if min == 0 {
-        format!("at most {}", m.amount(max))
-    } else {
-        format!("{}–{}", m.amount(min), m.amount(max))
-    })
+/// Something a bid's bounds ask for.
+#[derive(Clone, Copy)]
+enum Feature {
+    Bound(Bound),
+    Shape(ShapeRule),
+}
+
+impl Feature {
+    fn text(self) -> Text {
+        match self {
+            Feature::Shape(ShapeRule::Balanced) => Text::from("a balanced hand"),
+            Feature::Bound(b) => b.text(),
+            Feature::Shape(ShapeRule::AtLeastAsLong(a, b)) => {
+                Text::from(a) + "at least as long as" + b
+            }
+            Feature::Shape(ShapeRule::Longer(a, b)) => Text::from(a) + "longer than" + b,
+        }
+    }
+}
+
+/// The features as a list, as in "a balanced hand and 18–19 high card points".
+fn phrases(features: Vec<Feature>) -> Text {
+    and(features.into_iter().map(Feature::text))
+}
+
+/// Something a hand lacks for a bid, with what it has.
+struct Miss {
+    feature: Feature,
+    /// The measure and amount the hand has, if that is worth saying.
+    have: Option<(Measure, u8)>,
+}
+
+impl Miss {
+    fn text(self) -> Text {
+        match self.have {
+            Some((m, have)) => {
+                self.feature.text() + " (" + (you() + Word::HAS + m.amount(have)) + ")"
+            }
+            None => self.feature.text(),
+        }
+    }
 }
 
 /// Do these bounds ask for a balanced hand?
@@ -614,12 +775,12 @@ fn beyond_balanced(min: u8, max: u8) -> (u8, u8) {
     )
 }
 
-/// The words for each bound in `min..=max` worth mentioning.
-fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Text> {
+/// What the bounds `min..=max` ask for that is worth mentioning.
+fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Feature> {
     let balanced = is_balanced(min, max);
-    let mut words = Vec::new();
+    let mut features = Vec::new();
     if balanced {
-        words.push(Text::from("a balanced hand"));
+        features.push(Feature::Shape(ShapeRule::Balanced));
     }
     let mut counted_points = false;
     for m in Measure::all() {
@@ -633,22 +794,25 @@ fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Text> {
             _ if m.is_points() && counted_points => continue,
             _ => {}
         }
-        if let Some(w) = bound(m, lo, hi) {
+        if let Some(b) = Bound::new(m, lo, hi) {
             counted_points |= m.is_points();
-            words.push(w);
+            features.push(Feature::Bound(b));
         }
     }
-    words
+    features
 }
 
-/// The words for each bound in `min..=max` that `hand` misses, with what the
-/// hand has, and how far it is from fitting.
-fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Vec<Text>, u32) {
+/// What the bounds `min..=max` ask for that `hand` misses, and how far it is
+/// from fitting.
+fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Vec<Miss>, u32) {
     let balanced = is_balanced(min, max);
-    let mut words = Vec::new();
+    let mut misses = Vec::new();
     let mut distance = 0;
     if balanced && !ShapeRule::Balanced.holds(hand) {
-        words.push(Text::from("a balanced hand"));
+        misses.push(Miss {
+            feature: Feature::Shape(ShapeRule::Balanced),
+            have: None,
+        });
         distance += 3;
     }
     let mut counted_points = false;
@@ -663,27 +827,23 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
             if m.is_points() && std::mem::replace(&mut counted_points, true) {
                 continue;
             }
-            words.push(
-                bound(m, lo, hi).unwrap() + " (" + (you() + Word::HAS + m.amount(have)) + ")",
-            );
+            misses.push(Miss {
+                feature: Feature::Bound(Bound {
+                    m,
+                    min: lo,
+                    max: hi,
+                }),
+                have: Some((m, have)),
+            });
         }
     }
-    (words, distance)
-}
-
-/// The words for a shape rule, such as "spades at least as long as hearts".
-fn shape_words(rule: ShapeRule) -> Text {
-    match rule {
-        ShapeRule::AtLeastAsLong(a, b) => Text::from(a) + "at least as long as" + b,
-        ShapeRule::Longer(a, b) => Text::from(a) + "longer than" + b,
-        ShapeRule::Balanced => Text::from("a balanced hand"),
-    }
+    (misses, distance)
 }
 
 /// The bounds and shape rules of `fit` that `hand` misses, and how far it is
 /// from fitting.
-fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Text>, u32) {
-    let (mut words, mut distance) = misses(&fit.min, &fit.max, hand);
+fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Miss>, u32) {
+    let (mut misses, mut distance) = self::misses(&fit.min, &fit.max, hand);
     // `misses` already asks for a balanced hand when the bounds do.
     let balanced = is_balanced(&fit.min, &fit.max);
     for &rule in fit
@@ -691,15 +851,18 @@ fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Text>, u32) {
         .iter()
         .filter(|&&r| !r.holds(hand) && !(balanced && r == ShapeRule::Balanced))
     {
-        words.push(shape_words(rule));
+        misses.push(Miss {
+            feature: Feature::Shape(rule),
+            have: None,
+        });
         distance += 3;
     }
-    (words, distance)
+    (misses, distance)
 }
 
 /// What `hand` misses of the way of fitting `meaning` that it comes closest
 /// to, and how far it is from fitting that way.
-fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Text>, u32) {
+fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Miss>, u32) {
     match meaning {
         Convention::Rule { fits, .. } => fits
             .iter()
@@ -735,42 +898,101 @@ fn fitting_rules(meaning: &Convention, hand: &HandValuation) -> Vec<ShapeRule> {
     }
 }
 
-/// The words for the shape rules of the way that `hand` fits `meaning`, other
-/// than a balanced hand when `describe` says so already.
-fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Text> {
+/// The features for the shape rules of the way that `hand` fits `meaning`,
+/// other than a balanced hand when `describe` says so already.
+fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Feature> {
     let (min, max) = meaning.bounds();
     let balanced = is_balanced(&min, &max);
     fitting_rules(meaning, hand)
         .into_iter()
         .filter(|&r| !(balanced && r == ShapeRule::Balanced))
-        .map(shape_words)
+        .map(Feature::Shape)
         .collect()
 }
 
-/// How a natural bid's needs, `together`, compare with the hand plus what
-/// partner has shown.
-fn verdict(together: &HandValuation, hand: &HandValuation, partner_shown: &Shown) -> Text {
-    let mut out_of_reach = Vec::new();
-    let mut partner_needs = Vec::new();
-    for m in Measure::all() {
-        let need = m.of(together).saturating_sub(m.of(hand));
-        let (lo, hi) = partner_shown.range(m);
-        if need > hi {
-            out_of_reach.push(bound(m, 0, hi).unwrap_or_default());
-        } else if need > lo {
-            let needs = bound(m, need, m.limit()).unwrap_or_default();
-            partner_needs.push(match range(m, lo, hi) {
-                Some(shown) => needs + " (" + (they() + Word::HAS + "shown" + shown) + ")",
-                None => needs,
-            });
+/// How what a partnership needs compares with a hand plus what partner has
+/// shown.
+enum Reach {
+    /// The hand and the least partner has shown are enough.
+    Sure,
+    /// Enough if partner has these.
+    IfPartnerHas(Vec<Need>),
+    /// More than partner can have, given the most they have shown.
+    OutOfReach(Vec<Bound>),
+}
+
+impl Reach {
+    /// How `together`, what the partnership needs, compares with `hand` plus
+    /// what `partner` has shown.
+    fn of(together: &HandValuation, hand: &HandValuation, partner: &Shown) -> Self {
+        let mut out_of_reach = Vec::new();
+        let mut partner_needs = Vec::new();
+        for m in Measure::all() {
+            let need = m.of(together).saturating_sub(m.of(hand));
+            let (lo, hi) = partner.range(m);
+            if need > hi {
+                out_of_reach.extend(Bound::new(m, 0, hi));
+            } else if need > lo {
+                partner_needs.push(Need {
+                    m,
+                    amount: need,
+                    shown: (lo, hi),
+                });
+            }
+        }
+        if !out_of_reach.is_empty() {
+            Reach::OutOfReach(out_of_reach)
+        } else if !partner_needs.is_empty() {
+            Reach::IfPartnerHas(partner_needs)
+        } else {
+            Reach::Sure
         }
     }
-    if !out_of_reach.is_empty() {
-        partner() + Word::HAS + "shown" + and(out_of_reach) + ", so that is out of reach"
-    } else if !partner_needs.is_empty() {
-        Text::from("that works if") + (partner() + Word::HAS + and(partner_needs))
-    } else {
-        you() + Word::HAS + "that between you"
+    fn verdict(&self) -> Text {
+        match self {
+            Reach::Sure => you() + Word::HAS + "that between you",
+            Reach::IfPartnerHas(needs) => {
+                let needs = needs.iter().map(|&n| match n.shown() {
+                    Some(shown) => n.text() + " (" + (they() + Word::HAS + "shown" + shown) + ")",
+                    None => n.text(),
+                });
+                Text::from("that works if") + (partner_text() + Word::HAS + and(needs))
+            }
+            Reach::OutOfReach(bounds) => {
+                partner_text()
+                    + Word::HAS
+                    + "shown"
+                    + and(bounds.iter().map(|b| b.text()))
+                    + ", so that is out of reach"
+            }
+        }
+    }
+}
+
+/// Something partner needs to hold for a contract, as in "8+ high card
+/// points".
+#[derive(Clone, Copy)]
+struct Need {
+    m: Measure,
+    /// How much of `m` partner needs.
+    amount: u8,
+    /// The range of `m` that partner has shown.
+    shown: (u8, u8),
+}
+
+impl Need {
+    /// The range partner has shown, if they have shown any, as amounts.
+    fn shown(self) -> Option<String> {
+        Bound::new(self.m, self.shown.0, self.shown.1).map(Bound::amounts)
+    }
+    /// How far this asks beyond the least partner has shown, to compare the
+    /// bids that might lead to a contract.
+    fn stretch(&self) -> u32 {
+        self.m.weight() * (self.amount - self.shown.0) as u32
+    }
+    /// What partner needs, as in "8+ high card points".
+    fn text(self) -> Text {
+        Bound::at_least(self.m, self.amount).map_or_else(Text::new, Bound::text)
     }
 }
 
@@ -813,20 +1035,14 @@ fn hand_summary(hand: &HandValuation) -> Text {
         + "."
 }
 
-/// Checks the SAYC advice for `hand` after `bids`, as plain text with one
-/// line for each paragraph or table row.
+/// Checks the SAYC advice for `hand` after `bids`, as plain text, up to the
+/// list of every bid, which starts closed.
 #[cfg(test)]
 fn check(bids: &[Bid], hand: &str, expect: Expect) {
     use std::str::FromStr;
     let advice = Convention::sayc().advice(bids, Cards::from_str(hand).unwrap());
-    let html = format_as!(HTML, advice).into_string().replace("</th>", " ");
-    let text = plain(&html);
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    expect.assert_eq(&lines.join("\n"));
+    let text = format_as!(UTF8, advice).into_string();
+    expect.assert_eq(text.split("Every bid:").next().unwrap().trim_end());
 }
 
 #[test]
@@ -834,34 +1050,38 @@ fn advice_after_a_one_spade_opening() {
     use crate::Bid::*;
     use bridge_deck::Suit::Spades;
     let one_spade = [Suit(1, Spades), Pass];
+    // Toward 4♠, 2♠ tells partner about the spade fit, which 1NT would not.
     check(
         &one_spade,
         "S Q32 H KJ4 D J543 C 654",
         expect![[r#"
-            Partner opened 1♠, showing 5+ ♠ and 13–21 long high card points.
+            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
             Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
+            Together you have 20–28 high card points and 8+ spades.
             You should bid, since a pass would show at most 5 high card points (you have 7).
-            Suggested: 2♠ Single raise. It shows 3+ ♠ and 6–9 high card points. Your 7 high card points are near the bottom of that range.
-            ♠ 2NT Jacoby 2NT: needs 4+ ♠ (you have 3) and 13+ high card points (you have 7).
-            ♠ 3♠ Limit raise: needs 10–11 high card points (you have 7).
-            ♠ 4♠ Natural game: it needs 8+ ♠ and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21).
-            ♦ 2♦ Two-level response: needs 10+ high card points (you have 7).
-            ♣ 2♣ Two-level response: needs 10+ high card points (you have 7).
-            NT 1NT Response: also fits, but the system prefers 2♠."#]],
+            Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
+            ♠ 3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
+            ♠ 4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
+            ♠ 2NT Jacoby 2NT (4+ card support): needs 4+ spades (you have 3) and 13+ high card points (you have 7).
+            ♠ 3♠ Limit raise (3+ card support): needs 10–11 high card points (you have 7).
+            ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points.
+            NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
+            Other 2♣ Two-level response: needs 10+ high card points (you have 7)."#]],
     );
     check(
         &one_spade,
         "S 32 H 5432 D 432 C 5432",
         expect![[r#"
-            Partner opened 1♠, showing 5+ ♠ and 13–21 long high card points.
+            Partner opened 1♠, showing 5+ spades and 13–21 long high card points.
             Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
+            Together you have 13–21 high card points.
             Suggested: Pass Response pass. It shows at most 5 high card points.
-            ♠ 2♠ Single raise: needs 3+ ♠ (you have 2) and 6–9 high card points (you have 0).
-            ♠ 3♠ Limit raise: needs 3+ ♠ (you have 2) and 10–11 high card points (you have 0).
-            ♥ 2♥ Two-level response: needs 5+ ♥ (you have 4) and 10+ high card points (you have 0).
-            ♣ 2♣ Two-level response: needs 10+ high card points (you have 0).
-            NT 1NT Response: needs 6–9 high card points (you have 0).
-            NT 3NT Response: needs 15–17 high card points (you have 0)."#]],
+            ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
+            ♠ 3♠ Limit raise (3+ card support): needs 3+ spades (you have 2) and 10–11 high card points (you have 0).
+            ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
+            NT 1NT Response (No fit and no suit to bid): needs 6–9 high card points (you have 0).
+            Other 2♣ Two-level response: needs 10+ high card points (you have 0)."#]],
     );
 }
 
@@ -875,13 +1095,13 @@ fn advice_after_one_notrump() {
         expect![[r#"
             Partner opened 1NT, showing a balanced hand and 15–17 high card points.
             Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
-            Suggested: Pass Response pass. It shows at most 7 high card points.
-            ♠ 2♥ Jacoby transfer: needs 5+ ♠ (you have 4).
-            ♠ 3♠ Natural: it needs 8+ ♠ and 24+ high card points between you; partner has shown at most 17 high card points, so that is out of reach.
-            ♥ 2♦ Jacoby transfer: needs 5+ ♥ (you have 4).
-            ♣ 2♣ Stayman: needs 8+ high card points (you have 6).
+            Together you have 21–23 high card points.
+            Suggested: Pass Response pass (Too weak to invite). It shows at most 7 high card points.
+            ♠ 2♥ Jacoby transfer (5+ spades): needs 5+ spades (you have 4).
+            ♥ 2♦ Jacoby transfer (5+ hearts): needs 5+ hearts (you have 4).
             NT 2NT Game invite: needs 8–9 high card points (you have 6).
-            NT 3NT Game: needs 10–15 high card points (you have 6)."#]],
+            NT 3NT Game (To play): needs 10–15 high card points (you have 6).
+            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6)."#]],
     );
 }
 
@@ -910,26 +1130,45 @@ fn advice_follows_every_seeded_auction() {
 }
 
 #[test]
-fn raw_markup_is_plain_outside_html() {
-    let said = "Michael's <cue> & 2/1";
-    let name = Text::from(Raw(format_as!(HTML, said)));
-    assert_eq!(name.to_string(), said);
+fn advice_on_a_rebid_after_one_notrump() {
+    use crate::Bid::*;
+    use bridge_deck::Suit::Hearts;
+    // 2NT shows more than the opening did, so partner can bid 3NT.
+    check(
+        &[Suit(1, Hearts), Pass, NT(1), Pass],
+        "S A2 H KQ976 D AJ3 C KQ2",
+        expect![[r#"
+            Partner bid 1NT, showing 6–9 high card points.
+            You opened 1♥, showing 5+ hearts and 13–21 long high card points.
+            Your hand: 19 HCP, 20 LHCP and 20 SHCP, with 2♠ 5♥ 3♦ 3♣.
+            Together you have 25–28 high card points.
+            Suggested: 2NT Rebid (Balanced, 18-19 hcp). It shows a balanced hand and 18–19 high card points. Your 19 high card points are near the top of that range.
+            ♠ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
+            ♥ 3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
+            ♥ 4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
+            ♥ 2♥ Rebid (6+ card suit): needs 6+ hearts (you have 5) and 13–15 long high card points (you have 20).
+            ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 16–18 long high card points (you have 20).
+            ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
+            ♣ 2♣ New suit: needs 4+ clubs (you have 3).
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
+    );
 }
 
 #[test]
-fn a_balanced_hand_is_said_once() {
+fn advice_in_competition() {
     use crate::Bid::*;
-    use bridge_deck::Suit::Hearts;
-    use std::str::FromStr;
-    let advice = Convention::sayc().advice(
-        &[Suit(1, Hearts), Pass, NT(1), Pass],
-        Cards::from_str("S A2 H KQ976 D AJ3 C KQ2").unwrap(),
-    );
-    let suggestion = advice.suggestion.to_string();
-    assert_eq!(
-        suggestion.matches("balanced hand").count(),
-        1,
-        "{suggestion}"
+    use bridge_deck::Suit::*;
+    // With nine trumps the three level is safe.
+    check(
+        &[Suit(1, Hearts), Suit(1, Spades)],
+        "S 32 H K432 D A432 C 432",
+        expect![[r#"
+            Partner opened 1♥, showing 5+ hearts and 13–21 long high card points.
+            Your right-hand opponent bid 1♠, showing 5+ spades and 8–16 high card points.
+            Your hand: 7 HCP, 7 LHCP and 8 SHCP, with 2♠ 4♥ 4♦ 3♣.
+            Together you have 20–28 high card points and 9+ hearts.
+            Suggested: 3♥ Law of total tricks. It needs 9+ hearts between you, and you have that.
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21)."#]],
     );
 }
 
@@ -939,10 +1178,39 @@ fn a_hand_that_is_not_balanced_misses_a_balanced_opening() {
     // Two doubletons are not balanced, though no suit is short or long.
     let advice =
         Convention::sayc().advice(&[], Cards::from_str("S AKJ32 H KQ32 D A2 C 32").unwrap());
-    let text = plain(&format_as!(HTML, advice).into_string());
+    let text = format_as!(UTF8, advice).into_string();
     assert!(
-        text.contains("Opening 1NT: needs a balanced hand."),
+        text.contains("1NT Opening 1NT: needs a balanced hand."),
         "{}",
         text
     );
+}
+
+#[test]
+fn advice_html_is_well_formed() {
+    // Every element the template opens is closed again.
+    for system in super::BiddingSystem::ALL {
+        let convention = system.convention();
+        for (_, hands, bids) in super::seeded_deals(system.convention(), 20) {
+            for i in 0..bids.len() {
+                let html =
+                    format_as!(HTML, convention.advice(&bids[..i], hands[i % 4])).into_string();
+                for tag in ["details", "table", "tr", "th", "td", "p", "strong"] {
+                    let opened = html.matches(&format!("<{} ", tag)).count()
+                        + html.matches(&format!("<{}>", tag)).count();
+                    let closed = html.matches(&format!("</{}>", tag)).count();
+                    assert_eq!(
+                        opened,
+                        closed,
+                        "<{}> after {}:\n{}",
+                        tag,
+                        super::bids_string(&bids[..i]),
+                        html
+                    );
+                }
+                assert_eq!(html.matches("id=\"advice\"").count(), 1);
+                assert!(html.matches("id=\"every-bid\"").count() <= 1);
+            }
+        }
+    }
 }

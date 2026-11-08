@@ -19,20 +19,19 @@
     ws.onopen = function () {
         console.log('connected');
     };
-    // Whether the player last left the bidding advice open, so that it stays
+    // Which sections the player last left open, by id, so that they stay
     // that way when the page is replaced.
-    var advice_open = false;
+    var open_sections = {};
     document.addEventListener('toggle', function (event) {
-        if (event.target.id == 'advice') {
-            advice_open = event.target.open;
+        if (event.target.id) {
+            open_sections[event.target.id] = event.target.open;
         }
     }, true);
     ws.onmessage = function (event) {
         console.log('got html data');
         document.getElementById('main').innerHTML = event.data;
-        let advice = document.getElementById('advice');
-        if (advice) {
-            advice.open = advice_open;
+        for (let section of document.querySelectorAll('details[id]')) {
+            section.open = open_sections[section.id] || false;
         }
     };
     ws.onclose = function (event) {

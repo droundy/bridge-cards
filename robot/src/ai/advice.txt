@@ -1,0 +1,7 @@
+[% for line in self.situation.iter() { %][% line %]
+[% } if let Some((bid, text)) = &self.suggestion { %]Suggested: [% bid %] [% text %]
+[% } else { %]No bid fits your hand, so the robot would pass.
+[% } for (strain, lines) in self.strains.iter() { for line in lines.iter() { %][% strain %] [% line.bid %] [% line.text %]
+[% } } %]Every bid:
+[% for (strain, line) in self.every_bid.iter() { %][% strain %] [% line.bid %] [% line.text %]
+[% } %]

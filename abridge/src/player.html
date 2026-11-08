@@ -148,7 +148,7 @@
 </div>[%
 if self.game.bidder() == Some(self.seat) {
     if let Some(advice) = self.game.bidding_advice(self.seat) {
-        %]<details id="advice" class="advice"><summary>Bidding advice</summary>[% advice %]</details>[%
+        advice
     }
 } %]
 </div>
