@@ -89,11 +89,13 @@ impl Sheet {
         forcing: Forcing,
         fits: impl IntoIterator<Item = Fit>,
     ) {
+        let fits: Vec<Fit> = fits.into_iter().collect();
+        assert!(!fits.is_empty(), "{} {} fits no hand", name, regex);
         self.0.add(Convention::Rule {
             regex: RegexSet::new([regex]).unwrap(),
             the_description: format_as!(HTML, description),
             the_name: name,
-            fits: fits.into_iter().collect(),
+            fits,
             forcing,
         });
     }
@@ -279,6 +281,13 @@ fn notrump(s: &mut Sheet) {
             "Quantitative",
             Forcing::Passable,
             [fit(MIN.with_hcp(slam.0), MAX.with_hcp(slam.1))],
+        );
+        s.add(
+            "Response pass",
+            &auction(&[nt, "P"]),
+            "Too weak to invite",
+            Forcing::Passable,
+            [fit(MIN, MAX.with_hcp(stayman_min - 1))],
         );
 
         // Opener's replies.
@@ -757,17 +766,20 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 Forcing::Passable,
                 [fit(weak.min_len(opening, support), MAX.with_hcp(9))],
             );
+            // Up to the strength of a new suit at the two level, which in
+            // two over one is a game force.
             s.add(
                 "Response",
                 &format!("{after}1N$"),
                 "No fit and no suit to bid",
                 Forcing::Passable,
-                [fit(weak, MAX.with_hcp(10))],
+                [fit(weak, MAX.with_hcp(if two_over_one { 11 } else { 10 }))],
             );
         }
     }
     // Responder may not pass with six or more points, so when nothing else
-    // fits there is a forcing bid that may be short, and then 1NT.
+    // fits there is a forcing bid that may be short.  With less than its
+    // strength, 1NT has already fit.
     for opening in Suit::ALL.iter().cloned() {
         let after = format!("^{OPEN}1{} [PX] ", opening.latin());
         if opening == Clubs {
@@ -791,17 +803,10 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 [fit(MIN.with_hcp(if two_over_one { 12 } else { 10 }), MAX)],
             );
         }
-        s.add(
-            "Response",
-            &format!("{after}1N$"),
-            "Nothing else fits",
-            Forcing::Passable,
-            [fit(weak, MAX)],
-        );
     }
     s.add(
         "Response pass",
-        &format!("^{OPEN}1. P P$"),
+        &format!("^{OPEN}1[CDHS] P P$"),
         "",
         Forcing::Passable,
         [fit(MIN, MAX.with_hcp(5))],

@@ -126,6 +126,7 @@ impl BidAI for ConventionalBid {
         for b in legal_bids(history).into_iter().rev() {
             *bids.last_mut().unwrap() = b;
             let auction = bids_string(&bids);
+            let default = self.0.default_for(&auction);
             for (i, entry) in self.0.entries().iter().enumerate() {
                 if best.as_ref().is_some_and(|&(j, _, _)| j <= i) {
                     break;
@@ -133,7 +134,7 @@ impl BidAI for ConventionalBid {
                 if !entry.matches(&auction, &bids) {
                     continue;
                 }
-                if let Some(c) = self.0.resolve(entry, &auction, &bids) {
+                if let Some(c) = self.0.resolve(i, &auction, &bids, default) {
                     if c.fits(&hand) {
                         best = Some((i, b, c));
                         break;
@@ -381,6 +382,9 @@ impl ShapeRule {
     }
 }
 
+/// What separates the ways a bid can be described.
+const OR: &str = "<br/><em>or</em><br/>";
+
 /// One way that a hand can fit a bid: bounds on its values, and rules about
 /// its shape that the bounds cannot say.
 #[derive(Clone, Debug)]
@@ -588,33 +592,54 @@ fn final_bid(pattern: &str) -> Option<Bid> {
 /// `pattern`, with a final group of alternatives such as `(1N [PX] 2|2N [PX]
 /// 3)C$` written out as one pattern per alternative.
 fn expand_final_group(pattern: &str) -> Vec<String> {
-    let close = match pattern.strip_suffix('$') {
-        Some(p) if p.len() > 2 && p[..p.len() - 1].ends_with(')') => p.len() - 2,
-        _ => return vec![pattern.to_string()],
+    let unchanged = || vec![pattern.to_string()];
+    // The last group, which must have alternatives and be followed by the
+    // rest of the bid.
+    let close = match pattern.rfind(')') {
+        Some(close) => close,
+        None => return unchanged(),
     };
-    let bytes = pattern.as_bytes();
     let mut depth = 0;
-    let mut open = close;
-    loop {
-        match bytes[open] {
-            b')' => depth += 1,
-            b'(' => {
+    let mut open = None;
+    for (i, c) in pattern[..=close].char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
                 depth -= 1;
                 if depth == 0 {
+                    open = Some(i);
                     break;
                 }
             }
             _ => (),
         }
-        open -= 1;
     }
-    let (prefix, inner, rest) = (
-        &pattern[..open],
-        &pattern[open + 1..close],
-        &pattern[close + 1..],
-    );
-    inner
-        .split('|')
+    let open = match open {
+        Some(open) => open,
+        None => return unchanged(),
+    };
+    // Split the group at the `|`s that are not inside a smaller group.
+    let inner = &pattern[open + 1..close];
+    let mut alternatives = Vec::new();
+    let (mut depth, mut start) = (0, 0);
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '|' if depth == 0 => {
+                alternatives.push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => (),
+        }
+    }
+    alternatives.push(&inner[start..]);
+    if alternatives.len() == 1 {
+        return unchanged();
+    }
+    let (prefix, rest) = (&pattern[..open], &pattern[close + 1..]);
+    alternatives
+        .into_iter()
         .map(|alternative| format!("{prefix}{alternative}{rest}"))
         .collect()
 }
@@ -657,13 +682,10 @@ impl Convention {
             }
         }
     }
-    fn min_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
+    /// The bounds on the hand that made the last of `actual_bids`.
+    fn valuation(&self, actual_bids: &[Bid]) -> (HandValuation, HandValuation) {
         self.refine(actual_bids)
-            .map_or(HandValuation::MIN, |c| c.bounds().0)
-    }
-    fn max_valuation(&self, actual_bids: &[Bid]) -> HandValuation {
-        self.refine(actual_bids)
-            .map_or(HandValuation::MAX, |c| c.bounds().1)
+            .map_or((HandValuation::MIN, HandValuation::MAX), |c| c.bounds())
     }
     fn check_forcing(&self, actual_bids: &[Bid]) -> Forcing {
         self.refine(actual_bids)
@@ -673,11 +695,13 @@ impl Convention {
     /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
+        let default = self.default_for(&auction);
         let mut found: Vec<Convention> = self
             .entries()
             .iter()
-            .filter(|entry| entry.matches(&auction, actual_bids))
-            .filter_map(|entry| self.resolve(entry, &auction, actual_bids))
+            .enumerate()
+            .filter(|(_, entry)| entry.matches(&auction, actual_bids))
+            .filter_map(|(i, _)| self.resolve(i, &auction, actual_bids, default))
             .collect();
         match found.len() {
             0 => None,
@@ -685,36 +709,43 @@ impl Convention {
             _ => Some(Convention::Either(found)),
         }
     }
-    /// Is `entry` the default for the last bid of `auction`: the first
+    /// The index of the default for the last bid of `auction`: the first
     /// `Natural` or `Forced` entry of this table to match it, when no
-    /// `Simple` or `Rule` entry does?
-    fn is_default_for(&self, entry: &Convention, auction: &str) -> bool {
-        let mut first_default = None;
-        for e in self.entries() {
-            match e {
-                Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
-                    if regex.is_match(auction) {
-                        return false;
-                    }
+    /// `Simple` or `Rule` entry does.
+    fn default_for(&self, auction: &str) -> Option<usize> {
+        let mut default = None;
+        for (i, entry) in self.entries().iter().enumerate() {
+            match entry {
+                Convention::Simple { regex, .. } | Convention::Rule { regex, .. }
+                    if regex.is_match(auction) =>
+                {
+                    return None;
                 }
                 Convention::Natural { regex, .. } | Convention::Forced { regex, .. }
-                    if first_default.is_none() && regex.is_match(auction) =>
+                    if default.is_none() && regex.is_match(auction) =>
                 {
-                    first_default = Some(e);
+                    default = Some(i);
                 }
                 _ => (),
             }
         }
-        first_default.is_some_and(|e| std::ptr::eq(e, entry))
+        default
     }
-    /// What `entry` of this table says about the last of `bids`, whose
-    /// `bids_string` is `auction`, if it describes it.  `Natural` and
-    /// `Forced` entries are defaults: the first of them to match a bid
-    /// describes it, if no `Simple` or `Rule` entry does.  They are adjusted
-    /// for what was shown earlier, and a `Forced` one only describes a bid
-    /// that partner forced.
-    fn resolve(&self, entry: &Convention, auction: &str, bids: &[Bid]) -> Option<Convention> {
+    /// What the entry at `index` of this table says about the last of
+    /// `bids`, whose `bids_string` is `auction`, if it describes it.
+    /// `Natural` and `Forced` entries are defaults: only `default`, from
+    /// `default_for`, describes a bid.  They are adjusted for what was shown
+    /// earlier, and a `Forced` one only describes a bid that partner forced.
+    fn resolve(
+        &self,
+        index: usize,
+        auction: &str,
+        bids: &[Bid],
+        default: Option<usize>,
+    ) -> Option<Convention> {
         let in_table = matches!(self, Convention::Ordered { .. });
+        let is_default = default == Some(index);
+        let entry = &self.entries()[index];
         match entry {
             Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
                 regex.is_match(auction).then(|| entry.clone())
@@ -728,7 +759,7 @@ impl Convention {
                 if !in_table {
                     return Some(entry.clone());
                 }
-                if !self.is_default_for(entry, auction) {
+                if !is_default {
                     return None;
                 }
                 let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
@@ -748,9 +779,7 @@ impl Convention {
                 if !in_table {
                     return Some(entry.clone());
                 }
-                if !self.is_default_for(entry, auction)
-                    || self.partner_forcing(bids) == Forcing::Passable
-                {
+                if !is_default || self.partner_forcing(bids) == Forcing::Passable {
                     return None;
                 }
                 let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
@@ -766,13 +795,19 @@ impl Convention {
         }
     }
     /// How forcing partner's earlier bids were. A game force sticks once
-    /// seen; otherwise the result is the forcing level of partner's first bid
-    /// that was not a pass, so that a pass in third or fourth seat before
-    /// opening or responding does not hide it.
+    /// seen; otherwise the result is the forcing level of partner's first
+    /// bid.  Passes before that, in third or fourth seat, do not count.
     fn partner_forcing(&self, actual_bids: &[Bid]) -> Forcing {
+        // Partner's calls, most recent first.
+        let calls: Vec<&[Bid]> = earlier_auctions(actual_bids, 2).collect();
+        let first_passes = calls
+            .iter()
+            .rev()
+            .take_while(|bids| bids.last() == Some(&Bid::Pass))
+            .count();
         let mut forcing = Forcing::Passable;
-        for bids in earlier_auctions(actual_bids, 2) {
-            if forcing != Forcing::GameForcing && bids.last() != Some(&Bid::Pass) {
+        for bids in &calls[..calls.len() - first_passes] {
+            if forcing != Forcing::GameForcing {
                 forcing = self.check_forcing(bids);
             }
         }
@@ -789,12 +824,13 @@ impl Convention {
         let mut partner = HandValuation::MIN;
         let mut partner_max = HandValuation::MAX;
         for bids in earlier_auctions(actual_bids, 2) {
-            partner = partner.max(self.min_valuation(bids));
-            partner_max = partner_max.min(self.max_valuation(bids));
+            let (min, max) = self.valuation(bids);
+            partner = partner.max(min);
+            partner_max = partner_max.min(max);
         }
         let mut myself = HandValuation::MIN;
         for bids in earlier_auctions(actual_bids, 4) {
-            myself = myself.max(self.min_valuation(bids));
+            myself = myself.max(self.valuation(bids).0);
         }
         // Partner's points count toward the requirement, and we bid this
         // with at most 2 hcp more than the reduced requirement.
@@ -863,12 +899,15 @@ impl Convention {
             } => {
                 let fits = fits
                     .iter()
-                    .map(|f| f.describe().into_string())
+                    .map(|f| {
+                        let fit = f.describe().into_string();
+                        fit.trim_end_matches("<br/>").to_string()
+                    })
                     .collect::<Vec<_>>()
-                    .join("<em>or</em><br/>");
+                    .join(OR);
                 format_as!(HTML,
                     "<strong>" the_name "</strong><br/>"
-                    FormattedString::<HTML>::from_formatted(fits) ""
+                    FormattedString::<HTML>::from_formatted(fits) "<br/>"
                     the_description ""
                     forcing
                 )
@@ -899,7 +938,7 @@ impl Convention {
                     .iter()
                     .map(|c| c.description().into_string())
                     .collect::<Vec<_>>()
-                    .join("<br/><em>or</em><br/>"),
+                    .join(OR),
             ),
         }
     }
@@ -2677,6 +2716,13 @@ fn sheets_regexes_each_end_in_one_bid() {
         vec![r"^(P )*1N [PX] 2C$", r"^(P )*2N [PX] 3C$"],
         expand_final_group(r"^(P )*(1N [PX] 2|2N [PX] 3)C$")
     );
+    assert_eq!(vec!["^(P )*1N$"], expand_final_group("^(P )*1N$"));
+    assert_eq!(
+        vec!["^P 1(C|D)$", "^P 1(C|H)$"],
+        expand_final_group("^P (1(C|D)|1(C|H))$")
+    );
+    assert_eq!(vec!["^1NT$", "^2NT$"], expand_final_group("^(1|2)NT$"));
+    assert_eq!(vec!["1N)$"], expand_final_group("1N)$"));
     // Sorting Sheets panics if any entry names more than one bid.
     Convention::sheets();
 }
@@ -2840,7 +2886,8 @@ fn bids_with_several_entries_describe_them_all() {
 }
 
 /// The places in seeded auctions where two entries of `convention` that are
-/// not defaults describe the same bid, with how often each occurs.
+/// not defaults describe the same bid, or where a default is listed before an
+/// entry that is not, with how often each occurs.
 #[cfg(test)]
 fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
     let mut seen = std::collections::BTreeMap::new();
@@ -2850,21 +2897,31 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
                 let mut auction = bids[..n].to_vec();
                 auction.push(b);
                 let auction = bids_string(&auction);
-                let matching: Vec<String> = convention
+                let matching: Vec<&Convention> = convention
                     .entries()
                     .iter()
-                    .filter(|e| matches!(e, Convention::Simple { .. } | Convention::Rule { .. }))
                     .filter(|e| e.regex().unwrap().is_match(&auction))
-                    .map(|e| {
-                        format!(
-                            "{} {}",
-                            e.name().into_string(),
-                            e.regex().unwrap().patterns()[0]
-                        )
-                    })
                     .collect();
-                if matching.len() > 1 {
-                    *seen.entry(matching.join("  &&  ")).or_insert(0) += 1;
+                let is_default = |e: &&Convention| {
+                    matches!(e, Convention::Natural { .. } | Convention::Forced { .. })
+                };
+                let conventional = matching.iter().filter(|e| !is_default(e)).count();
+                // Before tables were read in order, the first entry to match
+                // decided, so a default listed before a conventional entry
+                // also changes what Sheets means.
+                let default_first = matching.first().is_some_and(is_default) && conventional > 0;
+                if conventional > 1 || default_first {
+                    let names: Vec<String> = matching
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "{} {}",
+                                e.name().into_string(),
+                                e.regex().unwrap().patterns()[0]
+                            )
+                        })
+                        .collect();
+                    *seen.entry(names.join("  &&  ")).or_insert(0) += 1;
                 }
             }
         }
