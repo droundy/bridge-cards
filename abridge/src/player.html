@@ -1,4 +1,5 @@
 [% use Seat::*; %]
+<div class="board"><div class="side">
 <div class="systems">Bidding system:
 [% for system in robot::BiddingSystem::ALL {
     if self.game.bids.is_empty() { %]
@@ -24,6 +25,7 @@
         } %]</tr>[%
     } %]
 </table>
+</div><div class="play">
 [% if Some(self.seat) == self.game.turn() { %]<audio autoplay><source src="/your-play.mp3" type="audio/mpeg"></audio>[% } %]
 [% if self.game.hand_done { %]
 <div class="hand[% if Some(North) == self.game.dummy() { %] dummy[% } %]" id="north">
@@ -135,9 +137,6 @@
             }
         } %]
     </div>[%
-    if let Some(advice) = self.game.bidding_advice(self.seat) {
-        %]<details id="advice" class="advice"><summary>Bidding advice</summary>[% advice %]</details>[%
-    }
 } else if self.game.bidder().is_none() {
     %] <div class="tricks">
         NS: [% self.game.ns_tricks %]<br/>
@@ -146,3 +145,10 @@
 }
 %]
 <input type="checkbox" [% Action::ToggleCountForMe %] id="countforme" name="countforme"[% if self.game.count_for_me[self.seat] { %] checked[% } %]><label for="countforme">Count for me</label><br>
+</div>[%
+if self.game.bidder() == Some(self.seat) {
+    if let Some(advice) = self.game.bidding_advice(self.seat) {
+        %]<details id="advice" class="advice"><summary>Bidding advice</summary>[% advice %]</details>[%
+    }
+} %]
+</div>
