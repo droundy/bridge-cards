@@ -964,6 +964,17 @@ impl Convention {
             ),
         }
     }
+    /// Name of the convention, as plain text.
+    pub(crate) fn the_name(&self) -> &'static str {
+        match self {
+            Convention::Simple { the_name, .. }
+            | Convention::Rule { the_name, .. }
+            | Convention::Natural { the_name, .. }
+            | Convention::Forced { the_name, .. }
+            | Convention::Ordered { the_name, .. } => the_name,
+            Convention::Either(options) => options[0].the_name(),
+        }
+    }
     /// Name of the convention
     pub fn name(&self) -> FormattedString<HTML> {
         match self {

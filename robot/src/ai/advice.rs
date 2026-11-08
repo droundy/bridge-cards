@@ -367,13 +367,10 @@ impl Candidate {
             Convention::Simple {
                 the_name,
                 the_description,
-                min,
-                max,
                 ..
             } => {
                 let d = the_description.as_str();
-                let said = describe(min, max).iter().any(|f| f.to_string() == d);
-                if d.is_empty() || d == *the_name || said {
+                if d.is_empty() || d == *the_name {
                     text!(*the_name)
                 } else {
                     text!(*the_name, " (", Text::html(the_description), ")")
@@ -394,7 +391,7 @@ impl Candidate {
             Convention::Natural { the_name, .. } | Convention::Forced { the_name, .. } => {
                 text!(*the_name)
             }
-            Convention::Either(_) => Text::html(&self.meaning.name()),
+            Convention::Either(_) => text!(self.meaning.the_name()),
             Convention::Ordered { .. } => text!(),
         }
     }
@@ -411,12 +408,7 @@ impl Candidate {
         }
         let (min, max) = self.meaning.bounds();
         let mut features = describe(&min, &max);
-        for shape in fitting_shape(&self.meaning, hand) {
-            // A balanced hand may be asked for by the bounds as well.
-            if !features.iter().any(|f| f.to_string() == shape.to_string()) {
-                features.push(shape);
-            }
-        }
+        features.extend(fitting_shape(&self.meaning, hand));
         let shows = if features.is_empty() {
             text!()
         } else {
@@ -819,18 +811,18 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
 /// from fitting.
 fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Miss>, u32) {
     let (mut misses, mut distance) = self::misses(&fit.min, &fit.max, hand);
-    for &rule in fit.shape.iter().filter(|r| !r.holds(hand)) {
-        let feature = Feature::Shape(rule);
-        if !misses
-            .iter()
-            .any(|m| m.feature.to_string() == feature.to_string())
-        {
-            misses.push(Miss {
-                feature,
-                have: None,
-            });
-            distance += 3;
-        }
+    // `misses` already asks for a balanced hand when the bounds do.
+    let balanced = is_balanced(&fit.min, &fit.max);
+    for &rule in fit
+        .shape
+        .iter()
+        .filter(|&&r| !r.holds(hand) && !(balanced && r == ShapeRule::Balanced))
+    {
+        misses.push(Miss {
+            feature: Feature::Shape(rule),
+            have: None,
+        });
+        distance += 3;
     }
     (misses, distance)
 }
@@ -857,20 +849,32 @@ fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Miss>, u32
 }
 
 /// The shape rules of the way that `hand` fits `meaning`.
-fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Feature> {
+fn fitting_rules(meaning: &Convention, hand: &HandValuation) -> Vec<ShapeRule> {
     match meaning {
         Convention::Rule { fits, .. } => fits
             .iter()
             .find(|f| f.holds(hand))
-            .map(|f| f.shape.iter().map(|&r| Feature::Shape(r)).collect())
+            .map(|f| f.shape.clone())
             .unwrap_or_default(),
         Convention::Either(options) => options
             .iter()
             .find(|c| c.fits(hand))
-            .map(|c| fitting_shape(c, hand))
+            .map(|c| fitting_rules(c, hand))
             .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// The features for the shape rules of the way that `hand` fits `meaning`,
+/// other than a balanced hand when `describe` says so already.
+fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Feature> {
+    let (min, max) = meaning.bounds();
+    let balanced = is_balanced(&min, &max);
+    fitting_rules(meaning, hand)
+        .into_iter()
+        .filter(|&r| !(balanced && r == ShapeRule::Balanced))
+        .map(Feature::Shape)
+        .collect()
 }
 
 /// How what a partnership needs compares with a hand plus what partner has
