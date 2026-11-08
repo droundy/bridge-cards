@@ -64,8 +64,8 @@ fn they() -> Text {
 /// text in it.
 struct Raw(FormattedString<HTML>);
 
-/// `html` without its tags.
-fn strip_tags(html: &str) -> String {
+/// `html` as plain text: without its tags, and with its escapes undone.
+fn plain(html: &str) -> String {
     let mut text = String::new();
     let mut in_tag = false;
     for c in html.chars() {
@@ -76,7 +76,16 @@ fn strip_tags(html: &str) -> String {
             _ => {}
         }
     }
-    text
+    [
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#x27;", "'"),
+        ("&#x2f;", "/"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(text, |text, (escaped, c)| text.replace(escaped, c))
 }
 
 impl Markup for Raw {
@@ -84,10 +93,10 @@ impl Markup for Raw {
         f.write_str(self.0.as_str())
     }
     fn utf8(&self, _: Form, f: &mut Formatter) -> fmt::Result {
-        f.write_str(&strip_tags(self.0.as_str()))
+        f.write_str(&plain(self.0.as_str()))
     }
     fn latex(&self, _: Form, f: &mut Formatter) -> fmt::Result {
-        LaTeX::escape(f, &strip_tags(self.0.as_str()))
+        LaTeX::escape(f, &plain(self.0.as_str()))
     }
 }
 
@@ -379,22 +388,17 @@ impl Candidate {
             Convention::Simple {
                 the_name,
                 the_description,
-                min,
-                max,
                 ..
             } => {
                 let d = the_description.as_str();
                 let name = Text::from(*the_name);
-                if d.is_empty()
-                    || d == *the_name
-                    || describe(min, max).iter().any(|w| w.to_string() == d)
-                {
+                if d.is_empty() || d == *the_name {
                     name
                 } else {
                     name + " (" + Raw(the_description.clone()) + ")"
                 }
             }
-            c => Raw(c.name()).into(),
+            c => Text::from(c.the_name()),
         }
     }
 
@@ -405,12 +409,7 @@ impl Candidate {
         }
         let (min, max) = self.meaning.bounds();
         let mut words = describe(&min, &max);
-        for shape in fitting_shape(&self.meaning, hand) {
-            // A balanced hand may be asked for by the bounds as well.
-            if !words.iter().any(|w| w.to_string() == shape.to_string()) {
-                words.push(shape);
-            }
-        }
+        words.extend(fitting_shape(&self.meaning, hand));
         let mut reason = Text::new();
         if !words.is_empty() {
             reason += Text::from("It shows") + and(words) + ".";
@@ -535,12 +534,7 @@ impl Measure {
     }
     /// A value of this measure as a number of cards, points or losers.
     fn amount(self, value: u8) -> String {
-        match self {
-            // The loser count is stored doubled.
-            Measure::Losers if value % 2 == 1 => format!("{}½", value / 2),
-            Measure::Losers => format!("{}", value / 2),
-            _ => format!("{}", value),
-        }
+        self.quantity(value).to_string()
     }
     /// A value of this measure as an `Amount` for a quantity.
     fn quantity(self, value: u8) -> Amount {
@@ -690,12 +684,15 @@ fn shape_words(rule: ShapeRule) -> Text {
 /// from fitting.
 fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Text>, u32) {
     let (mut words, mut distance) = misses(&fit.min, &fit.max, hand);
-    for &rule in fit.shape.iter().filter(|r| !r.holds(hand)) {
-        let w = shape_words(rule);
-        if !words.iter().any(|x| x.to_string() == w.to_string()) {
-            words.push(w);
-            distance += 3;
-        }
+    // `misses` already asks for a balanced hand when the bounds do.
+    let balanced = is_balanced(&fit.min, &fit.max);
+    for &rule in fit
+        .shape
+        .iter()
+        .filter(|&&r| !r.holds(hand) && !(balanced && r == ShapeRule::Balanced))
+    {
+        words.push(shape_words(rule));
+        distance += 3;
     }
     (words, distance)
 }
@@ -721,21 +718,33 @@ fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Text>, u32
     }
 }
 
-/// The words for the shape rules of the way that `hand` fits `meaning`.
-fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Text> {
+/// The shape rules of the way that `hand` fits `meaning`.
+fn fitting_rules(meaning: &Convention, hand: &HandValuation) -> Vec<ShapeRule> {
     match meaning {
         Convention::Rule { fits, .. } => fits
             .iter()
             .find(|f| f.holds(hand))
-            .map(|f| f.shape.iter().map(|&r| shape_words(r)).collect())
+            .map(|f| f.shape.clone())
             .unwrap_or_default(),
         Convention::Either(options) => options
             .iter()
             .find(|c| c.fits(hand))
-            .map(|c| fitting_shape(c, hand))
+            .map(|c| fitting_rules(c, hand))
             .unwrap_or_default(),
         _ => Vec::new(),
     }
+}
+
+/// The words for the shape rules of the way that `hand` fits `meaning`, other
+/// than a balanced hand when `describe` says so already.
+fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Text> {
+    let (min, max) = meaning.bounds();
+    let balanced = is_balanced(&min, &max);
+    fitting_rules(meaning, hand)
+        .into_iter()
+        .filter(|&r| !(balanced && r == ShapeRule::Balanced))
+        .map(shape_words)
+        .collect()
 }
 
 /// How a natural bid's needs, `together`, compare with the hand plus what
@@ -811,7 +820,7 @@ fn check(bids: &[Bid], hand: &str, expect: Expect) {
     use std::str::FromStr;
     let advice = Convention::sayc().advice(bids, Cards::from_str(hand).unwrap());
     let html = format_as!(HTML, advice).into_string().replace("</th>", " ");
-    let text = strip_tags(&html);
+    let text = plain(&html);
     let lines: Vec<&str> = text
         .lines()
         .map(str::trim)
@@ -898,4 +907,28 @@ fn advice_follows_every_seeded_auction() {
             }
         }
     }
+}
+
+#[test]
+fn raw_markup_is_plain_outside_html() {
+    let said = "Michael's <cue> & 2/1";
+    let name = Text::from(Raw(format_as!(HTML, said)));
+    assert_eq!(name.to_string(), said);
+}
+
+#[test]
+fn a_balanced_hand_is_said_once() {
+    use crate::Bid::*;
+    use bridge_deck::Suit::Hearts;
+    use std::str::FromStr;
+    let advice = Convention::sayc().advice(
+        &[Suit(1, Hearts), Pass, NT(1), Pass],
+        Cards::from_str("S A2 H KQ976 D AJ3 C KQ2").unwrap(),
+    );
+    let suggestion = advice.suggestion.to_string();
+    assert_eq!(
+        suggestion.matches("balanced hand").count(),
+        1,
+        "{suggestion}"
+    );
 }
