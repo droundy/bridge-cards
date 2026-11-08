@@ -11,8 +11,11 @@
 #[cfg(test)]
 use super::ShapeRule;
 use super::{choose, fitting_calls, seeded_hands, Convention, Described, Fit, Forcing};
+use crate::utils::plain;
 use crate::Bid;
-use bridge_deck::{HandValuation, Suit};
+#[cfg(test)]
+use bridge_deck::HandValuation;
+use bridge_deck::Suit;
 #[cfg(test)]
 use display_as::{format_as, HTML};
 use std::collections::HashMap;
@@ -52,6 +55,9 @@ struct Decision {
     /// The ways a hand can fit: bounds on its values, and rules about its
     /// shape.
     fits: Vec<Fit>,
+    /// The summary of the entry that the game shows when the mouse is over
+    /// the call, as HTML.
+    description: String,
 }
 
 impl Decision {
@@ -90,6 +96,7 @@ fn decisions(described: &[Described]) -> Vec<Decision> {
                     name: entry.name().into_string(),
                     forcing: entry.is_forcing(),
                     fits: fits_of(entry),
+                    description: entry.description().into_string(),
                 },
             ));
         }
@@ -98,40 +105,67 @@ fn decisions(described: &[Described]) -> Vec<Decision> {
     steps.into_iter().map(|(_, _, d)| d).collect()
 }
 
-/// What a call means after some auction, as the sketch shows it: the first
-/// name it goes by, how forcing it is, and the bounds that every way of fitting
-/// it lies within.
+/// What a call means after some auction, as the sketch shows it: how forcing
+/// it is, and the summary that the game shows when the mouse is over the call.
 #[derive(Clone)]
 struct Meaning {
     call: Bid,
-    name: String,
     forcing: Forcing,
-    min: HandValuation,
-    max: HandValuation,
+    /// The summary as HTML.  When several entries describe the call it has
+    /// the summary of each, as the game shows them.
+    description: String,
 }
 
 /// The meaning of each call among `decisions`, in the order the robot first
 /// considers them.
 fn meanings(decisions: &[Decision]) -> Vec<Meaning> {
-    let mut meanings: Vec<Meaning> = Vec::new();
+    let mut calls: Vec<Bid> = Vec::new();
     for d in decisions {
-        let (min, max) = super::hull(d.fits.iter().map(|f| (f.min, f.max)));
-        match meanings.iter_mut().find(|m| m.call == d.call) {
-            Some(m) => {
-                m.forcing = m.forcing.max(d.forcing);
-                m.min = m.min.min(min);
-                m.max = m.max.max(max);
-            }
-            None => meanings.push(Meaning {
-                call: d.call,
-                name: d.name.clone(),
-                forcing: d.forcing,
-                min,
-                max,
-            }),
+        if !calls.contains(&d.call) {
+            calls.push(d.call);
         }
     }
-    meanings
+    calls
+        .into_iter()
+        .map(|call| {
+            let of_call: Vec<&Decision> = decisions.iter().filter(|d| d.call == call).collect();
+            Meaning {
+                call,
+                forcing: of_call.iter().map(|d| d.forcing).max().unwrap(),
+                description: of_call
+                    .iter()
+                    .map(|d| d.description.as_str())
+                    .collect::<Vec<_>>()
+                    .join(super::OR),
+            }
+        })
+        .collect()
+}
+
+/// A summary as one line of plain text, with the parts separated by
+/// semicolons.
+fn one_line(html: &str) -> String {
+    // A marker, which `plain` leaves alone, stands for the "or" between the
+    // summaries of different entries.
+    let marked = html
+        .replace(super::OR, "<br/>\u{0}<br/>")
+        .replace("<br/>", "\n");
+    let mut line = String::new();
+    for part in plain(&marked)
+        .lines()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        if part == "\u{0}" {
+            line.push_str(" or ");
+        } else {
+            if !line.is_empty() && !line.ends_with(" or ") {
+                line.push_str("; ");
+            }
+            line.push_str(part);
+        }
+    }
+    line
 }
 
 struct Page {
@@ -478,16 +512,7 @@ fn page_numbers(pages: &[usize]) -> String {
 
 impl fmt::Display for Meaning {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&self.name)?;
-        if (self.min.hcp, self.max.hcp) != (HandValuation::MIN.hcp, HandValuation::MAX.hcp) {
-            write!(f, ", {}–{} hcp", self.min.hcp, self.max.hcp)?;
-        }
-        match self.forcing {
-            Forcing::GameForcing => f.write_str(", game forcing"),
-            Forcing::Forcing => f.write_str(", forcing"),
-            Forcing::Forced => f.write_str(", forced"),
-            Forcing::Passable => Ok(()),
-        }
+        f.write_str(&one_line(&self.description))
     }
 }
 
@@ -650,12 +675,18 @@ fn calls_with_different_shape_rules_do_not_choose_alike() {
         let entry = entry_with(rule);
         vec![Described::new(Bid::Pass, entry.clone(), vec![(0, entry)])]
     };
-    let longer = decisions(&described(ShapeRule::Longer(Spades, Hearts)));
-    let as_long = decisions(&described(ShapeRule::AtLeastAsLong(Spades, Hearts)));
-    // The name and the hull of the bounds are the same.
-    assert_eq!(meanings(&longer)[0].name, meanings(&as_long)[0].name);
+    // The hover summary shows the shape rule too, so leave it out to see that
+    // the ways of fitting alone tell the decisions apart.
+    let without_summary = |mut steps: Vec<Decision>| {
+        steps.iter_mut().for_each(|d| d.description.clear());
+        steps
+    };
+    let longer = without_summary(decisions(&described(ShapeRule::Longer(Spades, Hearts))));
+    let as_long = without_summary(decisions(&described(ShapeRule::AtLeastAsLong(
+        Spades, Hearts,
+    ))));
     assert!(longer != as_long);
-    assert!(longer == decisions(&described(ShapeRule::Longer(Spades, Hearts))));
+    assert!(longer == without_summary(decisions(&described(ShapeRule::Longer(Spades, Hearts)))));
 }
 
 #[test]
@@ -761,4 +792,34 @@ fn the_anomalies_point_at_pages() {
         "{:#?}",
         anomalies
     );
+}
+
+#[test]
+fn every_call_shows_the_hover_text_of_the_game() {
+    let convention = Convention::sayc();
+    let booklet = small_booklet();
+    for page in booklet.pages.iter() {
+        for bids in page.auctions.iter() {
+            for meaning in page.table.iter() {
+                let mut after = bids.clone();
+                after.push(meaning.call);
+                let hover = convention.refine(&after).unwrap().description();
+                assert_eq!(
+                    hover.into_string(),
+                    meaning.description,
+                    "{} after {}",
+                    call(meaning.call),
+                    auction(bids)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_summary_reads_as_one_line() {
+    let html = "<strong>Stayman</strong><br/>8+ hcp<br/><br/><span>no</span> \
+                &amp; so on<br/><br/><em>or</em><br/><strong>Other</strong><br/>";
+    let html = html.replace("<br/><br/><em>or</em><br/>", super::OR);
+    assert_eq!(one_line(&html), "Stayman; 8+ hcp; no & so on or Other");
 }

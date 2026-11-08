@@ -15,6 +15,7 @@
 //! counts, lists and verbs agree wherever a phrase ends up, and the advice
 //! reads the same as HTML or plain text.
 use super::{bids_string, legal_bids, Convention, Fit, Forcing, ShapeRule};
+use crate::utils::plain;
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 #[cfg(test)]
@@ -50,30 +51,6 @@ fn they() -> Text {
 /// HTML that a table entry wrote out, which plain text and LaTeX show as the
 /// text in it.
 struct Raw(FormattedString<HTML>);
-
-/// HTML as plain text: without its tags, and with its escapes undone.
-fn plain(html: &str) -> String {
-    let mut text = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            c if !in_tag => text.push(c),
-            _ => {}
-        }
-    }
-    [
-        ("&lt;", "<"),
-        ("&gt;", ">"),
-        ("&quot;", "\""),
-        ("&#x27;", "'"),
-        ("&#x2f;", "/"),
-        ("&amp;", "&"),
-    ]
-    .iter()
-    .fold(text, |text, (escaped, c)| text.replace(escaped, c))
-}
 
 impl Markup for Raw {
     fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
