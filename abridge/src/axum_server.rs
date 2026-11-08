@@ -57,9 +57,13 @@ struct AppState {
     table_updates: Sender<()>,
 }
 
-/// Render `page` as an html response.
-fn html<T: DisplayAs<HTML>>(page: &T) -> Response {
-    Html(display(HTML, page).to_string()).into_response()
+/// A page that is rendered as html when it is returned from a handler.
+struct Page<T>(T);
+
+impl<T: DisplayAs<HTML> + Sync> IntoResponse for Page<T> {
+    fn into_response(self) -> Response {
+        display(HTML, &self.0).into_response()
+    }
 }
 
 /// Redirect (temporarily) to a path on this site, in which `segments` are
@@ -167,15 +171,16 @@ async fn room(tables: &TableMap) -> Room {
 
 async fn index(State(app): State<AppState>, RawQuery(query): RawQuery) -> Response {
     if query.as_deref().map_or(true, str::is_empty) {
-        html(&Index {
+        Page(Index {
             room: room(&app.tables).await,
         })
+        .into_response()
     } else {
         // The page asks for this to learn about the next change to a table.
         println!("Someone is long polling");
         app.table_updates.subscribe().recv().await.ok();
         println!("Got a change.");
-        html(&room(&app.tables).await)
+        Page(room(&app.tables).await).into_response()
     }
 }
 
@@ -192,14 +197,15 @@ async fn table_seat(
         jar.get("name")
             .map_or_else(random_name, |c| c.value().to_string()),
     );
-    Ok(html(&PlayerPage(Player { seat, game: &g })))
+    // Render while `g` is held, since the page borrows from it.
+    Ok(Page(PlayerPage(Player { seat, game: &g })).into_response())
 }
 
 async fn table_robot_tab(
     Path((_table, seat)): Path<(String, String)>,
-) -> Result<Response, NotFound> {
+) -> Result<Page<RobotPage>, NotFound> {
     parse_seat(&seat)?;
-    Ok(html(&RobotPage))
+    Ok(Page(RobotPage))
 }
 
 async fn random_seat(State(app): State<AppState>) -> Response {
