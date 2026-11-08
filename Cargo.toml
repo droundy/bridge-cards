@@ -45,5 +45,6 @@ harness = false
 members = [
     "abridge",
     "bridge-solver",
-    "robot"
+    "robot",
+    "wording"
 ]

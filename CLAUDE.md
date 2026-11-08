@@ -4,17 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workspace layout
 
-A Cargo workspace with four crates, layered bottom to top:
+A Cargo workspace with four bridge crates, layered bottom to top, and one general-purpose crate:
 
 - **`bridge-deck`** (repo root, `src/`): the `Card` (8 bits) and `Cards` (64-bit set) types plus hand-evaluation helpers (`HandValuation`, `PerSuit`, `CardMap`). `#![deny(missing_docs)]` is on, so every public item needs a doc comment. HTML/UTF8 rendering lives behind the optional `display-as` feature (`src/display.rs`).
 - **`bridge-solver`**: a card-play solver (`Naive`, `Starting`, `Score`). It samples possible deals for the cards nobody can see.
 - **`robot`**: the game model (`GameState`, `Seat`, `Seated<T>`, `Bid`, `Action`) and the AI (`src/ai.rs`). It builds as an rlib and also as a `cdylib` for WebAssembly.
 - **`abridge`**: the axum web server for the online bridge game (abridgegame.com). `abridge/src/lib.rs` holds the tables, templates and websocket logic, and `abridge/src/axum_server.rs` holds the routes and TLS, whose certificate `rustls-acme` obtains from Let's Encrypt.
+- **`wording`**: builds English sentences from pieces that know their own grammar into a `Text`, the one type of phrase, which displays as HTML, UTF8 or LaTeX through display-as. Quantities (`count`, `at_least`, `between`, or `5 * noun`) make their head noun and their verbs agree, so a noun phrase reads the same in any sentence; a verb (`Word::verb`) added with `+` agrees with the subject of the text before it (`partner + Word::HAS + "bid"`; a clause inside a clause goes in parentheses), `+` spaces words that would otherwise run together, `a` picks "a" or "an" when displayed, and `and`, `or` and `then` join items. Every function takes its pieces as `impl Into<Text>` and returns a `Text`; the only other public types are `Word` (a `const` noun or verb), `Amount` (halves, as in "6½"), and `Markup`, `Form` and `Number` for markup. It knows nothing about bridge, so that it can move to its own repository later; a type such as a bid or a suit implements `wording::Markup`, which has one method per format, and calls `wording::markup!` so that it multiplies into quantities and starts a text with `+` (nothing in bridge does yet). A text that starts with a verb is a predicate whose verbs all agree with the subject it is added to, so a relative clause on its object, as in "has a card that is high", goes in `a`, `count` or parentheses. There is no `text!` macro: a text starts from a `Word`, markup, a string followed by a `Word` or `Text`, or `Text::from(...)`.
 
 ## Commands
 
 ```bash
-cargo test -p bridge-deck -p bridge-solver -p robot   # all real tests (avoid --workspace, see below)
+cargo test -p bridge-deck -p bridge-solver -p robot -p wording   # all real tests (avoid --workspace, see below)
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
