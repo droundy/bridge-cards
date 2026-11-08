@@ -405,7 +405,12 @@ impl Candidate {
         }
         let (min, max) = self.meaning.bounds();
         let mut words = describe(&min, &max);
-        words.extend(fitting_shape(&self.meaning, hand));
+        for shape in fitting_shape(&self.meaning, hand) {
+            // A balanced hand may be asked for by the bounds as well.
+            if !words.iter().any(|w| w.to_string() == shape.to_string()) {
+                words.push(shape);
+            }
+        }
         let mut reason = Text::new();
         if !words.is_empty() {
             reason += Text::from("It shows") + and(words) + ".";
