@@ -17,7 +17,7 @@ A Cargo workspace with four crates, layered bottom to top:
 cargo test -p bridge-deck -p bridge-solver -p robot   # all real tests (avoid --workspace, see below)
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
-cargo run -p robot --release --bin booklet -- sayc 10000 20   # sketch of a booklet for a system
+cargo run -p robot --release --bin booklet -- sayc          # sketch of a booklet for a system (~2 min)
 ./run.sh                                               # build robot wasm, then run the server on :8087
 ```
 
