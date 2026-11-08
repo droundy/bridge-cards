@@ -155,6 +155,23 @@ pub(crate) struct Described {
 }
 
 impl Described {
+    /// A bid with the entries that describe it, as `Convention::described_bids`
+    /// makes them.
+    #[cfg(test)]
+    pub(crate) fn new(bid: Bid, meaning: Convention, entries: Vec<(usize, Convention)>) -> Self {
+        Described {
+            bid,
+            meaning,
+            entries,
+        }
+    }
+    /// Every way a hand can fit this bid, entry by entry in table order.
+    pub(crate) fn ways(&self) -> Vec<booklet::Way> {
+        self.entries
+            .iter()
+            .flat_map(|(_, c)| booklet::Way::of(c))
+            .collect()
+    }
     /// The position in the table of the entry the robot goes by for `hand`: the
     /// first of the entries that describes this bid and fits it.
     fn rank(&self, hand: &HandValuation) -> Option<usize> {
@@ -195,7 +212,7 @@ impl Convention {
             *bids.last_mut().unwrap() = bid;
             let auction = bids_string(&bids);
             let default = self.default_for(&auction);
-            let mut entries: Vec<(usize, Convention)> = self
+            let entries: Vec<(usize, Convention)> = self
                 .candidates(&auction)
                 .into_iter()
                 .filter(|&i| self.entries()[i].matches(&auction, &bids))
@@ -443,7 +460,7 @@ pub enum Forcing {
 impl DisplayAs<HTML> for Forcing {}
 
 /// A rule about the shape of a hand that bounds on each suit cannot say.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ShapeRule {
     /// The first suit is at least as long as the second.
     AtLeastAsLong(Suit, Suit),

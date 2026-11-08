@@ -8,9 +8,11 @@
 //! reached in several ways.  Which auctions come up, and how often each call is
 //! made, come from letting the robot bid seeded random deals.
 
-use super::{robot_choice, seeded_hands, Convention, Described, Forcing};
+use super::{robot_choice, seeded_hands, Convention, Described, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::HandValuation;
+#[cfg(test)]
+use display_as::{format_as, HTML};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -35,25 +37,64 @@ struct Auction {
     calls: HashMap<Bid, u64>,
 }
 
-/// What a call means after some auction: the convention it matches, with its
-/// bounds once the auction has refined them, and how forcing it is.  Auctions
-/// whose calls all mean the same go on one page.
+/// One way a hand can fit a call: bounds on its values, and rules about its
+/// shape.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct Way {
+    min: HandValuation,
+    max: HandValuation,
+    shape: Vec<ShapeRule>,
+}
+
+impl Way {
+    /// The ways a hand can fit `convention`.
+    pub(super) fn of(convention: &Convention) -> Vec<Way> {
+        match convention {
+            Convention::Simple { min, max, .. }
+            | Convention::Natural { min, max, .. }
+            | Convention::Forced { min, max, .. } => vec![Way {
+                min: *min,
+                max: *max,
+                shape: Vec::new(),
+            }],
+            Convention::Rule { fits, .. } => fits
+                .iter()
+                .map(|f| Way {
+                    min: f.min,
+                    max: f.max,
+                    shape: f.shape.clone(),
+                })
+                .collect(),
+            Convention::Either(options) => options.iter().flat_map(Way::of).collect(),
+            Convention::Ordered { .. } => Vec::new(),
+        }
+    }
+}
+
+/// What a call means after some auction: the convention it matches, how
+/// forcing it is, and every way a hand can fit it once the auction has refined
+/// the bounds, in the order of the table entries that say so, since that is
+/// the order the robot goes by.  Auctions whose calls all mean the same go on
+/// one page.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Meaning {
     call: Bid,
     name: String,
     forcing: Forcing,
+    ways: Vec<Way>,
+    /// The bounds that every way lies within, which the sketch shows.
     min: HandValuation,
     max: HandValuation,
 }
 
 impl Meaning {
-    fn new(call: Bid, convention: &Convention) -> Self {
-        let (min, max) = convention.bounds();
+    fn new(described: &Described) -> Self {
+        let (min, max) = described.meaning.bounds();
         Meaning {
-            call,
-            name: convention.name().into_string(),
-            forcing: convention.is_forcing(),
+            call: described.bid,
+            name: described.meaning.name().into_string(),
+            forcing: described.meaning.is_forcing(),
+            ways: described.ways(),
             min,
             max,
         }
@@ -110,9 +151,7 @@ impl Booklet {
             // is the same entry.
             let mut in_order: Vec<&Described> = auction.described.iter().collect();
             in_order.sort_by_key(|d| d.position());
-            let table = in_order
-                .into_iter()
-                .map(|d| Meaning::new(d.bid, &d.meaning));
+            let table = in_order.into_iter().map(Meaning::new);
             by_table
                 .entry(table.collect())
                 .or_default()
@@ -143,7 +182,9 @@ impl Booklet {
         self.number_pages();
         let mut numbered = vec![false; self.pages.len()];
         let mut order = Vec::new();
-        let mut stack = vec![self.page_of[&Vec::new()]];
+        // With too few deals the opening may not have a page, and then there
+        // are no pages to put in order.
+        let mut stack: Vec<usize> = self.page_of.get(&Vec::new()).copied().into_iter().collect();
         while let Some(page) = stack.pop() {
             if std::mem::replace(&mut numbered[page], true) {
                 continue;
@@ -429,4 +470,59 @@ fn the_booklet_chooses_the_calls_the_robot_makes() {
             }
         }
     }
+}
+
+#[test]
+fn too_few_deals_make_an_empty_booklet() {
+    // The opening is reached once a deal, so none of 3 deals reaches it 4 times.
+    let booklet = Booklet::new(&Convention::sayc(), 3, 4);
+    assert!(booklet.pages.is_empty());
+    assert!(booklet.to_string().starts_with("0 pages"));
+    assert!(Booklet::new(&Convention::sayc(), 0, 1).pages.is_empty());
+}
+
+#[test]
+fn calls_with_different_shape_rules_do_not_mean_the_same() {
+    use super::Fit;
+    use bridge_deck::Suit::{Hearts, Spades};
+    use regex::RegexSet;
+    let entry = |rule: ShapeRule| Convention::Rule {
+        regex: RegexSet::new(["1S"]).unwrap(),
+        the_description: format_as!(HTML, ""),
+        the_name: "Opening bid",
+        fits: vec![Fit::new(HandValuation::MIN, HandValuation::MAX).with(rule)],
+        forcing: Forcing::Passable,
+    };
+    let described = |rule: ShapeRule| {
+        let meaning = entry(rule);
+        Described::new(Bid::Pass, meaning.clone(), vec![(0, meaning)])
+    };
+    let longer = Meaning::new(&described(ShapeRule::Longer(Spades, Hearts)));
+    let as_long = Meaning::new(&described(ShapeRule::AtLeastAsLong(Spades, Hearts)));
+    // The name and the hull of the bounds are the same.
+    assert_eq!(longer.name, as_long.name);
+    assert_eq!((longer.min, longer.max), (as_long.min, as_long.max));
+    assert!(longer != as_long);
+    assert!(longer == Meaning::new(&described(ShapeRule::Longer(Spades, Hearts))));
+}
+
+/// Prints a booklet for a bidding system, as a sketch to read:
+/// `cargo test -p robot --release print_booklet -- --ignored --nocapture`.
+/// `BOOKLET_SYSTEM` picks the system by name (SAYC by default) and
+/// `BOOKLET_DEALS` the number of deals (100,000, which takes about two
+/// minutes).  A page is kept for each auction reached in 1 of 1,000 deals.
+#[test]
+#[ignore]
+fn print_booklet() {
+    let name = std::env::var("BOOKLET_SYSTEM").unwrap_or_else(|_| "SAYC".to_string());
+    let system = super::BiddingSystem::ALL
+        .iter()
+        .find(|s| s.name().eq_ignore_ascii_case(&name))
+        .unwrap_or_else(|| panic!("no bidding system called {}", name));
+    let deals = std::env::var("BOOKLET_DEALS")
+        .map_or(100_000, |d| d.parse().expect("BOOKLET_DEALS is a number"));
+    println!(
+        "{}",
+        Booklet::new(&system.convention(), deals, deals / 1000)
+    );
 }
