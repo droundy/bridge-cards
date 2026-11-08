@@ -1,0 +1,7 @@
+[% for line in self.situation.iter() { %]<p>[% line %]</p>
+[% } %]<p class="suggestion">[% self.suggestion %]</p>
+[% if !self.others.is_empty() { %]<table>[%
+    for (strain, text) in self.others.iter() { %]
+    <tr><th>[% strain %]</th><td>[% text %]</td></tr>[%
+    } %]
+</table>[% } %]

@@ -19,9 +19,21 @@
     ws.onopen = function () {
         console.log('connected');
     };
+    // Whether the player last left the bidding advice open, so that it stays
+    // that way when the page is replaced.
+    var advice_open = false;
+    document.addEventListener('toggle', function (event) {
+        if (event.target.id == 'advice') {
+            advice_open = event.target.open;
+        }
+    }, true);
     ws.onmessage = function (event) {
         console.log('got html data');
         document.getElementById('main').innerHTML = event.data;
+        let advice = document.getElementById('advice');
+        if (advice) {
+            advice.open = advice_open;
+        }
     };
     ws.onclose = function (event) {
         console.log('disconnected');

@@ -125,22 +125,9 @@ impl BidAI for ConventionalBid {
         let mut best: Option<(usize, Bid, Convention)> = None;
         for b in legal_bids(history).into_iter().rev() {
             *bids.last_mut().unwrap() = b;
-            let auction = bids_string(&bids);
-            let default = self.0.default_for(&auction);
-            for i in self.0.candidates(&auction) {
-                if best.as_ref().is_some_and(|&(j, _, _)| j <= i) {
-                    break;
-                }
-                let entry = &self.0.entries()[i];
-                if !entry.matches(&auction, &bids) {
-                    continue;
-                }
-                if let Some(c) = self.0.resolve(i, &auction, &bids, default) {
-                    if c.fits(&hand) {
-                        best = Some((i, b, c));
-                        break;
-                    }
-                }
+            let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
+            if let Some((i, c)) = self.0.first_fit(&bids, &hand, before) {
+                best = Some((i, b, c));
             }
         }
         if let Some((_, b, c)) = best {
@@ -153,6 +140,36 @@ impl BidAI for ConventionalBid {
         } else {
             Bid::Pass
         }
+    }
+}
+
+impl Convention {
+    /// The first entry of this table before the one at `before` that
+    /// describes the last of `bids` and fits `hand`, with its index and what it
+    /// says about that bid.  The robot bids the legal bid whose entry comes
+    /// first.
+    pub(crate) fn first_fit(
+        &self,
+        bids: &[Bid],
+        hand: &HandValuation,
+        before: usize,
+    ) -> Option<(usize, Convention)> {
+        let auction = bids_string(bids);
+        let default = self.default_for(&auction);
+        for i in self.candidates(&auction) {
+            if before <= i {
+                break;
+            }
+            if !self.entries()[i].matches(&auction, bids) {
+                continue;
+            }
+            if let Some(c) = self.resolve(i, &auction, bids, default) {
+                if c.fits(hand) {
+                    return Some((i, c));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -337,6 +354,7 @@ impl PlayAI for RandomPlay {
 }
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
+mod advice;
 mod sayc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -944,6 +962,17 @@ impl Convention {
                     .collect::<Vec<_>>()
                     .join(OR),
             ),
+        }
+    }
+    /// Name of the convention, as plain text.
+    pub(crate) fn the_name(&self) -> &'static str {
+        match self {
+            Convention::Simple { the_name, .. }
+            | Convention::Rule { the_name, .. }
+            | Convention::Natural { the_name, .. }
+            | Convention::Forced { the_name, .. }
+            | Convention::Ordered { the_name, .. } => the_name,
+            Convention::Either(options) => options[0].the_name(),
         }
     }
     /// Name of the convention

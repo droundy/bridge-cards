@@ -104,6 +104,34 @@ fn bids_go_from_one_to_seven() {
 #[with_template("[%" "%]" "bid.html")]
 impl<'a> DisplayAs<HTML> for Bid {}
 
+/// A bid as `wording::Markup`, so that it goes into sentences.  It is not a
+/// noun, so it is always singular.
+impl wording::Markup for Bid {
+    fn html(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        <Bid as DisplayAs<HTML>>::fmt(self, f)
+    }
+    fn utf8(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Bid::Pass => f.write_str("Pass"),
+            Bid::Double => f.write_str("X"),
+            Bid::Redouble => f.write_str("XX"),
+            Bid::Suit(level, suit) => write!(f, "{}{}", level, suit.unicode()),
+            Bid::NT(level) => write!(f, "{}NT", level),
+        }
+    }
+    fn latex(&self, form: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Bid::Suit(level, suit) => {
+                write!(f, "{}", level)?;
+                wording::Markup::latex(suit, form, f)
+            }
+            bid => wording::Markup::utf8(bid, form, f),
+        }
+    }
+}
+
+wording::markup!(Bid);
+
 impl Bid {
     pub fn level(self) -> Option<usize> {
         match self {
@@ -271,6 +299,13 @@ impl<C> GameState<C> {
     }
     pub fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
         self.conventions[0].refine2(bid, otherbids).is_some()
+    }
+    /// Advice for `seat` on its next bid, when it is that seat's turn to bid.
+    pub fn bidding_advice(&self, seat: Seat) -> Option<impl DisplayAs<HTML>> {
+        if self.bidder() != Some(seat) {
+            return None;
+        }
+        Some(self.conventions[0].advice(&self.bids, self.hands[seat]))
     }
     /// Notes that something just happened at this table.
     pub fn touch(&mut self) {
