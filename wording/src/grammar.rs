@@ -1,4 +1,4 @@
-use crate::{text, AddTo, Text};
+use crate::{text, Text};
 use std::fmt::{self, Display, Formatter};
 
 /// Whether something is one or many, which nouns and verbs agree with.
@@ -67,9 +67,11 @@ impl Word {
     }
 }
 
-impl AddTo for Word {
-    fn add_to(self, text: &mut Text) {
-        text.push_word(self);
+impl From<Word> for Text {
+    fn from(word: Word) -> Self {
+        let mut text = Text::new();
+        text.push_word(word);
+        text
     }
 }
 
@@ -82,7 +84,7 @@ impl AddTo for Word {
 /// its own verbs, as in "you know that partner has 5+ spades", and so does a
 /// noun phrase, whose verbs agree with it, as in "you have a hand that is
 /// balanced".
-pub fn agree(subject: impl AddTo, predicate: impl AddTo) -> Text {
+pub fn agree(subject: impl Into<Text>, predicate: impl Into<Text>) -> Text {
     let subject = text!(subject);
     let mut predicate = text!(predicate);
     predicate.settle_verbs(subject.number());
@@ -93,7 +95,7 @@ pub fn agree(subject: impl AddTo, predicate: impl AddTo) -> Text {
 /// `numbered("partner", Number::Singular)` or `numbered("you",
 /// Number::Plural)`.  Its first noun and its verbs agree with `number`, and
 /// so do the verbs [`agree`] gives it.
-pub fn numbered(phrase: impl AddTo, number: Number) -> Text {
+pub fn numbered(phrase: impl Into<Text>, number: Number) -> Text {
     let mut text = text!(phrase);
     text.settle(number);
     text
@@ -102,16 +104,17 @@ pub fn numbered(phrase: impl AddTo, number: Number) -> Text {
 /// How many there are of something: a whole number such as `Amount::from(5)`,
 /// or a number of halves such as `Amount::halves(13)` for "6½".
 ///
-/// A negative `i32` panics.  `i32` is there so that a plain `5` can be an
-/// amount.
+/// `i32` converts too, so that a plain `5` can be an amount.  A negative
+/// amount is shown as it is, as in "-1 cards", rather than panicking in the
+/// middle of displaying a sentence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Amount {
-    halves: u64,
+    halves: i64,
 }
 
 impl Amount {
     /// `n` halves, as in `Amount::halves(13)` for "6½".
-    pub const fn halves(n: u64) -> Self {
+    pub const fn halves(n: i64) -> Self {
         Amount { halves: n }
     }
     fn is_zero(self) -> bool {
@@ -130,10 +133,12 @@ impl Amount {
 
 impl Display for Amount {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match (self.halves / 2, self.halves % 2) {
-            (0, 1) => f.write_str("½"),
-            (whole, 1) => write!(f, "{whole}½"),
-            (whole, _) => write!(f, "{whole}"),
+        let sign = if self.halves < 0 { "-" } else { "" };
+        let halves = self.halves.unsigned_abs();
+        match (halves / 2, halves % 2) {
+            (0, 1) => write!(f, "{sign}½"),
+            (whole, 1) => write!(f, "{sign}{whole}½"),
+            (whole, _) => write!(f, "{sign}{whole}"),
         }
     }
 }
@@ -142,8 +147,8 @@ macro_rules! amount_from {
     ($($int:ty),*) => {
         $(impl From<$int> for Amount {
             fn from(n: $int) -> Self {
-                let n = u64::try_from(n).expect("an amount is never negative");
-                Amount::halves(n.checked_mul(2).expect("an amount fits in 63 bits"))
+                let halves = i64::try_from(n).ok().and_then(|n| n.checked_mul(2));
+                Amount::halves(halves.expect("an amount fits in 62 bits"))
             }
         })*
     };
@@ -152,10 +157,10 @@ amount_from!(u8, u16, u32, u64, usize, i32);
 
 /// `amount`, then `noun`, as a noun phrase that is one or many as `number`
 /// says.
-fn quantity(amount: impl Display, number: Number, noun: impl AddTo) -> Text {
+fn quantity(amount: impl Display, number: Number, noun: impl Into<Text>) -> Text {
     let mut text = Text::new();
     text.push_words(&format!("{amount} "));
-    noun.add_to(&mut text);
+    text += noun;
     text.settle(number);
     text
 }
@@ -190,7 +195,7 @@ fn quantity(amount: impl Display, number: Number, noun: impl AddTo) -> Text {
 ///
 /// [`Word`] and [`Text`] multiply already, and
 /// [`countable!`](crate::countable!) makes your own markup multiply.
-pub fn count(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+pub fn count(n: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     let n = n.into();
     if n.is_zero() {
         quantity("no", Number::Plural, noun)
@@ -200,13 +205,13 @@ pub fn count(n: impl Into<Amount>, noun: impl AddTo) -> Text {
 }
 
 /// `n` or more of `noun`, as in "5+ spades".
-pub fn at_least(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+pub fn at_least(n: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     quantity(format_args!("{}+", n.into()), Number::Plural, noun)
 }
 
 /// `n` or fewer of `noun`, as in "at most 1 spade", or "no spades" when `n`
 /// is zero.
-pub fn at_most(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+pub fn at_most(n: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     let n = n.into();
     if n.is_zero() {
         count(n, noun)
@@ -218,7 +223,7 @@ pub fn at_most(n: impl Into<Amount>, noun: impl AddTo) -> Text {
 /// From `lo` to `hi` of `noun`, as in "6–9 points".  When `lo` is zero it is
 /// [`at_most`], and when the two are equal it is "exactly 4 points" (or "no
 /// points").
-pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl AddTo) -> Text {
+pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     let (lo, hi) = (lo.into(), hi.into());
     if lo == hi && !lo.is_zero() {
         quantity(format_args!("exactly {lo}"), lo.number(), noun)
@@ -235,7 +240,7 @@ pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl AddTo) -
 ///
 /// [`Word`] and [`Text`] already multiply.  Use this for markup of your own,
 /// as in `wording::countable!(Suit)`.  Rust allows these impls only in the
-/// crate that defines the noun's type.  A negative number panics.
+/// crate that defines the noun's type.  A negative number is shown as it is.
 ///
 /// A range of any integer type has one impl, so its product is known to be a
 /// [`Text`] at once:
@@ -308,10 +313,10 @@ countable!(Text);
 /// ("a one", "a unit", "a European"), for numbers ("an 8", "an 11", "an
 /// 18"), and for initials ("an NT bid", "an HCP").  Other exceptions need the
 /// article written out.
-pub fn a(phrase: impl AddTo) -> Text {
+pub fn a(phrase: impl Into<Text>) -> Text {
     let mut text = Text::new();
     text.push_article();
-    phrase.add_to(&mut text);
+    text += phrase;
     text.settle(Number::Singular);
     text
 }
