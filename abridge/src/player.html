@@ -1,4 +1,13 @@
 [% use Seat::*; %]
+<div class="systems">Bidding system:
+[% for system in robot::BiddingSystem::ALL {
+    if self.game.bids.is_empty() { %]
+    <button [% Action::SetSystem(system) %][% if system == self.game.system { %] disabled[% } %]>[% system.name() %]</button>[%
+    } else if system == self.game.system { %]
+    <strong>[% system.name() %]</strong>[%
+    }
+} %]
+</div>
 <table class="bidhistory">
     <tr>[% let who = self.game.dealer; %]
         <th>[% who.name() %]</th>

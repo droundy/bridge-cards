@@ -150,8 +150,25 @@ impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
 type WsSender = mpsc::UnboundedSender<Message>;
 
+/// Names as robots the seats the robot plays: every seat nobody is
+/// connected to, while a robot tab is, including one whose page was loaded
+/// but never connected.  Returns whether any name changed.
+fn name_robot_seats(g: &mut GameState<WsSender>) -> bool {
+    let mut changed = false;
+    if g.ai.is_some() {
+        for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
+            if g.connections[seat].is_none() && !matches!(g.names[seat], PlayerName::Robot(_)) {
+                g.names[seat] = PlayerName::Robot(random_name());
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 async fn ws_connected(
     myseat: Option<Seat>,
+    name: Option<String>,
     ws: WebSocket,
     game: Arc<RwLock<GameState<WsSender>>>,
     table_updates: Sender<()>,
@@ -167,10 +184,18 @@ async fn ws_connected(
         let mut g = game.write().await;
         if let Some(seat) = myseat {
             g.connections[seat] = Some(tx.clone());
+            // The seat is taken now, under the name from the cookie, or else
+            // the one its page showed.
+            g.names[seat] = PlayerName::Human(match (name, &g.names[seat]) {
+                (Some(name), _) => name,
+                (None, PlayerName::Human(shown)) => shown.clone(),
+                (None, _) => random_name(),
+            });
         } else {
             g.ai = Some(tx.clone());
         }
         g.touch();
+        name_robot_seats(&mut g);
         send_player_updates(&g);
         println!("sending table update: {:?}", table_updates.send(()).is_ok());
     }
@@ -212,6 +237,12 @@ async fn ws_connected(
                     Action::ToggleCountForMe => {
                         if let Some(myseat) = myseat {
                             g.count_for_me[myseat] = !g.count_for_me[myseat];
+                        }
+                    }
+                    Action::SetSystem(system) => {
+                        if g.bids.is_empty() {
+                            g.set_system(system);
+                            println!("sending table update: {:?}", table_updates.send(()).is_ok());
                         }
                     }
                     Action::Redeal => {
@@ -261,11 +292,8 @@ async fn ws_connected(
                     }
                 }
                 g.touch();
-                for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
-                    if g.names[seat] == PlayerName::None && g.connections[seat].is_none() && g.ai.is_some() {
-                        g.names[seat] = PlayerName::Robot(random_name());
-                        println!("sending table update: {:?}", table_updates.send(()).is_ok());
-                    }
+                if name_robot_seats(&mut g) {
+                    println!("sending table update: {:?}", table_updates.send(()).is_ok());
                 }
                 send_player_updates(&g);
             }
