@@ -351,3 +351,43 @@ fn text_is_send_and_sync() {
     fn send_and_sync<T: Send + Sync>() {}
     send_and_sync::<Text>();
 }
+
+#[test]
+fn predicates_with_objects_agree_with_their_subject() {
+    let partner = numbered("partner", Number::Singular);
+    let you = numbered("you", Number::Plural);
+    // The noun after the leading verb is its object, not the subject.
+    let forcing = || Word::HAS + (5..) * SPADES + "and" + Word::IS + "forcing";
+    assert_eq!(
+        (partner.clone() + forcing()).to_string(),
+        "partner has 5+ spades and is forcing"
+    );
+    assert_eq!(
+        (you.clone() + forcing()).to_string(),
+        "you have 5+ spades and are forcing"
+    );
+    // A relative clause on the object goes in `a`, so it keeps its own verb.
+    let led = Word::HAS + a(CARD + "that" + Word::IS + "high") + "and" + Word::IS + "forcing";
+    assert_eq!(
+        (you + led).to_string(),
+        "you have a card that is high and are forcing"
+    );
+}
+
+#[test]
+fn closing_punctuation_takes_a_space() {
+    assert_eq!((Text::from("(maybe)") + "then").to_string(), "(maybe) then");
+    assert_eq!((Text::from("pass,") + "bid").to_string(), "pass, bid");
+    assert_eq!(
+        (Text::from("Say \"") + "pass\"").to_string(),
+        "Say \"pass\""
+    );
+    assert_eq!((Text::from("(") + "maybe)").to_string(), "(maybe)");
+}
+
+#[test]
+fn amounts_and_ranges_are_forgiving() {
+    assert_eq!(between(9, 6, CARD).to_string(), "6–9 cards");
+    // Too big to fit, so clamped rather than panicking.
+    let _ = count(u64::MAX, CARD).to_string();
+}

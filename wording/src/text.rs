@@ -27,7 +27,10 @@ use std::sync::Arc;
 /// [`number`](Text::number)), and plain words such as "partner" are
 /// singular.  It agrees with the number that subject ends up with, so a
 /// relative clause such as "that is high" follows the quantity it is later
-/// counted by.  `+` puts a space where letters or digits would otherwise
+/// counted by.  A text that starts with a verb is a predicate, whose verbs
+/// all agree with the subject it is added to, so a relative clause on its
+/// object, as in "has a card that is high", goes in [`a`](crate::a),
+/// [`count`](crate::count) or parentheses.  `+` puts a space where letters or digits would otherwise
 /// run together, counting a [`Word`] or markup as letters, and leaves
 /// punctuation and spaces already there alone, so words can be added
 /// directly:
@@ -167,11 +170,7 @@ impl Text {
     }
     /// Is there nothing to display?
     pub fn is_empty(&self) -> bool {
-        self.pieces.iter().all(|p| match p {
-            Piece::Words(w) => w.is_empty(),
-            Piece::Number(_) | Piece::Capital | Piece::Article => true,
-            Piece::Word(..) | Piece::Markup(..) => false,
-        })
+        self.pieces.iter().all(is_marker)
     }
     /// Whether this is one or many as the subject of a verb.
     ///
@@ -401,13 +400,14 @@ impl Text {
     /// What the free verbs of a text added with `+` agree with: this text's
     /// subject, or the singular when it has none, as for "partner".  They
     /// stay free when nothing is shown yet, or when this text starts with a
-    /// free verb, since then it is a predicate whose subject is still to come.
+    /// free verb, since then it is a predicate whose subject is still to come
+    /// (a noun after that verb is its object, not the subject).
     fn free_verbs_agree_with(&self) -> FreeVerbs {
-        match (self.subject(), self.first_shown()) {
-            (_, None) => FreeVerbs::Stay,
-            (Some(subject), _) => FreeVerbs::Subject(subject),
-            (None, Some(Piece::Word(w, Agreement::Free))) if !w.is_noun() => FreeVerbs::Stay,
-            (None, _) => FreeVerbs::Singular,
+        match (self.first_shown(), self.subject()) {
+            (None, _) => FreeVerbs::Stay,
+            (Some(Piece::Word(w, Agreement::Free)), _) if !w.is_noun() => FreeVerbs::Stay,
+            (_, Some(subject)) => FreeVerbs::Subject(subject),
+            (_, None) => FreeVerbs::Singular,
         }
     }
     /// Adds the pieces of `other`, settling its free verbs as `verbs` says.
@@ -433,10 +433,15 @@ impl Text {
     }
     /// Does a space go between this and `other`?  It does where letters or
     /// digits would otherwise run together, counting a [`Word`] or markup as
-    /// letters, so punctuation and spaces already there are left alone.
+    /// letters, so punctuation and spaces already there are left alone, except
+    /// that a word goes after a comma, a full stop or a closing bracket with
+    /// a space.  Quotes are left alone, since an opening quote takes none.
     fn needs_space_before(&self, other: &Text) -> bool {
         let left = match self.pieces.iter().rev().find(|p| !is_marker(p)) {
-            Some(Piece::Words(w)) => w.ends_with(char::is_alphanumeric),
+            Some(Piece::Words(w)) => {
+                w.ends_with(char::is_alphanumeric)
+                    || w.ends_with([',', ';', ':', '.', '?', '!', ')', ']'])
+            }
             Some(_) => true,
             None => false,
         };

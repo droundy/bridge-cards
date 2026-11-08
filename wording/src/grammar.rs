@@ -10,17 +10,6 @@ pub enum Number {
     Plural,
 }
 
-impl Number {
-    /// The number for a count of `n`: singular only for one.
-    pub fn of(n: u64) -> Self {
-        if n == 1 {
-            Number::Singular
-        } else {
-            Number::Plural
-        }
-    }
-}
-
 /// A noun such as "point" and "points", or a verb such as "is" and "are".
 ///
 /// A noun agrees with the amount of a quantity it is the head of.  A verb
@@ -89,8 +78,9 @@ pub fn numbered(phrase: impl Into<Text>, number: Number) -> Text {
 /// or a number of halves such as `Amount::halves(13)` for "6½".
 ///
 /// `i32` converts too, so that a plain `5` can be an amount.  A negative
-/// amount is shown as it is, as in "-1 cards", rather than panicking in the
-/// middle of displaying a sentence.
+/// amount is shown as it is, as in "-1 cards", and one too big to fit is
+/// clamped to the largest amount, rather than panicking in the middle of
+/// building or displaying a sentence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Amount {
     halves: i64,
@@ -131,8 +121,7 @@ macro_rules! amount_from {
     ($($int:ty),*) => {
         $(impl From<$int> for Amount {
             fn from(n: $int) -> Self {
-                let halves = i64::try_from(n).ok().and_then(|n| n.checked_mul(2));
-                Amount::halves(halves.expect("an amount fits in 62 bits"))
+                Amount::halves(i64::try_from(n).unwrap_or(i64::MAX).saturating_mul(2))
             }
         })*
     };
@@ -207,9 +196,10 @@ pub fn at_most(n: impl Into<Amount>, noun: impl Into<Text>) -> Text {
 
 /// From `lo` to `hi` of `noun`, as in "6–9 points".  When `lo` is zero it is
 /// [`at_most`], and when the two are equal it is "exactly 4 points" (or "no
-/// points").
+/// points").  The two may come in either order.
 pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl Into<Text>) -> Text {
     let (lo, hi) = (lo.into(), hi.into());
+    let (lo, hi) = if lo > hi { (hi, lo) } else { (lo, hi) };
     if lo == hi && !lo.is_zero() {
         quantity(format_args!("exactly {lo}"), lo.number(), noun)
     } else if lo.is_zero() {
