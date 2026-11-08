@@ -211,17 +211,11 @@ impl Convention {
         for bid in legal_bids(history).into_iter().rev() {
             *bids.last_mut().unwrap() = bid;
             let auction = bids_string(&bids);
-            let default = self.default_for(&auction);
-            let entries: Vec<(usize, Convention)> = self
-                .candidates(&auction)
-                .into_iter()
-                .filter(|&i| self.entries()[i].matches(&auction, &bids))
-                .filter_map(|i| self.resolve(i, &auction, &bids, default).map(|c| (i, c)))
-                .collect();
-            let meaning = match entries.len() {
-                0 => continue,
-                1 => entries[0].1.clone(),
-                _ => Convention::Either(entries.iter().map(|(_, c)| c.clone()).collect()),
+            let entries: Vec<(usize, Convention)> = self.describing(&auction, &bids).collect();
+            let found = entries.iter().map(|(_, c)| c.clone()).collect();
+            let meaning = match Convention::either(found) {
+                Some(meaning) => meaning,
+                None => continue,
             };
             described.push(Described {
                 bid,
@@ -243,21 +237,11 @@ impl Convention {
         before: usize,
     ) -> Option<(usize, Convention)> {
         let auction = bids_string(bids);
-        let default = self.default_for(&auction);
-        for i in self.candidates(&auction) {
-            if before <= i {
-                break;
-            }
-            if !self.entries()[i].matches(&auction, bids) {
-                continue;
-            }
-            if let Some(c) = self.resolve(i, &auction, bids, default) {
-                if c.fits(hand) {
-                    return Some((i, c));
-                }
-            }
-        }
-        None
+        let first = self
+            .describing(&auction, bids)
+            .take_while(|&(i, _)| i < before)
+            .find(|(_, c)| c.fits(hand));
+        first
     }
 }
 
@@ -809,13 +793,31 @@ impl Convention {
     /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
-        let default = self.default_for(&auction);
-        let mut found: Vec<Convention> = self
-            .candidates(&auction)
-            .into_iter()
-            .filter(|&i| self.entries()[i].matches(&auction, actual_bids))
-            .filter_map(|i| self.resolve(i, &auction, actual_bids, default))
+        let found = self
+            .describing(&auction, actual_bids)
+            .map(|(_, c)| c)
             .collect();
+        Convention::either(found)
+    }
+    /// The entries of this table that describe the last of `bids`, whose
+    /// `bids_string` is `auction`, each with its index in the table, in table
+    /// order.  They are found as they are asked for, so a caller that stops at
+    /// the first one it wants goes no further.
+    fn describing<'a>(
+        &'a self,
+        auction: &'a str,
+        bids: &'a [Bid],
+    ) -> impl Iterator<Item = (usize, Convention)> + 'a {
+        let default = self.default_for(auction);
+        self.candidates(auction)
+            .into_iter()
+            .filter(move |&i| self.entries()[i].matches(auction, bids))
+            .filter_map(move |i| self.resolve(i, auction, bids, default).map(|c| (i, c)))
+    }
+    /// What a bid means given the entries `found` that describe it: that
+    /// entry, or `Either` of them when there are several.  `None` if there are
+    /// none.
+    fn either(mut found: Vec<Convention>) -> Option<Convention> {
         match found.len() {
             0 => None,
             1 => found.pop(),
