@@ -93,8 +93,8 @@ impl Sheet {
             forcing,
         });
     }
-    /// The entries that `add` makes, which were written for the rule
-    /// Sheets bids by (see `Convention::most_forcing_then_highest`).
+    /// The entries that `add` makes, which were written to be sorted the
+    /// way Sheets is (see `Convention::most_forcing_then_highest`).
     fn add_block(&mut self, add: impl FnOnce(&mut Convention)) {
         let mut block = Convention::new("");
         add(&mut block);

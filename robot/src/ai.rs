@@ -139,9 +139,6 @@ impl BidAI for ConventionalBid {
                         break;
                     }
                 }
-                if self.0.overlap() == Overlap::FirstOnly {
-                    break;
-                }
             }
         }
         if let Some((_, b, c)) = best {
@@ -428,24 +425,12 @@ impl Fit {
     }
 }
 
-/// What happens when several entries of a table match the same bid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Overlap {
-    /// Every one of them describes it, so that a later one is a fallback for
-    /// hands that do not fit an earlier one.
-    Every,
-    /// Only the first of them describes it, and the others never apply to
-    /// that bid.  Sheets was written this way.
-    FirstOnly,
-}
-
 /// The meaning of bids, as a table of entries that each match auctions with
 /// a regex over `bids_string`.  The table is an `Ordered` list, and its order
 /// is the robot's order of preference: `ConventionalBid` bids the first entry
-/// that matches a legal bid and fits the hand.  Unless the table's `Overlap`
-/// says otherwise, every entry that matches a bid describes it, so a later
-/// entry for the same bid is a fallback, and what a bid tells partner is
-/// everything its entries allow.  `Natural` and `Forced` entries are
+/// that matches a legal bid and fits the hand.  Every entry that matches a
+/// bid describes it, so a later entry for the same bid is a fallback, and
+/// what a bid tells partner is everything its entries allow.  `Natural` and `Forced` entries are
 /// defaults, for bids that no other entry describes, and only the first of
 /// them to match a bid applies.
 ///
@@ -484,7 +469,6 @@ pub enum Convention {
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
-        overlap: Overlap,
     },
     /// Several entries that describe the same bid, of which the bidder may
     /// have used any.
@@ -650,13 +634,6 @@ impl Convention {
             None => self.applies(bids),
         }
     }
-    /// What happens when several entries of this table match one bid.
-    fn overlap(&self) -> Overlap {
-        match self {
-            Convention::Ordered { overlap, .. } => *overlap,
-            _ => Overlap::Every,
-        }
-    }
     /// The bounds that every way of fitting this bid lies within, which are
     /// what partner learns from it.
     fn bounds(&self) -> (HandValuation, HandValuation) {
@@ -693,23 +670,15 @@ impl Convention {
             .map_or(Forcing::Passable, |c| c.is_forcing())
     }
     /// What the last of `actual_bids` means: the entry that describes it, or
-    /// `Either` of them when several do (see `Overlap`).
+    /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
-        let mut matching = self
+        let mut found: Vec<Convention> = self
             .entries()
             .iter()
-            .filter(|entry| entry.matches(&auction, actual_bids));
-        let mut found: Vec<Convention> = if self.overlap() == Overlap::FirstOnly {
-            let first = matching.next()?;
-            self.resolve(first, &auction, actual_bids)
-                .into_iter()
-                .collect()
-        } else {
-            matching
-                .filter_map(|entry| self.resolve(entry, &auction, actual_bids))
-                .collect()
-        };
+            .filter(|entry| entry.matches(&auction, actual_bids))
+            .filter_map(|entry| self.resolve(entry, &auction, actual_bids))
+            .collect();
         match found.len() {
             0 => None,
             1 => found.pop(),
@@ -965,7 +934,6 @@ impl Convention {
         Convention::Ordered {
             the_name: name,
             conventions: Vec::new(),
-            overlap: Overlap::Every,
         }
     }
     /// Add another possibility to the OrderedConvention
@@ -979,7 +947,6 @@ impl Convention {
                 *self = Convention::Ordered {
                     conventions: vec![s, convention],
                     the_name: "",
-                    overlap: Overlap::Every,
                 }
             }
         }
@@ -1012,31 +979,21 @@ impl Convention {
         }
         entry
     }
-    /// This table, for one written to bid the most forcing bid that fits
-    /// and, among equally forcing bids, the highest, with the first entry
-    /// that matches a bid the only one for it.  Sheets was written that way.
-    /// The entries are sorted most forcing first and, among those, highest
-    /// bid first, and the table takes `Overlap::FirstOnly`.  An entry whose
-    /// regex names several bids becomes an entry for each, so that each has
-    /// one place in the order, and a pattern that repeats an earlier one is
-    /// dropped, since it never applied.  Seeded auctions bid this way are the
-    /// same as before tables were read in order.
+    /// This table, sorted most forcing first and, among equally forcing
+    /// entries, highest bid first, so that the robot bids the most forcing
+    /// bid that fits and, among those, the highest.  Sheets is written that
+    /// way.  An entry whose regex names several bids becomes an entry for
+    /// each, so that each has one place in the order.
     ///
     /// Panics if an entry's regex does not end in a bid.
     fn most_forcing_then_highest(self) -> Convention {
         let ranks = all_bids();
         let rank = |bid: Bid| ranks.iter().position(|&b| b == bid).unwrap();
         let mut keyed = Vec::new();
-        let mut seen = std::collections::HashSet::new();
         for entry in self.entries() {
             let regex = entry.regex().expect("only entries can be sorted");
             for pattern in regex.patterns() {
                 for pattern in expand_final_group(pattern) {
-                    if !seen.insert(pattern.clone()) {
-                        // An earlier entry has this very pattern, so this
-                        // one never described any bid.
-                        continue;
-                    }
                     let bid = final_bid(&pattern)
                         .unwrap_or_else(|| panic!("no final bid in {}", pattern));
                     let key = (entry.is_forcing(), rank(bid));
@@ -1051,7 +1008,6 @@ impl Convention {
                 Convention::Ordered { the_name, .. } => the_name,
                 _ => "",
             },
-            overlap: Overlap::FirstOnly,
         }
     }
 }
@@ -1761,7 +1717,7 @@ impl Convention {
 
         sheets.add(Convention::Simple {
             the_name: "Opening bid",
-            regex: RegexSet::new([r"^(P )*1H$"]).unwrap(),
+            regex: RegexSet::new([r"^(P )?1H$"]).unwrap(),
             the_description: format_as!(HTML, Hearts "≥" Spades),
             max,
             min: HandValuation {
@@ -1772,7 +1728,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1S$"]).unwrap(),
+            regex: RegexSet::new([r"^(P )?1S$"]).unwrap(),
             the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Opening bid",
             max,
@@ -1784,7 +1740,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1C$"]).unwrap(),
+            regex: RegexSet::new([r"^(P )?1C$"]).unwrap(),
             the_description: format_as!(HTML, Clubs "≥" Diamonds),
             the_name: "Opening bid",
             max: max_no_5_major,
@@ -1796,7 +1752,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1D$"]).unwrap(),
+            regex: RegexSet::new([r"^(P )?1D$"]).unwrap(),
             the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Opening bid",
             max: max_no_5_major,
@@ -2071,42 +2027,26 @@ impl Convention {
 
         // Overcall bids and responses!
         for opening in Suit::ALL.iter().cloned() {
-            let (michaels_length, the_description) = match opening {
-                Clubs | Diamonds => ([0, 0, 5, 5], format_as!(HTML, "")),
-                Hearts => ([0, 0, 0, 5], format_as!(HTML, "5 in a minor")),
-                Spades => ([0, 0, 5, 0], format_as!(HTML, "5 in a minor")),
-            };
-            sheets.add(Convention::Simple {
-                the_name: "Michael's cuebid",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
-                    .unwrap(),
-                max: max.with_hcp(12),
-                min: HandValuation {
-                    length: michaels_length.into(),
-                    hcp: 9,
-                    ..min
-                },
-                the_description,
-                forcing: Forcing::Forcing,
-            });
-
-            sheets.add(Convention::Simple {
-                the_name: "Unusual 2NT",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
-                max: max.with_hcp(12),
-                min: HandValuation {
-                    length: match opening {
-                        Clubs => [0, 5, 5, 0],
-                        Diamonds => [5, 0, 5, 0],
-                        Hearts | Spades => [5, 5, 0, 0],
-                    }
-                    .into(),
-                    hcp: 9,
-                    ..min
-                },
-                the_description: format_as!(HTML, "9-12 hcp or 17+ hcp"),
-                forcing: Forcing::Forcing,
-            });
+            // This matches responder's 2NT, not an overcall, and over a
+            // major Jacoby 2NT is that bid.
+            if opening == Clubs || opening == Diamonds {
+                sheets.add(Convention::Simple {
+                    the_name: "Unusual 2NT",
+                    regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
+                    max: max.with_hcp(12),
+                    min: HandValuation {
+                        length: match opening {
+                            Clubs => [0, 5, 5, 0],
+                            _ => [5, 0, 5, 0],
+                        }
+                        .into(),
+                        hcp: 9,
+                        ..min
+                    },
+                    the_description: format_as!(HTML, "9-12 hcp or 17+ hcp"),
+                    forcing: Forcing::Forcing,
+                });
+            }
 
             for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
                 let mut min_overcall = min.with_hcp(9);
@@ -2756,8 +2696,7 @@ fn sheets_regexes_each_end_in_one_bid() {
         expand_final_group(r"^(P )*(1N [PX] 2|2N [PX] 3)C$")
     );
     // Sorting Sheets panics if any entry names more than one bid.
-    let sheets = Convention::sheets();
-    assert_eq!(Overlap::FirstOnly, sheets.overlap());
+    Convention::sheets();
 }
 
 #[test]
@@ -2916,4 +2855,47 @@ fn bids_with_several_entries_describe_them_all() {
     let description = description.into_string();
     assert!(description.contains("<em>or</em>"), "{}", description);
     assert!(description.contains("may be short"), "{}", description);
+}
+
+/// The places in seeded auctions where two entries of `convention` that are
+/// not defaults describe the same bid, with how often each occurs.
+#[cfg(test)]
+fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
+    let mut seen = std::collections::BTreeMap::new();
+    for (_, _, bids) in seeded_deals(convention.clone(), deals) {
+        for n in 0..bids.len() {
+            for b in legal_bids(&bids[..n]) {
+                let mut auction = bids[..n].to_vec();
+                auction.push(b);
+                let auction = bids_string(&auction);
+                let matching: Vec<String> = convention
+                    .entries()
+                    .iter()
+                    .filter(|e| matches!(e, Convention::Simple { .. } | Convention::Rule { .. }))
+                    .filter(|e| e.regex().unwrap().is_match(&auction))
+                    .map(|e| {
+                        format!(
+                            "{} {}",
+                            e.name().into_string(),
+                            e.regex().unwrap().patterns()[0]
+                        )
+                    })
+                    .collect();
+                if matching.len() > 1 {
+                    *seen.entry(matching.join("  &&  ")).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    seen.into_iter().map(|(k, v)| (v, k)).collect()
+}
+
+/// Sheets has no fallbacks, so that read in order it bids just as it did
+/// when the most forcing bid won and only the first entry for a bid counted.
+#[test]
+fn sheets_entries_do_not_overlap() {
+    assert_eq!(
+        Vec::<(usize, String)>::new(),
+        overlaps(&Convention::sheets(), 200)
+    );
 }
