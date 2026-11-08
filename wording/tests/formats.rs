@@ -3,8 +3,8 @@ use display_as::{format_as, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{self, Formatter};
 use wording::{
-    a, agree, at_least, at_most, between, count, numbered, text, Amount, Form, List, Markup,
-    Number, Text, Word, HAS, IS,
+    a, agree, and, at_least, at_most, between, count, numbered, or, text, then, Amount, Form,
+    Markup, Number, Text, Word, HAS, IS,
 };
 
 /// A playing card's suit as a noun, which plain text spells out and HTML and
@@ -84,8 +84,8 @@ impl Markup for Bid {
     }
 }
 
-fn check(text: impl wording::AddTo, expect: Expect) {
-    let text = text!(text);
+fn check(text: impl Into<Text>, expect: Expect) {
+    let text: Text = text.into();
     let shown = format!(
         "{}\n{}\n{}",
         format_as!(UTF8, text).into_string(),
@@ -95,8 +95,16 @@ fn check(text: impl wording::AddTo, expect: Expect) {
     expect.assert_eq(&shown);
 }
 
-fn joined(phrases: Vec<Text>) -> List {
-    List::with(phrases, "; ", "; ")
+/// The phrases one after another, with `separator` between them.
+fn joined(phrases: impl IntoIterator<Item = Text>, separator: &str) -> Text {
+    let mut text = Text::new();
+    for (i, phrase) in phrases.into_iter().enumerate() {
+        if i > 0 {
+            text += separator;
+        }
+        text += phrase;
+    }
+    text
 }
 
 const POINT: Word = Word::noun("point", "points");
@@ -125,23 +133,27 @@ fn quantities_agree() {
         agree(quantity, text!(IS, " enough"))
     }
     check(
-        joined(vec![
-            enough(count(7, CARD)),
-            enough(count(0, CARD)),
-            enough(at_least(1, CARD)),
-            enough(at_most(1, CARD)),
-            enough(at_most(0, CARD)),
-            enough(between(6, 9, text!("high card ", POINT))),
-            enough(between(4, 4, CARD)),
-            enough(between(1, 1, CARD)),
-            enough(between(0, 3, CARD)),
-            enough(count(Amount::halves(13), LOSER)),
-            enough(count(Amount::halves(2), LOSER)),
-        ]),
+        joined(
+            vec![
+                enough(count(7, CARD)),
+                enough(count(0, CARD)),
+                enough(at_least(1, CARD)),
+                enough(at_most(1, CARD)),
+                enough(at_most(0, CARD)),
+                enough(between(6, 9, text!("high card ", POINT))),
+                enough(between(4, 4, CARD)),
+                enough(between(1, 1, CARD)),
+                enough(between(0, 3, CARD)),
+                enough(count(Amount::halves(13), LOSER)),
+                enough(count(Amount::halves(2), LOSER)),
+                enough(count(-1, CARD)),
+            ],
+            "; ",
+        ),
         expect![[r#"
-            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough
-            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough
-            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough"#]],
+            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough; -1 cards are enough
+            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough; -1 cards are enough
+            7 cards are enough; no cards are enough; 1+ cards are enough; at most 1 card is enough; no cards are enough; 6–9 high card points are enough; exactly 4 cards are enough; exactly 1 card is enough; at most 3 cards are enough; 6½ losers are enough; 1 loser is enough; -1 cards are enough"#]],
     );
 }
 
@@ -149,15 +161,18 @@ fn quantities_agree() {
 fn only_the_head_noun_agrees() {
     let n: u8 = 2;
     check(
-        joined(vec![
-            1 * SPADES,
-            (5..) * SPADES,
-            (..=1) * HEARTS,
-            (n..=n + 1) * HEARTS,
-            3 * text!("long ", SPADES),
-            1 * text!(CARD, " in ", HEARTS),
-            count(7, text!("high card ", POINT, " in ", SPADES)),
-        ]),
+        joined(
+            vec![
+                1 * SPADES,
+                (5..) * SPADES,
+                (..=1) * HEARTS,
+                (n..=n + 1) * HEARTS,
+                3 * text!("long ", SPADES),
+                1 * text!(CARD, " in ", HEARTS),
+                count(7, text!("high card ", POINT, " in ", SPADES)),
+            ],
+            "; ",
+        ),
         expect![[r#"
             1 spade; 5+ spades; at most 1 heart; 2–3 hearts; 3 long spades; 1 card in hearts; 7 high card points in spades
             1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>; 3 long <span class="spades">♠</span>; 1 card in <span class="hearts">♥</span>; 7 high card points in <span class="spades">♠</span>
@@ -171,25 +186,28 @@ fn subjects_agree() {
     let you = || numbered("you", Number::Plural);
     let five_spades = (5..) * SPADES;
     check(
-        joined(vec![
-            agree(
-                List::and([
-                    numbered("North", Number::Singular),
-                    numbered("South", Number::Singular),
-                ]),
-                text!(HAS, " bid"),
-            ),
-            agree(List::or([partner(), you()]), text!(IS, " declarer")),
-            agree(SPADES, text!(IS, " trumps")),
-            agree(partner(), text!(IS, " short in ", HEARTS)),
-            agree(you(), text!(HAS, " opened and ", IS, " forcing")),
-            agree(partner(), text!(HAS, " ", five_spades.clone())),
-            agree(five_spades, text!(IS, " enough")),
-            agree(
-                you(),
-                text!("know that ", agree(partner(), text!(HAS, " bid"))),
-            ),
-        ]),
+        joined(
+            vec![
+                agree(
+                    and([
+                        numbered("North", Number::Singular),
+                        numbered("South", Number::Singular),
+                    ]),
+                    text!(HAS, " bid"),
+                ),
+                agree(or([partner(), you()]), text!(IS, " declarer")),
+                agree(SPADES, text!(IS, " trumps")),
+                agree(partner(), text!(IS, " short in ", HEARTS)),
+                agree(you(), text!(HAS, " opened and ", IS, " forcing")),
+                agree(partner(), text!(HAS, " ", five_spades.clone())),
+                agree(five_spades, text!(IS, " enough")),
+                agree(
+                    you(),
+                    text!("know that ", agree(partner(), text!(HAS, " bid"))),
+                ),
+            ],
+            "; ",
+        ),
         expect![[r#"
             North and South have bid; partner or you are declarer; spades are trumps; partner is short in hearts; you have opened and are forcing; partner has 5+ spades; 5+ spades are enough; you know that partner has bid
             North and South have bid; partner or you are declarer; <span class="spades">♠</span> are trumps; partner is short in <span class="hearts">♥</span>; you have opened and are forcing; partner has 5+ <span class="spades">♠</span>; 5+ <span class="spades">♠</span> are enough; you know that partner has bid
@@ -207,32 +225,35 @@ fn noun_phrases_keep_their_number() {
     let balanced = || a(text!(HAND, " that ", IS, " balanced"));
     let high = || count(5, text!(CARD, " that ", IS, " high"));
     check(
-        joined(vec![
-            agree(you(), text!(HAS, " ", balanced())),
-            agree(partner(), text!(HAS, " ", balanced())),
-            agree(you(), text!(HAS, " ", high())),
-            agree(partner(), text!(HAS, " ", high())),
-            agree(high(), text!(IS, " enough")),
-            // A clause with a subject of its own keeps its own verbs.
-            agree(
-                you(),
-                text!(
-                    HAS,
-                    " ",
-                    a(text!(SUIT, " that ", agree(partner(), text!(HAS, " bid"))))
+        joined(
+            vec![
+                agree(you(), text!(HAS, " ", balanced())),
+                agree(partner(), text!(HAS, " ", balanced())),
+                agree(you(), text!(HAS, " ", high())),
+                agree(partner(), text!(HAS, " ", high())),
+                agree(high(), text!(IS, " enough")),
+                // A clause with a subject of its own keeps its own verbs.
+                agree(
+                    you(),
+                    text!(
+                        HAS,
+                        " ",
+                        a(text!(SUIT, " that ", agree(partner(), text!(HAS, " bid"))))
+                    ),
                 ),
-            ),
-            // The first noun or noun phrase decides a subject's number.
-            agree(
-                a(text!(HAND, " with ", (5..) * SPADES)),
-                text!(IS, " strong"),
-            ),
-            agree(
-                text!("the ", CARD, " with ", count(5, POINT)),
-                text!(IS, " led"),
-            ),
-            agree(text!("your ", count(7, POINT)), text!(IS, " enough")),
-        ]),
+                // The first noun or noun phrase decides a subject's number.
+                agree(
+                    a(text!(HAND, " with ", (5..) * SPADES)),
+                    text!(IS, " strong"),
+                ),
+                agree(
+                    text!("the ", CARD, " with ", count(5, POINT)),
+                    text!(IS, " led"),
+                ),
+                agree(text!("your ", count(7, POINT)), text!(IS, " enough")),
+            ],
+            "; ",
+        ),
         expect![[r#"
             you have a hand that is balanced; partner has a hand that is balanced; you have 5 cards that are high; partner has 5 cards that are high; 5 cards that are high are enough; you have a suit that partner has bid; a hand with 5+ spades is strong; the card with 5 points is led; your 7 points are enough
             you have a hand that is balanced; partner has a hand that is balanced; you have 5 cards that are high; partner has 5 cards that are high; 5 cards that are high are enough; you have a suit that partner has bid; a hand with 5+ <span class="spades">♠</span> is strong; the card with 5 points is led; your 7 points are enough
@@ -242,20 +263,19 @@ fn noun_phrases_keep_their_number() {
 
 #[test]
 fn lists() {
-    assert!(text!(List::and(Vec::<&str>::new())).is_empty());
+    assert!(and(Vec::<&str>::new()).is_empty());
     check(
-        List::with(
+        joined(
             [
-                text!(List::and(["a"])),
-                text!(List::and(["a", "b"])),
-                text!(List::and(["a", "b", "c"])),
-                text!(List::or(["a", "b", "c"])),
-                text!(List::then([
+                and(["a"]),
+                and(["a", "b"]),
+                and(["a", "b", "c"]),
+                or(["a", "b", "c"]),
+                then([
                     text!("opened ", Bid(1, Suit::Spades)),
-                    text!("bid ", Bid(2, Suit::Hearts))
-                ])),
+                    text!("bid ", Bid(2, Suit::Hearts)),
+                ]),
             ],
-            " | ",
             " | ",
         ),
         expect![[r#"
@@ -295,7 +315,7 @@ fn articles() {
     phrases.push(a(text!(SPADES, " bid")));
     phrases.push(a(text!(CARD, " in ", HEARTS)));
     check(
-        List::and(phrases),
+        and(phrases),
         expect![[r#"
             an ace, a king, an eight, an hour, an honest player, an honor, a one-level bid, an onerous contract, a unit, a unique bid, an unimportant card, a useful bid, an umbrella, a European, an 8-card fit, an 11-count, an 18-point hand, a 1NT opening, an NT contract, an HCP count, a SAYC bid, a 1♠, a spade bid and a card in hearts
             an ace, a king, an eight, an hour, an honest player, an honor, a one-level bid, an onerous contract, a unit, a unique bid, an unimportant card, a useful bid, an umbrella, a European, an 8-card fit, an 11-count, an 18-point hand, a 1NT opening, an NT contract, an HCP count, a SAYC bid, a 1<span class="spades">♠</span>, a <span class="spades">♠</span> bid and a card in <span class="hearts">♥</span>
@@ -308,7 +328,7 @@ fn sentences() {
     let mut forcing = text!("is that ");
     forcing += "forcing?";
     check(
-        List::with(
+        joined(
             [
                 text!("bid it").sentence(),
                 forcing.sentence(),
@@ -323,7 +343,6 @@ fn sentences() {
                 text!(a("ace"), " is high").sentence(),
             ],
             " ",
-            " ",
         ),
         expect![[r#"
             Bid it. Is that forcing? 1♠ is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). Spades are trumps. An ace is high.
@@ -337,5 +356,4 @@ fn text_is_send_and_sync() {
     // So that a server can keep text in shared state or across an `.await`.
     fn send_and_sync<T: Send + Sync>() {}
     send_and_sync::<Text>();
-    send_and_sync::<List>();
 }

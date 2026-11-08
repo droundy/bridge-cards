@@ -13,7 +13,10 @@ use std::sync::Arc;
 /// such as a playing card that HTML shows in colour, displays itself.
 ///
 /// Build a `Text` with [`text!`](crate::text!), or by adding pieces to one
-/// with `+` or `+=`.  `Display` shows it as plain text.  A `Text` is `Send`
+/// with `+` or `+=`.  A piece is anything that converts into a `Text`:
+/// strings, numbers, [`Word`]s, `Option`s, other `Text`, and anything that
+/// implements [`Markup`].  For a type of your own, implement `From<YourType>
+/// for Text`.  `Display` shows it as plain text.  A `Text` is `Send`
 /// and `Sync`, so a server can keep one in shared state or across an
 /// `.await`.
 #[derive(Clone, Default)]
@@ -41,7 +44,7 @@ enum Piece {
 /// Something that displays itself differently in each format, such as a bid,
 /// or a suit that plain text spells out and HTML shows as a symbol.
 ///
-/// Anything that implements `Markup` can be added to a [`Text`].  Markup is
+/// Anything that implements `Markup` converts into a [`Text`].  Markup is
 /// `Send` and `Sync`, as plain data such as a bid or a suit is, so that a
 /// `Text` is too:
 ///
@@ -110,7 +113,7 @@ pub struct Form {
 }
 
 /// Text made of words, quantities, lists and markup: anything that
-/// implements [`AddTo`].
+/// converts into a [`Text`].
 ///
 /// ```
 /// use display_as::{format_as, HTML};
@@ -125,7 +128,7 @@ macro_rules! text {
     ($($piece:expr),* $(,)?) => {{
         #[allow(unused_mut)]
         let mut text = $crate::Text::new();
-        $( $crate::AddTo::add_to($piece, &mut text); )*
+        $( text += $piece; )*
         text
     }};
 }
@@ -136,7 +139,7 @@ impl Text {
         Text::default()
     }
     /// Adds words to the end.
-    pub fn push_words(&mut self, words: &str) {
+    pub(crate) fn push_words(&mut self, words: &str) {
         match self.pieces.last_mut() {
             Some(Piece::Words(w)) => w.push_str(words),
             _ => self.pieces.push(Piece::Words(words.to_string())),
@@ -353,73 +356,59 @@ impl fmt::Debug for Text {
     }
 }
 
-/// Something that can be added to a [`Text`].
-///
-/// Strings, numbers, [`Word`]s, `Option`s and other `Text` are added
-/// already, and so is anything that implements [`Markup`].  Implement it for your own types, or wrap
-/// a value in [`Plain`] to add the words its `Display` gives.
-pub trait AddTo {
-    /// Adds this to the end of `text`.
-    fn add_to(self, text: &mut Text);
-}
-
-impl AddTo for Text {
-    fn add_to(self, text: &mut Text) {
-        for piece in self.pieces {
+impl Text {
+    /// Adds `other` to the end, keeping the numbers its words have settled.
+    pub(crate) fn append(&mut self, other: Text) {
+        for piece in other.pieces {
             match piece {
-                Piece::Words(w) => text.push_words(&w),
-                piece => text.pieces.push(piece),
+                Piece::Words(w) => self.push_words(&w),
+                piece => self.pieces.push(piece),
             }
         }
     }
 }
 
-impl<T: Markup + 'static> AddTo for T {
-    fn add_to(self, text: &mut Text) {
-        text.pieces.push(Piece::Markup(Arc::new(self), None));
-    }
-}
-
-/// `text + piece` adds anything that implements [`AddTo`].
-impl<T: AddTo> Add<T> for Text {
+/// `text + piece` adds anything that converts into a `Text`.
+impl<T: Into<Text>> Add<T> for Text {
     type Output = Text;
     fn add(mut self, piece: T) -> Text {
-        piece.add_to(&mut self);
+        self += piece;
         self
     }
 }
 
-/// `text += piece` adds anything that implements [`AddTo`].
-impl<T: AddTo> AddAssign<T> for Text {
+/// `text += piece` adds anything that converts into a `Text`.
+impl<T: Into<Text>> AddAssign<T> for Text {
     fn add_assign(&mut self, piece: T) {
-        piece.add_to(self);
+        self.append(piece.into());
     }
 }
 
-impl<T: AddTo> AddTo for Option<T> {
-    fn add_to(self, text: &mut Text) {
-        if let Some(t) = self {
-            t.add_to(text);
+/// Markup as a `Text`, so that it can go anywhere a phrase can.
+impl<T: Markup + 'static> From<T> for Text {
+    fn from(markup: T) -> Self {
+        Text {
+            pieces: vec![Piece::Markup(Arc::new(markup), None)],
         }
     }
 }
 
-/// A value added as the words its [`Display`] gives.
-pub struct Plain<T>(pub T);
-
-impl<T: Display> AddTo for Plain<T> {
-    fn add_to(self, text: &mut Text) {
-        text.push_words(&self.0.to_string());
+/// Nothing, or the phrase.
+impl<T: Into<Text>> From<Option<T>> for Text {
+    fn from(piece: Option<T>) -> Self {
+        piece.map_or_else(Text::new, Into::into)
     }
 }
 
-macro_rules! add_as_words {
+macro_rules! from_words {
     ($($t:ty),*) => {
-        $(impl AddTo for $t {
-            fn add_to(self, text: &mut Text) {
-                text.push_words(&self.to_string());
+        $(impl From<$t> for Text {
+            fn from(words: $t) -> Self {
+                let mut text = Text::new();
+                text.push_words(&words.to_string());
+                text
             }
         })*
     };
 }
-add_as_words!(&str, String, &String, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+from_words!(&str, String, &String, char, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
