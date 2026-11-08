@@ -10,7 +10,7 @@ use super::{
     describe, partner_text, phrases, you, Bound, Candidate, Line, Measure, Need, Reach, Shown,
     Strain, KNOW,
 };
-use crate::ai::{legal_bids, Convention};
+use crate::ai::{bids_string, legal_bids, Convention};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use wording::{and, Text, Word};
@@ -28,9 +28,9 @@ struct Contract {
 
 impl Convention {
     /// The contracts worth bidding toward after `history`, in words, each
-    /// with its strain.  In
-    /// each strain where the partnership is likely to have a fit, it takes
-    /// one contract within reach of each kind (part-score, game and so on):
+    /// with its strain.  In each strain where the partnership is likely to
+    /// have a fit, it takes one contract within reach of each kind
+    /// (part-score, game and so on):
     /// the highest that is sure, or else the cheapest.  It lists the highest
     /// kind that is sure and the next one up, but no slam until game is sure.
     /// `me` is what the hand's earlier bids have shown and `candidates` are
@@ -109,10 +109,13 @@ impl Convention {
     /// partnership needs between them.
     fn natural_needs(&self, bids: &[Bid]) -> Option<HandValuation> {
         match self {
-            Convention::Ordered { conventions, .. } => conventions.iter().find_map(|c| match c {
-                Convention::Natural { min, .. } if c.applies(bids) => Some(*min),
-                _ => None,
-            }),
+            Convention::Ordered { conventions, .. } => self
+                .candidates(&bids_string(bids))
+                .into_iter()
+                .find_map(|i| match &conventions[i] {
+                    c @ Convention::Natural { min, .. } if c.applies(bids) => Some(*min),
+                    _ => None,
+                }),
             _ => None,
         }
     }
@@ -152,7 +155,7 @@ fn likely_fit(contract: &Contract, hand: &HandValuation, partner: &Shown) -> boo
     let expected = if shown[suit] > 0 {
         shown[suit]
     } else {
-        (13 - shown.sum()) / silent
+        13u8.saturating_sub(shown.sum()) / silent
     };
     hand.length[suit] + expected >= contract.needs.length[suit]
 }
@@ -194,11 +197,11 @@ impl Kind {
 /// needs the least beyond what they have shown, in points and in trumps
 /// alike, and says what partner then knows and needs.
 fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candidate]) -> Text {
-    let fitting = candidates.iter().filter(|c| c.fits && c.bid != Bid::Pass);
+    let fitting = candidates.iter().filter(|c| c.fits() && c.bid != Bid::Pass);
     if fitting.clone().any(|c| c.bid == contract.bid) {
         return Text::from("You can bid it now.");
     }
-    // The robot's choice comes first, and wins a tie.
+    // The robot's choice wins a tie, which is the entry that comes first.
     let best = fitting
         .filter_map(|c| {
             let after = me.and(&c.meaning);
@@ -208,11 +211,11 @@ fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candida
                 Reach::IfPartnerHas(needs) => needs.iter().map(Need::stretch).sum(),
                 Reach::OutOfReach(_) => return None,
             };
-            Some((stretch, c.bid, after, reach))
+            Some((stretch, c.rank, c.bid, after, reach))
         })
-        .min_by_key(|&(stretch, ..)| stretch);
+        .min_by_key(|&(stretch, rank, ..)| (stretch, rank));
     let (bid, after, reach) = match best {
-        Some((_, bid, after, reach)) => (bid, after, reach),
+        Some((_, _, bid, after, reach)) => (bid, after, reach),
         None => return Text::new(),
     };
     let knows: Vec<Bound> = Measure::all()
@@ -241,4 +244,32 @@ fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candida
     } else {
         Text::from("After") + bid + "," + (partner_text() + KNOW + knows) + "," + then + "."
     }
+}
+
+#[test]
+fn likely_fit_copes_with_lengths_that_add_up_to_more_than_a_hand() {
+    // Partner has shown 5+ spades, 5+ hearts and 4+ clubs, which is more
+    // cards than a hand holds, and nothing in diamonds.
+    let mut min = HandValuation::MIN;
+    min.length[Suit::Spades] = 5;
+    min.length[Suit::Hearts] = 5;
+    min.length[Suit::Clubs] = 4;
+    let partner = Shown {
+        bids: Vec::new(),
+        min,
+        max: HandValuation::MAX,
+    };
+    let mut needs = HandValuation::MIN;
+    needs.length[Suit::Diamonds] = 8;
+    let contract = Contract {
+        bid: Bid::Suit(3, Suit::Diamonds),
+        needs,
+        reach: Reach::Sure,
+    };
+    // Partner has no spare cards to expect in diamonds, so a hand with two of
+    // them is not enough.
+    assert!(!likely_fit(&contract, &HandValuation::MIN, &partner));
+    let mut hand = HandValuation::MIN;
+    hand.length[Suit::Diamonds] = 8;
+    assert!(likely_fit(&contract, &hand, &partner));
 }

@@ -6,16 +6,15 @@
 //! When describing a bid it leaves out bounds that only shape a balanced hand
 //! or break a tie with another bid, such as the "at most 5 hearts" of a 1S
 //! opening.  The bid the robot would make is the fitting one whose table entry
-//! comes first (`first_fit`), that
-//! fits the hand, and the other bids are explained by the bounds the hand
-//! misses.  Natural bids state what the partnership needs between them, so
+//! comes first (`first_fit`), and the other bids are explained by the bounds
+//! the hand misses.  Natural bids state what the partnership needs between them, so
 //! for those the advice weighs the hand against what partner has shown, and
 //! turns them into the contracts worth aiming for (see `contracts`).  The
 //! advice is arranged by strain: for each, the contracts to aim for and then
 //! the closest bids about it.  The sentences are built with `wording`, so
 //! counts, lists and verbs agree wherever a phrase ends up, and the advice
 //! reads the same as HTML or plain text.
-use super::{legal_bids, Convention, Fit, Forcing, ShapeRule};
+use super::{bids_string, legal_bids, Convention, Fit, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 #[cfg(test)]
@@ -192,7 +191,10 @@ impl Convention {
             .collect();
         // The robot bids the fitting bid whose table entry comes first, and
         // the highest of those when one entry describes several.
-        let chosen = candidates.iter().filter(|c| c.fits).min_by_key(|c| c.rank);
+        let chosen = candidates
+            .iter()
+            .filter(|c| c.fits())
+            .min_by_key(|c| c.rank);
 
         // Partner's bid forces us only if the opponent after them passed.
         let partner_forcing = if n >= 2 && history[n - 1] == Bid::Pass {
@@ -206,7 +208,7 @@ impl Convention {
                 "Partner's bid is game forcing, so keep bidding until you reach game.",
             )),
             (Forcing::Forcing, _) => Some(Text::from("Partner's bid is forcing, so you must bid.")),
-            (_, Some(pass)) if !pass.fits => Some(
+            (_, Some(pass)) if !pass.fits() => Some(
                 Text::from("You should bid, since a pass would show") + pass.misses.clone() + ".",
             ),
             _ => None,
@@ -219,9 +221,9 @@ impl Convention {
         let mut closest: Vec<&Candidate> = others
             .clone()
             // Natural bids are said as contracts, and why not to pass above.
-            .filter(|c| c.needs.is_none() && (c.bid != Bid::Pass || c.fits))
+            .filter(|c| c.needs.is_none() && (c.bid != Bid::Pass || c.fits()))
             .collect();
-        closest.sort_by_key(|c| (!c.fits, c.distance));
+        closest.sort_by_key(|c| (!c.fits(), c.distance));
         closest.truncate(OTHERS);
         closest.sort_by_key(|c| c.bid.level());
 
@@ -286,7 +288,11 @@ impl Convention {
     /// `refine` adjusts it for earlier bids.
     fn entry(&self, bids: &[Bid]) -> Option<&Convention> {
         match self {
-            Convention::Ordered { conventions, .. } => conventions.iter().find(|c| c.applies(bids)),
+            Convention::Ordered { conventions, .. } => self
+                .candidates(&bids_string(bids))
+                .into_iter()
+                .map(|i| &conventions[i])
+                .find(|c| c.applies(bids)),
             c => Some(c),
         }
     }
@@ -400,7 +406,6 @@ struct Candidate {
     needs: Option<Text>,
     /// For a natural bid, how what partner has shown bears on it.
     verdict: Option<Text>,
-    fits: bool,
     /// For a bid that fits the hand, the position in the table of the entry
     /// that the robot uses, where a lower one is preferred.
     rank: Option<usize>,
@@ -432,7 +437,6 @@ impl Candidate {
                 Text::from("it needs") + phrases(describe(&t, &HandValuation::MAX)) + "between you"
             }),
             verdict: together.map(|t| Reach::of(&t, hand, partner).verdict()),
-            fits: rank.is_some(),
             rank,
             misses: and(misses.into_iter().map(Miss::text)),
             distance,
@@ -441,6 +445,11 @@ impl Candidate {
             strain: Strain::of(bid, together.as_ref().unwrap_or(&min)),
             meaning,
         }
+    }
+
+    /// Does the hand fit this bid?
+    fn fits(&self) -> bool {
+        self.rank.is_some()
     }
 
     /// The bid's name, and its description if it has one.
@@ -493,10 +502,10 @@ impl Candidate {
     fn comparison(&self, chosen: Option<&Candidate>) -> Line {
         let title = self.title();
         let text = match (chosen, &self.needs, &self.verdict) {
-            (Some(chosen), ..) if self.fits => {
+            (Some(chosen), ..) if self.fits() => {
                 title + ": also fits, but the system prefers" + chosen.bid + "."
             }
-            (None, ..) if self.fits => title + ": fits.",
+            (None, ..) if self.fits() => title + ": fits.",
             (_, Some(needs), Some(verdict)) => {
                 title + ":" + needs.clone() + ";" + verdict.clone() + "."
             }
@@ -559,8 +568,15 @@ impl Strain {
                 .copied(),
         )
     }
+    /// Where this strain comes in `all`.
     fn order(self) -> usize {
-        Strain::all().position(|s| s == self).unwrap()
+        match self {
+            Strain::Suit(suit) => 3 - suit as usize,
+            Strain::Notrump => 4,
+            Strain::Double => 5,
+            Strain::Other => 6,
+            Strain::Pass => 7,
+        }
     }
     /// The heading for bids about this strain.
     fn label(self) -> Text {
@@ -704,7 +720,6 @@ impl Bound {
 /// Something a bid's bounds ask for.
 #[derive(Clone, Copy)]
 enum Feature {
-    Balanced,
     Bound(Bound),
     Shape(ShapeRule),
 }
@@ -712,9 +727,7 @@ enum Feature {
 impl Feature {
     fn text(self) -> Text {
         match self {
-            Feature::Balanced | Feature::Shape(ShapeRule::Balanced) => {
-                Text::from("a balanced hand")
-            }
+            Feature::Shape(ShapeRule::Balanced) => Text::from("a balanced hand"),
             Feature::Bound(b) => b.text(),
             Feature::Shape(ShapeRule::AtLeastAsLong(a, b)) => {
                 Text::from(a) + "at least as long as" + b
@@ -767,7 +780,7 @@ fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Feature> {
     let balanced = is_balanced(min, max);
     let mut features = Vec::new();
     if balanced {
-        features.push(Feature::Balanced);
+        features.push(Feature::Shape(ShapeRule::Balanced));
     }
     let mut counted_points = false;
     for m in Measure::all() {
@@ -797,7 +810,7 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
     let mut distance = 0;
     if balanced && !ShapeRule::Balanced.holds(hand) {
         misses.push(Miss {
-            feature: Feature::Balanced,
+            feature: Feature::Shape(ShapeRule::Balanced),
             have: None,
         });
         distance += 3;
@@ -1171,4 +1184,33 @@ fn a_hand_that_is_not_balanced_misses_a_balanced_opening() {
         "{}",
         text
     );
+}
+
+#[test]
+fn advice_html_is_well_formed() {
+    // Every element the template opens is closed again.
+    for system in super::BiddingSystem::ALL {
+        let convention = system.convention();
+        for (_, hands, bids) in super::seeded_deals(system.convention(), 20) {
+            for i in 0..bids.len() {
+                let html =
+                    format_as!(HTML, convention.advice(&bids[..i], hands[i % 4])).into_string();
+                for tag in ["details", "table", "tr", "th", "td", "p", "strong"] {
+                    let opened = html.matches(&format!("<{} ", tag)).count()
+                        + html.matches(&format!("<{}>", tag)).count();
+                    let closed = html.matches(&format!("</{}>", tag)).count();
+                    assert_eq!(
+                        opened,
+                        closed,
+                        "<{}> after {}:\n{}",
+                        tag,
+                        super::bids_string(&bids[..i]),
+                        html
+                    );
+                }
+                assert_eq!(html.matches("id=\"advice\"").count(), 1);
+                assert!(html.matches("id=\"every-bid\"").count() <= 1);
+            }
+        }
+    }
 }
