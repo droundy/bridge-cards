@@ -1,7 +1,14 @@
+<details id="advice" class="advice"><summary>Bidding advice</summary>
 [% for line in self.situation.iter() { %]<p>[% line %]</p>
-[% } %]<p class="suggestion">[% self.suggestion %]</p>
-[% if !self.others.is_empty() { %]<table>[%
-    for (strain, text) in self.others.iter() { %]
-    <tr><th>[% strain %]</th><td>[% text %]</td></tr>[%
+[% } %]<p class="suggestion">[% if let Some((bid, text)) = &self.suggestion { %]Suggested: <strong>[% bid %]</strong> [% text %][% } else { %]No bid fits your hand, so the robot would pass.[% } %]</p>
+[% if !self.strains.is_empty() { %]<table>[%
+    for (strain, lines) in self.strains.iter() { %]
+    <tr><th>[% strain %]</th><td>[% for line in lines.iter() { %]<p><strong>[% line.bid %]</strong> [% line.text %]</p>[% } %]</td></tr>[%
     } %]
 </table>[% } %]
+[% if !self.every_bid.is_empty() { %]<details id="every-bid"><summary>Every bid</summary><table>[%
+    for (strain, line) in self.every_bid.iter() { %]
+    <tr><th>[% strain %]</th><td><strong>[% line.bid %]</strong> [% line.text %]</td></tr>[%
+    } %]
+</table></details>[% } %]
+</details>
