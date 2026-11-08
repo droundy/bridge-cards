@@ -2,7 +2,7 @@ use crate::{text, AddTo, Text};
 use std::fmt::{self, Display, Formatter};
 
 /// Whether something is one or many, which nouns and verbs agree with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Number {
     /// One.
     Singular,
@@ -21,278 +21,303 @@ impl Number {
     }
 }
 
-/// A word with a singular and a plural form: a noun such as "point" and
-/// "points", or a verb such as "is" and "are".
+/// A noun such as "point" and "points", or a verb such as "is" and "are".
 ///
-/// It agrees with whatever number a [`Quantity`] or [`agree`] settles for
-/// it, and is singular until then.
+/// A noun agrees with the amount of a quantity it is the head of, and a verb
+/// with the subject given to [`agree`].  Either is singular until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Word {
     singular: &'static str,
     plural: &'static str,
+    noun: bool,
 }
 
 /// "is" or "are".
-pub const IS: Word = Word::new("is", "are");
+pub const IS: Word = Word::verb("is", "are");
 /// "has" or "have".
-pub const HAS: Word = Word::new("has", "have");
+pub const HAS: Word = Word::verb("has", "have");
 
 impl Word {
-    /// A word such as `Word::new("spade", "spades")` or `Word::new("shows",
-    /// "show")`.  A verb's singular is the form that goes with "it".
-    pub const fn new(singular: &'static str, plural: &'static str) -> Self {
-        Word { singular, plural }
+    /// A noun such as `Word::noun("spade", "spades")`.
+    pub const fn noun(singular: &'static str, plural: &'static str) -> Self {
+        Word {
+            singular,
+            plural,
+            noun: true,
+        }
+    }
+    /// A verb such as `Word::verb("shows", "show")`, whose singular is the
+    /// form that goes with "it".
+    pub const fn verb(singular: &'static str, plural: &'static str) -> Self {
+        Word {
+            singular,
+            plural,
+            noun: false,
+        }
+    }
+    pub(crate) fn form(self, number: Number) -> &'static str {
+        match number {
+            Number::Singular => self.singular,
+            Number::Plural => self.plural,
+        }
+    }
+    pub(crate) fn is_noun(self) -> bool {
+        self.noun
     }
 }
 
-impl<M> AddTo<M> for Word {
-    fn add_to(self, text: &mut Text<M>) {
-        text.push_word(self.singular, self.plural);
+impl AddTo for Word {
+    fn add_to(self, text: &mut Text) {
+        text.push_word(self);
     }
-}
-
-/// Something a verb can agree with, because it knows whether it is one or
-/// many: a [`Quantity`], a [`List`](crate::List) of subjects, or a phrase
-/// given its number with [`numbered`].
-pub trait Subject<M>: AddTo<M> {
-    /// Whether this is one or many.
-    fn number(&self) -> Number;
 }
 
 /// `predicate` agreeing with `subject`, as in "partner has 5+ spades" or
-/// "you have 5+ spades".
+/// "North and South have bid".
 ///
-/// Only the words in `predicate` whose number is not already settled
-/// agree, so "5+ spades" stays plural after "partner has".
-pub fn agree<M>(subject: impl Subject<M>, predicate: impl AddTo<M>) -> Text<M> {
-    let number = subject.number();
-    text!(subject, " ", text!(predicate).agreeing(number))
-}
-
-/// A phrase whose number is given by hand, so that a verb can agree with
-/// it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Numbered<T> {
-    phrase: T,
-    number: Number,
+/// The verbs in `predicate` agree with the subject's
+/// [number](Text::number), and nothing else does: in "partner is short in
+/// hearts" the hearts stay plural.  A clause already made with `agree` keeps
+/// its own verbs, as in "you know that partner has 5+ spades".
+pub fn agree(subject: impl AddTo, predicate: impl AddTo) -> Text {
+    let subject = text!(subject);
+    let mut predicate = text!(predicate);
+    predicate.settle_verbs(subject.number());
+    text!(subject, " ", predicate)
 }
 
 /// `phrase`, which is one or many as `number` says, as in
 /// `numbered("partner", Number::Singular)` or `numbered("you",
-/// Number::Plural)`.  Any [`Word`] in it agrees with `number`.
-pub fn numbered<T>(phrase: T, number: Number) -> Numbered<T> {
-    Numbered { phrase, number }
+/// Number::Plural)`.  Its first noun agrees with `number`, and so do the
+/// verbs [`agree`] gives it.
+pub fn numbered(phrase: impl AddTo, number: Number) -> Text {
+    let mut text = text!(phrase);
+    text.settle_head(number);
+    text.set_number(number);
+    text
 }
 
-impl<M, T: AddTo<M>> AddTo<M> for Numbered<T> {
-    fn add_to(self, text: &mut Text<M>) {
-        text!(self.phrase).agreeing(self.number).add_to(text);
-    }
-}
-
-impl<M, T: AddTo<M>> Subject<M> for Numbered<T> {
-    fn number(&self) -> Number {
-        self.number
-    }
-}
-
-/// An amount of a noun, as in "1 spade", "5+ spades" or "6–9 high card
-/// points".
+/// How many there are of something: a whole number such as `Amount::from(5)`,
+/// or a number of halves such as `Amount::halves(13)` for "6½".
 ///
-/// The noun is any phrase, and its words and markup agree with the amount,
-/// so "at most 1 spade" is singular and "1+ spades" plural.  Make one with
-/// [`count`], [`at_least`], [`at_most`] or [`between`], or by multiplying a
-/// [`Word`], a [`Text`] or [`countable!`](crate::countable!) markup by a
-/// number or a range:
-///
-/// ```
-/// use display_as::{format_as, UTF8};
-/// use wording::{text, Text, Word};
-///
-/// const POINT: Word = Word::new("point", "points");
-/// let n: u8 = 3;
-/// let t: Text = text!(1 * POINT, ", ", n * POINT, ", ", (5..) * POINT, ", ")
-///     + (..=1) * POINT
-///     + " or "
-///     + (6..=9) * text!("high card ", POINT);
-/// assert_eq!(
-///     format_as!(UTF8, t).into_string(),
-///     "1 point, 3 points, 5+ points, at most 1 point or 6–9 high card points"
-/// );
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Quantity<N> {
-    amount: Amount,
-    noun: N,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Amount {
-    Exactly(u64),
-    AtLeast(u64),
-    AtMost(u64),
-    Between(u64, u64),
-    Other(String, Number),
+/// A negative `i32` panics.  `i32` is there so that a plain `5` can be an
+/// amount.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Amount {
+    halves: u64,
 }
 
 impl Amount {
-    fn number(&self) -> Number {
-        match *self {
-            Amount::Exactly(n) | Amount::AtMost(n) => Number::of(n),
-            Amount::AtLeast(_) | Amount::Between(..) => Number::Plural,
-            Amount::Other(_, number) => number,
+    /// `n` halves, as in `Amount::halves(13)` for "6½".
+    pub const fn halves(n: u64) -> Self {
+        Amount { halves: n }
+    }
+    fn is_zero(self) -> bool {
+        self.halves == 0
+    }
+    /// Singular for exactly one, plural otherwise: "1 loser", "½ losers",
+    /// "1½ losers".
+    fn number(self) -> Number {
+        if self.halves == 2 {
+            Number::Singular
+        } else {
+            Number::Plural
         }
     }
 }
 
 impl Display for Amount {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Amount::Exactly(n) => write!(f, "{n}"),
-            Amount::AtLeast(n) => write!(f, "{n}+"),
-            Amount::AtMost(n) => write!(f, "at most {n}"),
-            Amount::Between(lo, hi) => write!(f, "{lo}–{hi}"),
-            Amount::Other(amount, _) => f.write_str(amount),
+        match (self.halves / 2, self.halves % 2) {
+            (0, 1) => f.write_str("½"),
+            (whole, 1) => write!(f, "{whole}½"),
+            (whole, _) => write!(f, "{whole}"),
         }
     }
 }
 
-/// `n` of `noun`, as in "1 spade" or "7 spades".
-pub fn count<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::Exactly(n.into()), noun)
+macro_rules! amount_from {
+    ($($int:ty),*) => {
+        $(impl From<$int> for Amount {
+            fn from(n: $int) -> Self {
+                let n = u64::try_from(n).expect("an amount is never negative");
+                Amount::halves(n.checked_mul(2).expect("an amount fits in 63 bits"))
+            }
+        })*
+    };
+}
+amount_from!(u8, u16, u32, u64, usize, i32);
+
+/// `amount`, then `noun` with its head agreeing with `number`.
+fn quantity(amount: impl Display, number: Number, noun: impl AddTo) -> Text {
+    let mut noun = text!(noun);
+    noun.settle_head(number);
+    let mut text = Text::new();
+    text.push_words(&format!("{amount} "));
+    noun.add_to(&mut text);
+    text.set_number(number);
+    text
+}
+
+/// `n` of `noun`, as in "1 spade", "7 spades" or "no spades".
+///
+/// The noun is any phrase, and only its first noun agrees, as in "7 high
+/// card points in spades".  Multiplying does the same: `n * noun` is
+/// `count(n, noun)`, and so on for the other quantities:
+///
+/// ```
+/// use wording::{text, Word};
+///
+/// const POINT: Word = Word::noun("point", "points");
+/// let n: u8 = 3;
+/// let t = text!(1 * POINT, ", ", n * POINT, ", ", 0 * POINT, ", ")
+///     + (5..) * POINT
+///     + ", "
+///     + (..=1) * POINT
+///     + ", "
+///     + (4..=4) * POINT
+///     + " or "
+///     + (6..=9) * text!("high card ", POINT);
+/// assert_eq!(
+///     t.to_string(),
+///     "1 point, 3 points, no points, 5+ points, at most 1 point, \
+///      exactly 4 points or 6–9 high card points"
+/// );
+/// ```
+///
+/// [`Word`] and [`Text`] multiply already, and
+/// [`countable!`](crate::countable!) makes your own markup multiply.
+pub fn count(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+    let n = n.into();
+    if n.is_zero() {
+        quantity("no", Number::Plural, noun)
+    } else {
+        quantity(n, n.number(), noun)
+    }
 }
 
 /// `n` or more of `noun`, as in "5+ spades".
-pub fn at_least<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::AtLeast(n.into()), noun)
+pub fn at_least(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+    quantity(format_args!("{}+", n.into()), Number::Plural, noun)
 }
 
-/// `n` or fewer of `noun`, as in "at most 1 spade".
-pub fn at_most<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::AtMost(n.into()), noun)
-}
-
-/// From `lo` to `hi` of `noun`, as in "6–9 points".
-pub fn between<N>(lo: impl Into<u64>, hi: impl Into<u64>, noun: N) -> Quantity<N> {
-    Quantity::new(Amount::Between(lo.into(), hi.into()), noun)
-}
-
-impl<N> Quantity<N> {
-    fn new(amount: Amount, noun: N) -> Self {
-        Quantity { amount, noun }
-    }
-    /// An amount the other constructors can't write, as in "6½ losers".
-    /// The noun agrees with `number`.
-    pub fn other(amount: impl Display, number: Number, noun: N) -> Self {
-        Quantity::new(Amount::Other(amount.to_string(), number), noun)
+/// `n` or fewer of `noun`, as in "at most 1 spade", or "no spades" when `n`
+/// is zero.
+pub fn at_most(n: impl Into<Amount>, noun: impl AddTo) -> Text {
+    let n = n.into();
+    if n.is_zero() {
+        count(n, noun)
+    } else {
+        quantity(format_args!("at most {n}"), n.number(), noun)
     }
 }
 
-impl<M, N: AddTo<M>> AddTo<M> for Quantity<N> {
-    fn add_to(self, text: &mut Text<M>) {
-        let number = self.amount.number();
-        text.push_words(&format!("{} ", self.amount));
-        text!(self.noun).agreeing(number).add_to(text);
+/// From `lo` to `hi` of `noun`, as in "6–9 points".  When `lo` is zero it is
+/// [`at_most`], and when the two are equal it is "exactly 4 points" (or "no
+/// points").
+pub fn between(lo: impl Into<Amount>, hi: impl Into<Amount>, noun: impl AddTo) -> Text {
+    let (lo, hi) = (lo.into(), hi.into());
+    if lo == hi && !lo.is_zero() {
+        quantity(format_args!("exactly {lo}"), lo.number(), noun)
+    } else if lo.is_zero() {
+        at_most(hi, noun)
+    } else {
+        quantity(format_args!("{lo}–{hi}"), Number::Plural, noun)
     }
 }
 
-impl<M, N: AddTo<M>> Subject<M> for Quantity<N> {
-    fn number(&self) -> Number {
-        self.amount.number()
-    }
-}
-
-/// Lets a number or a range multiply a noun into a [`Quantity`]:
-/// `5 * noun` is [`count`], `(5..) * noun` [`at_least`], `(..=1) * noun`
-/// [`at_most`] and `(6..=9) * noun` [`between`].
+/// Lets a number or a range multiply a noun into a quantity: `5 * noun` is
+/// [`count`], `(5..) * noun` [`at_least`], `(..=1) * noun` [`at_most`] and
+/// `(6..=9) * noun` [`between`].
 ///
-/// [`Word`] and [`Text`] already multiply.  Use this for markup of your
-/// own, as in `wording::countable!(Suit)`.  Rust allows these impls only in
-/// the crate that defines the noun's type.  A negative number panics.
+/// [`Word`] and [`Text`] already multiply.  Use this for markup of your own,
+/// as in `wording::countable!(Suit)`.  Rust allows these impls only in the
+/// crate that defines the noun's type.  A negative number panics.
 #[macro_export]
 macro_rules! countable {
     ($noun:ty) => {
-        $crate::countable!(@generic [] $noun);
+        $crate::countable!(@each $noun; u8, u16, u32, u64, usize, i32);
     };
-    (@generic $generics:tt $noun:ty) => {
-        $crate::countable!(@each $generics $noun; u8, u16, u32, u64, usize, i32);
+    (@each $noun:ty; $($int:ty),*) => {
+        $( $crate::countable!(@one $noun; $int); )*
     };
-    (@each $generics:tt $noun:ty; $($int:ty),*) => {
-        $( $crate::countable!(@one $generics $noun; $int); )*
-    };
-    (@one [$($g:ident),*] $noun:ty; $int:ty) => {
-        impl<$($g),*> ::core::ops::Mul<$noun> for $int {
-            type Output = $crate::Quantity<$noun>;
-            fn mul(self, noun: $noun) -> Self::Output {
-                $crate::count($crate::countable!(@u64 self), noun)
+    (@one $noun:ty; $int:ty) => {
+        impl ::core::ops::Mul<$noun> for $int {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                $crate::count(self, noun)
             }
         }
-        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeFrom<$int> {
-            type Output = $crate::Quantity<$noun>;
-            fn mul(self, noun: $noun) -> Self::Output {
-                $crate::at_least($crate::countable!(@u64 self.start), noun)
+        impl ::core::ops::Mul<$noun> for ::core::ops::RangeFrom<$int> {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                $crate::at_least(self.start, noun)
             }
         }
-        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeToInclusive<$int> {
-            type Output = $crate::Quantity<$noun>;
-            fn mul(self, noun: $noun) -> Self::Output {
-                $crate::at_most($crate::countable!(@u64 self.end), noun)
+        impl ::core::ops::Mul<$noun> for ::core::ops::RangeToInclusive<$int> {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
+                $crate::at_most(self.end, noun)
             }
         }
-        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeInclusive<$int> {
-            type Output = $crate::Quantity<$noun>;
-            fn mul(self, noun: $noun) -> Self::Output {
+        impl ::core::ops::Mul<$noun> for ::core::ops::RangeInclusive<$int> {
+            type Output = $crate::Text;
+            fn mul(self, noun: $noun) -> $crate::Text {
                 let (lo, hi) = self.into_inner();
-                $crate::between($crate::countable!(@u64 lo), $crate::countable!(@u64 hi), noun)
+                $crate::between(lo, hi, noun)
             }
         }
-    };
-    (@u64 $n:expr) => {
-        <u64 as ::core::convert::TryFrom<_>>::try_from($n).expect("a count is never negative")
     };
 }
 
 countable!(Word);
-countable!(@generic [M] Text<M>);
+countable!(Text);
 
-/// A phrase with "a" or "an" in front of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Indefinite<T>(T);
-
-/// `phrase` with "a" or "an" in front, as in "an ace" or "a king".
+/// `phrase` with "a" or "an" in front, as in "an ace", "a king" or "an
+/// 8-card fit".  The first noun of `phrase` is singular.
 ///
-/// The choice goes by the first letter, with exceptions for the usual words
-/// that start with a silent "h" ("an hour") or a "y" or "w" sound ("a one",
-/// "a unit", "a eulogy").  Other exceptions need the article written out.
-pub fn a<T: Display>(phrase: T) -> Indefinite<T> {
-    Indefinite(phrase)
+/// The choice is made when the text is displayed, from whatever is shown
+/// first, so it works before any phrase, and [`Markup`](crate::Markup)
+/// decides for itself.  It goes by spelling, with exceptions for the usual
+/// words that start with a silent "h" ("an honor") or with a "y" or "w" sound
+/// ("a one", "a unit", "a European"), for numbers ("an 8", "an 11", "an
+/// 18"), and for initials ("an NT bid", "an HCP").  Other exceptions need the
+/// article written out.
+pub fn a(phrase: impl AddTo) -> Text {
+    let mut phrase = text!(phrase);
+    phrase.settle_head(Number::Singular);
+    let mut text = Text::new();
+    text.push_article();
+    phrase.add_to(&mut text);
+    text
 }
 
-impl<T: Display> Display for Indefinite<T> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let phrase = self.0.to_string();
-        write!(f, "{} {}", article(&phrase), phrase)
+/// Does `words` start with a vowel sound, so that "an" goes before it?
+pub(crate) fn vowel_sound(words: &str) -> bool {
+    let first = words
+        .split(|c: char| !c.is_alphanumeric())
+        .next()
+        .unwrap_or("");
+    if first.starts_with(|c: char| c.is_ascii_digit()) {
+        // "eight", "eleven" and "eighteen", and "eighty" and "eight hundred".
+        let digits: String = first.chars().take_while(char::is_ascii_digit).collect();
+        return digits.starts_with('8') || digits == "11" || digits == "18";
     }
-}
-
-impl<M, T: Display> AddTo<M> for Indefinite<T> {
-    fn add_to(self, text: &mut Text<M>) {
-        text.push_words(&self.to_string());
+    let vowels = |c: char| "AEIOUaeiou".contains(c);
+    if first.chars().all(char::is_uppercase) && !first.contains(vowels) {
+        // Initials read as letters, such as "NT" or "HCP".
+        return first.starts_with(|c: char| "AEFHILMNORSX".contains(c));
     }
-}
-
-/// "a" or "an", whichever goes before `word`.
-fn article(word: &str) -> &'static str {
-    let lower = word.to_lowercase();
-    const SILENT_H: [&str; 4] = ["hour", "honest", "honour", "heir"];
-    const CONSONANT_SOUND: [&str; 6] = ["one", "once", "uni", "use", "usu", "eu"];
+    let lower = first.to_lowercase();
+    const SILENT_H: [&str; 5] = ["hour", "honest", "honor", "honour", "heir"];
+    const CONSONANT_SOUND: [&str; 12] = [
+        "once", "uniq", "unit", "unif", "unio", "univ", "unic", "unis", "use", "usu", "uti", "eu",
+    ];
     if SILENT_H.iter().any(|p| lower.starts_with(p)) {
-        "an"
-    } else if CONSONANT_SOUND.iter().any(|p| lower.starts_with(p)) {
-        "a"
-    } else if lower.starts_with(['a', 'e', 'i', 'o', 'u']) {
-        "an"
+        true
+    } else if lower == "one" || CONSONANT_SOUND.iter().any(|p| lower.starts_with(p)) {
+        false
     } else {
-        "a"
+        lower.starts_with(vowels)
     }
 }

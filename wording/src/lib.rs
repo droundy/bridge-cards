@@ -4,30 +4,25 @@
 //! Gluing sentences together with `format!` goes wrong as soon as a count is
 //! one ("1 spades"), a list has one item ("a, and b"), or a sentence starts
 //! with a variable.  Here each piece decides its own grammar instead: a
-//! [`Quantity`] makes its noun agree with its amount, [`agree`] makes a verb
-//! agree with its [`Subject`], [`a`] picks "a" or "an", and a [`List`] joins
-//! its items.  A [`Word`] is the plain-words piece that agrees, such as
-//! "point" or [`HAS`].
+//! quantity such as [`count`] makes its noun agree with its amount, [`agree`]
+//! makes the verbs of a predicate agree with their subject, [`a`] picks "a"
+//! or "an", and a [`List`] joins its items.  A [`Word`] is a noun such as
+//! "point" or a verb such as [`HAS`], with a singular and a plural form.
 //!
-//! The pieces go into a [`Text`], which keeps words apart from markup until it
-//! is displayed with [`display_as`].  Words are escaped for the format, and
-//! markup, of a type `M` you choose, displays itself, so the same `Text` can be
-//! HTML for a web page, UTF8 for a test and LaTeX for a printed sheet.  Markup
-//! that agrees with a plural displays in the format [`Plural<F>`](Plural).
+//! Every phrase is a [`Text`], so any phrase can be used inside any other,
+//! and a phrase reads the same wherever it goes.  A `Text` keeps words apart
+//! from [`Markup`] until it is displayed with [`display_as`] (or as plain
+//! text with `Display`).  Words are escaped for the format, and markup, such
+//! as a playing card that HTML shows in colour, displays itself.
 //!
 //! ```
-//! use display_as::{format_as, UTF8};
-//! use wording::{agree, numbered, text, List, Number, Text, Word, HAS};
+//! use wording::{a, agree, numbered, text, List, Number, Word, HAS};
 //!
-//! const POINT: Word = Word::new("point", "points");
+//! const POINT: Word = Word::noun("point", "points");
 //! let partner = numbered("partner", Number::Singular);
-//! let hand = text!(HAS, " ", 1 * POINT, " and ")
-//!     + List::and(vec!["a singleton", "a void"]);
-//! let sentence: Text = agree(partner, hand).sentence();
-//! assert_eq!(
-//!     format_as!(UTF8, sentence).into_string(),
-//!     "Partner has 1 point and a singleton and a void."
-//! );
+//! let hand = List::and([1 * POINT, a("singleton"), a("void")]);
+//! let sentence = agree(partner, text!(HAS, " ", hand)).sentence();
+//! assert_eq!(sentence.to_string(), "Partner has 1 point, a singleton and a void.");
 //! ```
 #![deny(missing_docs)]
 
@@ -36,8 +31,7 @@ mod list;
 mod text;
 
 pub use grammar::{
-    a, agree, at_least, at_most, between, count, numbered, Indefinite, Number, Numbered, Quantity,
-    Subject, Word, HAS, IS,
+    a, agree, at_least, at_most, between, count, numbered, Amount, Number, Word, HAS, IS,
 };
 pub use list::List;
-pub use text::{AddTo, Markup, NoMarkup, Plain, Plural, Text};
+pub use text::{AddTo, Form, Markup, Plain, Text};

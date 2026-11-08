@@ -1,16 +1,20 @@
-use crate::{AddTo, Number, Subject, Text};
+use crate::{text, AddTo, Number, Text};
 
 /// Items joined into a list, as in "a, b and c".
 ///
 /// ```
-/// use display_as::{format_as, UTF8};
-/// use wording::{text, List, Text};
+/// use wording::{agree, text, List, IS};
 ///
-/// let t: Text = text!(List::or(vec!["clubs", "diamonds", "hearts"]));
-/// assert_eq!(format_as!(UTF8, t).into_string(), "clubs, diamonds or hearts");
+/// let suits = List::or(["clubs", "diamonds", "hearts"]);
+/// assert_eq!(text!(suits).to_string(), "clubs, diamonds or hearts");
+///
+/// let mut bidders = List::and(["North"]);
+/// bidders.push("South");
+/// assert_eq!(agree(bidders, text!(IS, " silent")).to_string(), "North and South are silent");
 /// ```
-pub struct List<T> {
-    items: Vec<T>,
+#[derive(Clone, Debug)]
+pub struct List {
+    items: Vec<Text>,
     separator: &'static str,
     last: &'static str,
     /// The number of two or more items as a subject, if it is not the last
@@ -18,9 +22,9 @@ pub struct List<T> {
     many: Option<Number>,
 }
 
-impl<T> List<T> {
+impl List {
     /// "a", "a and b", "a, b and c".  Two or more are plural as a subject.
-    pub fn and(items: Vec<T>) -> Self {
+    pub fn and(items: impl IntoIterator<Item = impl AddTo>) -> Self {
         List {
             many: Some(Number::Plural),
             ..List::with(items, ", ", " and ")
@@ -28,22 +32,30 @@ impl<T> List<T> {
     }
     /// "a", "a or b", "a, b or c".  As a subject, a verb agrees with the
     /// last, as in "partner or you are".
-    pub fn or(items: Vec<T>) -> Self {
+    pub fn or(items: impl IntoIterator<Item = impl AddTo>) -> Self {
         List::with(items, ", ", " or ")
     }
     /// "a", "a, then b", "a, then b, then c".
-    pub fn then(items: Vec<T>) -> Self {
+    pub fn then(items: impl IntoIterator<Item = impl AddTo>) -> Self {
         List::with(items, ", then ", ", then ")
     }
     /// Items joined by `separator`, except that `last` comes before the last.
     /// As a subject, a verb agrees with the last item.
-    pub fn with(items: Vec<T>, separator: &'static str, last: &'static str) -> Self {
+    pub fn with(
+        items: impl IntoIterator<Item = impl AddTo>,
+        separator: &'static str,
+        last: &'static str,
+    ) -> Self {
         List {
-            items,
+            items: items.into_iter().map(|item| text!(item)).collect(),
             separator,
             last,
             many: None,
         }
+    }
+    /// Adds an item to the end.
+    pub fn push(&mut self, item: impl AddTo) {
+        self.items.push(text!(item));
     }
     /// Is the list empty?
     pub fn is_empty(&self) -> bool {
@@ -53,28 +65,30 @@ impl<T> List<T> {
     pub fn len(&self) -> usize {
         self.items.len()
     }
-}
-
-impl<M, T: AddTo<M>> AddTo<M> for List<T> {
-    fn add_to(self, text: &mut Text<M>) {
-        let n = self.items.len();
-        for (i, item) in self.items.into_iter().enumerate() {
-            if i + 1 == n && i > 0 {
-                text.push_words(self.last);
-            } else if i > 0 {
-                text.push_words(self.separator);
-            }
-            item.add_to(text);
-        }
-    }
-}
-
-impl<M, T: Subject<M>> Subject<M> for List<T> {
+    /// Whether the list is one or many as a subject.
     fn number(&self) -> Number {
         match (self.many, self.items.last()) {
             (Some(many), _) if self.items.len() > 1 => many,
             (_, Some(last)) => last.number(),
             (_, None) => Number::Plural,
         }
+    }
+}
+
+impl AddTo for List {
+    fn add_to(self, text: &mut Text) {
+        let number = self.number();
+        let n = self.items.len();
+        let mut list = Text::new();
+        for (i, item) in self.items.into_iter().enumerate() {
+            if i + 1 == n && i > 0 {
+                list.push_words(self.last);
+            } else if i > 0 {
+                list.push_words(self.separator);
+            }
+            item.add_to(&mut list);
+        }
+        list.set_number(number);
+        list.add_to(text);
     }
 }
