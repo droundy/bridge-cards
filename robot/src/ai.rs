@@ -127,10 +127,11 @@ impl BidAI for ConventionalBid {
             *bids.last_mut().unwrap() = b;
             let auction = bids_string(&bids);
             let default = self.0.default_for(&auction);
-            for (i, entry) in self.0.entries().iter().enumerate() {
+            for i in self.0.candidates(&auction) {
                 if best.as_ref().is_some_and(|&(j, _, _)| j <= i) {
                     break;
                 }
+                let entry = &self.0.entries()[i];
                 if !entry.matches(&auction, &bids) {
                     continue;
                 }
@@ -473,6 +474,10 @@ pub enum Convention {
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
+        /// The indices of the entries that can describe each bid, keyed by
+        /// the bid as `bids_string` writes it, or by `*` for entries that
+        /// can describe any bid.
+        by_bid: std::collections::HashMap<String, Vec<usize>>,
     },
     /// Several entries that describe the same bid, of which the bidder may
     /// have used any.
@@ -697,11 +702,10 @@ impl Convention {
         let auction = bids_string(actual_bids);
         let default = self.default_for(&auction);
         let mut found: Vec<Convention> = self
-            .entries()
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.matches(&auction, actual_bids))
-            .filter_map(|(i, _)| self.resolve(i, &auction, actual_bids, default))
+            .candidates(&auction)
+            .into_iter()
+            .filter(|&i| self.entries()[i].matches(&auction, actual_bids))
+            .filter_map(|i| self.resolve(i, &auction, actual_bids, default))
             .collect();
         match found.len() {
             0 => None,
@@ -714,8 +718,8 @@ impl Convention {
     /// `Simple` or `Rule` entry does.
     fn default_for(&self, auction: &str) -> Option<usize> {
         let mut default = None;
-        for (i, entry) in self.entries().iter().enumerate() {
-            match entry {
+        for i in self.candidates(auction) {
+            match &self.entries()[i] {
                 Convention::Simple { regex, .. } | Convention::Rule { regex, .. }
                     if regex.is_match(auction) =>
                 {
@@ -975,21 +979,66 @@ impl Convention {
         Convention::Ordered {
             the_name: name,
             conventions: Vec::new(),
+            by_bid: Default::default(),
         }
     }
     /// Add another possibility to the OrderedConvention
     fn add(&mut self, convention: Convention) {
         match self {
-            Convention::Ordered { conventions, .. } => {
+            Convention::Ordered {
+                conventions,
+                by_bid,
+                ..
+            } => {
+                for key in convention.bids_described() {
+                    by_bid.entry(key).or_default().push(conventions.len());
+                }
                 conventions.push(convention);
             }
             _ => {
                 let s = self.clone();
-                *self = Convention::Ordered {
-                    conventions: vec![s, convention],
-                    the_name: "",
+                *self = Convention::new("");
+                self.add(s);
+                self.add(convention);
+            }
+        }
+    }
+    /// The bids this entry can describe, as `bids_string` writes them, or
+    /// `*` if it could be any.
+    fn bids_described(&self) -> Vec<String> {
+        let regex = match self.regex() {
+            Some(regex) => regex,
+            None => return vec!["*".to_string()],
+        };
+        let mut bids = Vec::new();
+        for pattern in regex.patterns() {
+            for pattern in expand_final_group(pattern) {
+                match final_bid(&pattern) {
+                    Some(bid) => bids.push(bids_string(&[bid]).trim().to_string()),
+                    None => return vec!["*".to_string()],
                 }
             }
+        }
+        bids.sort();
+        bids.dedup();
+        bids
+    }
+    /// The indices of the entries that might describe the last bid of
+    /// `auction`, in order.
+    fn candidates(&self, auction: &str) -> Vec<usize> {
+        match self {
+            Convention::Ordered { by_bid, .. } => {
+                let last = auction.rsplit(' ').next().unwrap_or("");
+                let mut found: Vec<usize> = [last, "*"]
+                    .iter()
+                    .filter_map(|key| by_bid.get(*key))
+                    .flatten()
+                    .cloned()
+                    .collect();
+                found.sort_unstable();
+                found
+            }
+            _ => vec![0],
         }
     }
     /// Add the entries of `table` after those already here.
@@ -1043,13 +1092,14 @@ impl Convention {
             }
         }
         keyed.sort_by_key(|&(key, _)| std::cmp::Reverse(key));
-        Convention::Ordered {
-            conventions: keyed.into_iter().map(|(_, entry)| entry).collect(),
-            the_name: match &self {
-                Convention::Ordered { the_name, .. } => the_name,
-                _ => "",
-            },
+        let mut sorted = Convention::new(match &self {
+            Convention::Ordered { the_name, .. } => the_name,
+            _ => "",
+        });
+        for (_, entry) in keyed {
+            sorted.add(entry);
         }
+        sorted
     }
 }
 
@@ -3202,4 +3252,49 @@ fn sheets_stayman_needs_a_four_card_major() {
     assert_eq!(Suit(2, Clubs), over("S KJ32 H 52 D AK42 C J63"));
     assert_ne!(Suit(2, Clubs), over("S 8 H AJ9 D QJ842 C Q975"));
     assert_ne!(Suit(2, Clubs), over("S 432 H 432 D 5432 C 432"));
+}
+
+#[test]
+fn sayc_responder_rebids_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    // 1D 1H 1S: with ten points and four spades responder invites, and
+    // opener with 17 bids game.
+    let auction = [
+        Pass,
+        Suit(1, Diamonds),
+        Pass,
+        Suit(1, Hearts),
+        Pass,
+        Suit(1, Spades),
+        Pass,
+    ];
+    let west = "S J432 H AQ975 D C K1032";
+    assert_eq!(
+        Suit(3, Spades),
+        system_bid(BiddingSystem::Sayc, &auction, west)
+    );
+    let mut invited = auction.to_vec();
+    invited.extend([Suit(3, Spades), Pass]);
+    let east = "S AK96 H 2 D KQJ6 C A876";
+    assert_eq!(
+        Suit(4, Spades),
+        system_bid(BiddingSystem::Sayc, &invited, east)
+    );
+
+    let after = |hand: &str| system_bid(BiddingSystem::Sayc, &auction[1..], hand);
+    // Weaker hands sign off: a raise with four spades, a rebid with six
+    // hearts, preference with three diamonds, or 1NT.
+    assert_eq!(Suit(2, Spades), after("S J432 H Q9875 D 32 C K2"));
+    assert_eq!(Suit(2, Hearts), after("S 2 H KQ9875 D 32 C 5432"));
+    assert_eq!(Suit(2, Diamonds), after("S 2 H KQ987 D 432 C 5432"));
+    assert_eq!(NT(1), after("S Q2 H KJ98 D 43 C Q5432"));
+    // Game values without a fit bid 3NT, and a new suit forces.
+    assert_eq!(NT(3), after("S Q2 H AKJ8 D 432 C KQ32"));
+    let sayc = Convention::sayc();
+    let mut new_suit = auction[1..].to_vec();
+    new_suit.push(Suit(2, Clubs));
+    let description = sayc.refine(&new_suit).unwrap().description().into_string();
+    assert!(description.contains("Forcing"), "{}", description);
 }

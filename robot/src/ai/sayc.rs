@@ -27,8 +27,11 @@
 //! * In two over one the direct limit raise 3M takes three trumps, though
 //!   the usual way to show three is 1NT and then a jump.
 //!
-//! The notrump structure is SAYC's own (see `notrump`), with Stayman only
-//! for a four card major.  The strong 2C, the weak twos and threes, and the
+//! Responder's second bid follows page 4 of the booklet (see
+//! `responder_rebids`): a sign-off, which opener passes, an invitation,
+//! which opener accepts with enough for 25 points, game, or a new suit,
+//! which forces.  The notrump structure is SAYC's own (see `notrump`),
+//! with Stayman only for a four card major.  The strong 2C, the weak twos and threes, and the
 //! natural fallbacks are shared with Sheets.
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
@@ -170,6 +173,7 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     openings(&mut s);
     responses(&mut s, two_over_one);
     opener_rebids(&mut s, two_over_one);
+    responder_rebids(&mut s);
     competition(&mut s);
     s.add_block(|t| t.add_natural_bids());
     s.0
@@ -1078,6 +1082,349 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 );
             }
         }
+    }
+}
+
+/// What a rebid by opener showed, for responder's next bid.
+struct Shown {
+    level: usize,
+    /// The suit named, or `None` for notrump.
+    strain: Option<Suit>,
+    /// Opener's points, high card points with length.
+    lo: u8,
+    hi: u8,
+    /// The cards shown in `strain`.
+    length: u8,
+    /// Must responder bid again?
+    forcing: bool,
+}
+
+impl Shown {
+    fn call(&self) -> String {
+        call(self.level, self.strain)
+    }
+}
+
+/// A bid as `bids_string` writes it.
+fn call(level: usize, strain: Option<Suit>) -> String {
+    match strain {
+        Some(suit) => format!("{level}{}", suit.latin()),
+        None => format!("{level}N"),
+    }
+}
+
+/// Is the bid at `level` in `strain` higher than `than`?
+fn above(level: usize, strain: Option<Suit>, than: &Shown) -> bool {
+    let rank = |strain: Option<Suit>| strain.map_or(4, |s| s as usize);
+    (level, rank(strain)) > (than.level, rank(than.strain))
+}
+
+/// Opener's rebids after `1{opening} P {level}{response} P`, as
+/// `opener_rebids` writes them.
+fn opener_rebids_shown(opening: Suit, response: Suit) -> Vec<Shown> {
+    let level = cheapest_level(response, opening);
+    let shown = |level, strain, (lo, hi), length, forcing| Shown {
+        level,
+        strain,
+        lo,
+        hi,
+        length,
+        forcing,
+    };
+    // After a two level response, responder promises to bid again.
+    let two = level == 2;
+    let mut rebids = Vec::new();
+    for z in suits_except(&[opening, response]) {
+        let zlevel = if z > response { level } else { level + 1 };
+        if zlevel == 2 && z > opening {
+            rebids.push(shown(zlevel, Some(z), (16, 21), 4, true));
+        } else {
+            rebids.push(shown(zlevel, Some(z), (13, 18), 4, two));
+            if level == 1 && zlevel < 3 {
+                rebids.push(shown(zlevel + 1, Some(z), (19, 21), 4, true));
+            }
+        }
+    }
+    let raise = if is_major(response) { 4 } else { 5 };
+    rebids.push(shown(2, Some(opening), (13, 15), 5, two));
+    rebids.push(shown(3, Some(opening), (16, 18), 6, two));
+    if level == 1 {
+        rebids.push(shown(1, None, (13, 15), 0, false));
+        rebids.push(shown(2, None, (18, 19), 0, false));
+        rebids.push(shown(2, Some(response), (13, 15), raise, false));
+        rebids.push(shown(3, Some(response), (16, 18), raise, false));
+    } else {
+        rebids.push(shown(2, None, (13, 15), 0, true));
+        rebids.push(shown(3, Some(response), (13, 18), raise, true));
+    }
+    rebids
+}
+
+/// Responder's second bid, after opener's rebid, and opener's answer to an
+/// invitation.  As the booklet has it: pass, 1NT or two of a suit already
+/// bid to sign off; 2NT or three of a suit already bid to invite game;
+/// game with more; and a new suit, which forces opener to bid again.  The
+/// partnership needs 25 points for game.
+fn responder_rebids(s: &mut Sheet) {
+    for opening in Suit::ALL.iter().cloned() {
+        for response in suits_except(&[opening]) {
+            let level = cheapest_level(response, opening);
+            let first = format!(
+                "^{OPEN}1{} P {level}{} P ",
+                opening.latin(),
+                response.latin()
+            );
+            for x in opener_rebids_shown(opening, response) {
+                responder_after(s, &first, opening, response, &x);
+            }
+        }
+    }
+}
+
+/// Responder's bids after opener's rebid `x`, where `first` is the auction
+/// up to it.
+fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x: &Shown) {
+    let after = format!("{first}{} P ", x.call());
+    let regex = |bid: &str| format!("{after}{bid}$");
+    let legal = |level, strain| above(level, strain, x);
+    // Responder's high card points to invite, and to bid game.
+    let invite = 25 - x.hi.min(x.lo + 2);
+    let game = 25 - x.lo;
+    let weak = MAX.with_hcp(invite - 1);
+    let inviting = (MIN.with_hcp(invite), MAX.with_hcp(game - 1));
+    let game_values = MIN.with_hcp(game);
+
+    // Suits in which responder knows of eight cards between them, with the
+    // cards responder needs for that.
+    let mut fits: Vec<(Suit, u8)> = Vec::new();
+    if let Some(strain) = x.strain {
+        if strain == response {
+            fits.push((response, 4));
+        } else {
+            fits.push((strain, 8 - x.length));
+        }
+    }
+    if is_major(opening) && x.strain != Some(opening) {
+        fits.push((opening, 3));
+    }
+
+    // Game.
+    for &(suit, need) in fits.iter().filter(|(suit, _)| is_major(*suit)) {
+        if legal(4, Some(suit)) {
+            s.add(
+                "Game",
+                &regex(&call(4, Some(suit))),
+                "A fit",
+                Forcing::Passable,
+                [fit(game_values.min_len(suit, need), MAX)],
+            );
+        }
+    }
+    if legal(3, None) {
+        s.add(
+            "Game",
+            &regex("3N"),
+            "",
+            Forcing::Passable,
+            [fit(game_values, MAX)],
+        );
+    }
+    // Sign-offs, which opener passes.
+    let mut sign_offs: Vec<String> = Vec::new();
+    // A new suit forces, except at the two level after a 1NT rebid.
+    for q in suits_except(&[opening, response]) {
+        if Some(q) == x.strain {
+            continue;
+        }
+        let qlevel = (1..=3).find(|&l| legal(l, Some(q)));
+        if let Some(qlevel) = qlevel {
+            if x.strain.is_none() && x.level == 1 && qlevel == 2 {
+                sign_offs.push(call(qlevel, Some(q)));
+                s.add(
+                    "New suit",
+                    &regex(&call(qlevel, Some(q))),
+                    "5+ cards, to play",
+                    Forcing::Passable,
+                    [fit(MIN.min_len(q, 5), weak)],
+                );
+            } else {
+                s.add(
+                    "New suit",
+                    &regex(&call(qlevel, Some(q))),
+                    "4+ cards",
+                    Forcing::Forcing,
+                    [fit(game_values.min_len(q, 4), MAX)],
+                );
+            }
+        }
+    }
+    // An invitation.
+    if invite < game {
+        for &(suit, need) in fits.iter() {
+            if legal(3, Some(suit)) {
+                s.add(
+                    "Game invite",
+                    &regex(&call(3, Some(suit))),
+                    "A fit",
+                    Forcing::Passable,
+                    [fit(inviting.0.min_len(suit, need), inviting.1)],
+                );
+            }
+        }
+        if legal(3, Some(response)) {
+            s.add(
+                "Game invite",
+                &regex(&call(3, Some(response))),
+                "6+ cards",
+                Forcing::Passable,
+                [fit(inviting.0.min_len(response, 6), inviting.1)],
+            );
+        }
+        if legal(2, None) {
+            s.add(
+                "Game invite",
+                &regex("2N"),
+                "",
+                Forcing::Passable,
+                [fit(inviting.0, inviting.1)],
+            );
+        }
+    }
+    // A sign-off, which opener passes.
+    if invite > 6 {
+        if let Some(z) = x.strain {
+            if x.level == 1 && is_major(z) && z != response {
+                sign_offs.push(call(2, Some(z)));
+                s.add(
+                    "Raise",
+                    &regex(&call(2, Some(z))),
+                    "4+ card support",
+                    Forcing::Passable,
+                    [fit(MIN.min_len(z, 4), weak)],
+                );
+            }
+        }
+        if !x.forcing {
+            if let Some((suit, need)) = fits.first() {
+                if Some(*suit) == x.strain {
+                    s.add(
+                        "Pass",
+                        &regex("P"),
+                        "A fit, too weak to invite",
+                        Forcing::Passable,
+                        [fit(MIN.min_len(*suit, *need), weak)],
+                    );
+                }
+            }
+        }
+        if legal(2, Some(response)) {
+            sign_offs.push(call(2, Some(response)));
+            s.add(
+                "Rebid",
+                &regex(&call(2, Some(response))),
+                "6+ cards",
+                Forcing::Passable,
+                [fit(MIN.min_len(response, 6), weak)],
+            );
+        }
+        if legal(2, Some(opening)) {
+            sign_offs.push(call(2, Some(opening)));
+            s.add(
+                "Preference",
+                &regex(&call(2, Some(opening))),
+                "3+ cards",
+                Forcing::Passable,
+                [fit(MIN.min_len(opening, 3), weak)],
+            );
+        }
+        if legal(1, None) {
+            sign_offs.push("1N".to_string());
+            s.add(
+                "Rebid",
+                &regex("1N"),
+                "",
+                Forcing::Passable,
+                [fit(MIN, weak)],
+            );
+        }
+        if !x.forcing {
+            s.add(
+                "Pass",
+                &regex("P"),
+                "Too weak to invite",
+                Forcing::Passable,
+                [fit(MIN, weak)],
+            );
+        }
+    }
+    // Opener may not be passed in a forcing rebid.
+    if x.forcing {
+        let nt = if legal(2, None) { 2 } else { 3 };
+        s.add(
+            "Rebid",
+            &regex(&call(nt, None)),
+            "Nothing else fits",
+            Forcing::Passable,
+            [fit(MIN, MAX)],
+        );
+    }
+
+    for bid in sign_offs {
+        s.add(
+            "Pass",
+            &format!("{after}{bid} P P$"),
+            "Partner signed off",
+            Forcing::Passable,
+            [fit(MIN, MAX)],
+        );
+    }
+
+    // Opener accepts an invitation with enough for game: game in a major
+    // fit, and otherwise 3NT.
+    let accept = MIN.with_hcp(25 - (game - 1));
+    for &(suit, _) in fits.iter() {
+        if legal(3, Some(suit)) {
+            let game = if is_major(suit) {
+                call(4, Some(suit))
+            } else {
+                "3N".to_string()
+            };
+            s.add(
+                "Game",
+                &format!("{after}{} P {game}$", call(3, Some(suit))),
+                "Accepting",
+                Forcing::Passable,
+                [fit(accept, MAX)],
+            );
+        }
+    }
+    if legal(2, None) {
+        s.add(
+            "Game",
+            &format!("{after}2N P 3N$"),
+            "Accepting",
+            Forcing::Passable,
+            [fit(accept, MAX)],
+        );
+    }
+    if legal(3, Some(response)) {
+        let r = response.latin();
+        if is_major(response) {
+            s.add(
+                "Game",
+                &format!("{after}3{r} P 4{r}$"),
+                "Accepting, 2+ card support",
+                Forcing::Passable,
+                [fit(accept.min_len(response, 2), MAX)],
+            );
+        }
+        s.add(
+            "Game",
+            &format!("{after}3{r} P 3N$"),
+            "Accepting",
+            Forcing::Passable,
+            [fit(accept, MAX)],
+        );
     }
 }
 
