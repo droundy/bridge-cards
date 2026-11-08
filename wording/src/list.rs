@@ -88,7 +88,7 @@ impl AddTo for List {
             }
             item.add_to(&mut list);
         }
-        list.set_number(number);
+        list.mark_number(number);
         list.add_to(text);
     }
 }

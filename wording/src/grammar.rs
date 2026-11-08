@@ -24,7 +24,8 @@ impl Number {
 /// A noun such as "point" and "points", or a verb such as "is" and "are".
 ///
 /// A noun agrees with the amount of a quantity it is the head of, and a verb
-/// with the subject given to [`agree`].  Either is singular until then.
+/// with the noun phrase it is in or the subject given to [`agree`].  Either
+/// is singular until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Word {
     singular: &'static str,
@@ -78,7 +79,9 @@ impl AddTo for Word {
 /// The verbs in `predicate` agree with the subject's
 /// [number](Text::number), and nothing else does: in "partner is short in
 /// hearts" the hearts stay plural.  A clause already made with `agree` keeps
-/// its own verbs, as in "you know that partner has 5+ spades".
+/// its own verbs, as in "you know that partner has 5+ spades", and so does a
+/// noun phrase, whose verbs agree with it, as in "you have a hand that is
+/// balanced".
 pub fn agree(subject: impl AddTo, predicate: impl AddTo) -> Text {
     let subject = text!(subject);
     let mut predicate = text!(predicate);
@@ -88,12 +91,11 @@ pub fn agree(subject: impl AddTo, predicate: impl AddTo) -> Text {
 
 /// `phrase`, which is one or many as `number` says, as in
 /// `numbered("partner", Number::Singular)` or `numbered("you",
-/// Number::Plural)`.  Its first noun agrees with `number`, and so do the
-/// verbs [`agree`] gives it.
+/// Number::Plural)`.  Its first noun and its verbs agree with `number`, and
+/// so do the verbs [`agree`] gives it.
 pub fn numbered(phrase: impl AddTo, number: Number) -> Text {
     let mut text = text!(phrase);
-    text.settle_head(number);
-    text.set_number(number);
+    text.settle(number);
     text
 }
 
@@ -148,22 +150,23 @@ macro_rules! amount_from {
 }
 amount_from!(u8, u16, u32, u64, usize, i32);
 
-/// `amount`, then `noun` with its head agreeing with `number`.
+/// `amount`, then `noun`, as a noun phrase that is one or many as `number`
+/// says.
 fn quantity(amount: impl Display, number: Number, noun: impl AddTo) -> Text {
-    let mut noun = text!(noun);
-    noun.settle_head(number);
     let mut text = Text::new();
     text.push_words(&format!("{amount} "));
     noun.add_to(&mut text);
-    text.set_number(number);
+    text.settle(number);
     text
 }
 
 /// `n` of `noun`, as in "1 spade", "7 spades" or "no spades".
 ///
-/// The noun is any phrase, and only its first noun agrees, as in "7 high
-/// card points in spades".  Multiplying does the same: `n * noun` is
-/// `count(n, noun)`, and so on for the other quantities:
+/// The noun is any phrase.  Its first noun agrees with the amount, as in "7
+/// high card points in spades", and so do its verbs, as in "5 cards that
+/// are high".  A clause in it with a subject of its own needs [`agree`].
+/// Multiplying does the same: `n * noun` is `count(n, noun)`, and so on for
+/// the other quantities:
 ///
 /// ```
 /// use wording::{text, Word};
@@ -274,7 +277,8 @@ countable!(Word);
 countable!(Text);
 
 /// `phrase` with "a" or "an" in front, as in "an ace", "a king" or "an
-/// 8-card fit".  The first noun of `phrase` is singular.
+/// 8-card fit".  The phrase is singular, its first noun and its verbs too,
+/// as in "a hand with 5+ spades is strong".
 ///
 /// The choice is made when the text is displayed, from whatever is shown
 /// first, so it works before any phrase, and [`Markup`](crate::Markup)
@@ -284,11 +288,10 @@ countable!(Text);
 /// 18"), and for initials ("an NT bid", "an HCP").  Other exceptions need the
 /// article written out.
 pub fn a(phrase: impl AddTo) -> Text {
-    let mut phrase = text!(phrase);
-    phrase.settle_head(Number::Singular);
     let mut text = Text::new();
     text.push_article();
     phrase.add_to(&mut text);
+    text.settle(Number::Singular);
     text
 }
 

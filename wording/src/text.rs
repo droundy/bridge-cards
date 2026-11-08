@@ -17,9 +17,6 @@ use std::rc::Rc;
 #[derive(Clone, Default)]
 pub struct Text {
     pieces: Vec<Piece>,
-    /// The number of this phrase as a subject, once a quantity, a list or
-    /// [`numbered`](crate::numbered) has settled it.
-    number: Option<Number>,
 }
 
 #[derive(Clone)]
@@ -29,6 +26,10 @@ enum Piece {
     Word(Word, Option<Number>),
     /// Markup, and the number it agrees with once that is settled.
     Markup(Rc<dyn Markup>, Option<Number>),
+    /// The number, as a subject, of the phrase that starts here: a quantity,
+    /// a list, or a phrase given to [`a`](crate::a) or
+    /// [`numbered`](crate::numbered).
+    Number(Number),
     /// The next letter shown is a capital.
     Capital,
     /// "a" or "an", whichever goes before what is shown next.
@@ -73,9 +74,9 @@ pub trait Markup {
     /// If this is a noun, the number it takes when nothing settles one.
     ///
     /// A noun agrees with a quantity it is the noun of, as in "1 spade", and
-    /// decides the number of a subject it starts, as in "spades are trumps".
-    /// Markup that is not a noun, such as a bid, keeps the default `None` and
-    /// is always given [`Number::Singular`].
+    /// decides the number of a subject it is the first noun of, as in "spades
+    /// are trumps".  Markup that is not a noun, such as a bid, keeps the
+    /// default `None` and is always given [`Number::Singular`].
     fn noun(&self) -> Option<Number> {
         None
     }
@@ -147,28 +148,49 @@ impl Text {
     pub fn is_empty(&self) -> bool {
         self.pieces.iter().all(|p| match p {
             Piece::Words(w) => w.is_empty(),
-            Piece::Capital | Piece::Article => true,
+            Piece::Number(_) | Piece::Capital | Piece::Article => true,
             Piece::Word(..) | Piece::Markup(..) => false,
         })
     }
     /// Whether this is one or many as the subject of a verb.
     ///
-    /// That is the number a quantity, a list or [`numbered`](crate::numbered)
-    /// settled for it, or else the number of its first noun, or else
-    /// singular, as for "partner".
+    /// That is the number of the first noun or noun phrase in it, so "the
+    /// card with 5 points" is singular and "your 7 points" plural.  A noun
+    /// phrase is a quantity, a list, or a phrase given to [`a`](crate::a) or
+    /// [`numbered`](crate::numbered).  Text with neither is singular, as for
+    /// "partner".
     pub fn number(&self) -> Number {
-        self.number
-            .or_else(|| {
-                self.pieces.iter().find_map(|p| match p {
-                    Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
-                    Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
-                    _ => None,
-                })
+        self.pieces
+            .iter()
+            .find_map(|p| match p {
+                Piece::Number(n) => Some(*n),
+                Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
+                Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
+                _ => None,
             })
             .unwrap_or(Number::Singular)
     }
-    pub(crate) fn set_number(&mut self, number: Number) {
-        self.number = Some(number);
+    /// Makes this a phrase that is one or many as `number` says, as a
+    /// subject, without changing the words in it.
+    pub(crate) fn mark_number(&mut self, number: Number) {
+        self.pieces.insert(0, Piece::Number(number));
+    }
+    /// Makes this a noun phrase that is one or many as `number` says.  Its
+    /// head, the first noun whose number is not yet settled, agrees with
+    /// `number`, as in "1 card in hearts", and so do the verbs whose number
+    /// is not yet settled, as in "5 cards that are high", so that the phrase
+    /// reads the same in any sentence.
+    pub(crate) fn settle(&mut self, number: Number) {
+        self.settle_verbs(number);
+        let head = self.pieces.iter_mut().find_map(|p| match p {
+            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
+            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
+            _ => None,
+        });
+        if let Some(n) = head {
+            *n = Some(number);
+        }
+        self.mark_number(number);
     }
     /// Makes every verb whose number is not yet settled agree with `number`.
     pub(crate) fn settle_verbs(&mut self, number: Number) {
@@ -178,18 +200,6 @@ impl Text {
                     *n = Some(number);
                 }
             }
-        }
-    }
-    /// Makes the first noun whose number is not yet settled, the head of a
-    /// phrase such as "card in hearts", agree with `number`.
-    pub(crate) fn settle_head(&mut self, number: Number) {
-        let head = self.pieces.iter_mut().find_map(|p| match p {
-            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
-            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
-            _ => None,
-        });
-        if let Some(n) = head {
-            *n = Some(number);
         }
     }
     /// The text starting with a capital letter.
@@ -223,6 +233,7 @@ impl Text {
         let mut next = Next::default();
         for piece in self.pieces.iter() {
             match piece {
+                Piece::Number(_) => {}
                 Piece::Capital => next.capital = true,
                 Piece::Article => next.article = true,
                 Piece::Words(w) => next.write_words(out, w, f)?,
@@ -350,9 +361,6 @@ pub trait AddTo {
 
 impl AddTo for Text {
     fn add_to(self, text: &mut Text) {
-        if text.number.is_none() {
-            text.number = self.number;
-        }
         for piece in self.pieces {
             match piece {
                 Piece::Words(w) => text.push_words(&w),
