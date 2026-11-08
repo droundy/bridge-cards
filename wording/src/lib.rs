@@ -17,11 +17,11 @@
 //!
 //! ```
 //! use display_as::{format_as, UTF8};
-//! use wording::{agree, count, numbered, text, List, Number, Text, Word, HAS};
+//! use wording::{agree, numbered, text, List, Number, Text, Word, HAS};
 //!
 //! const POINT: Word = Word::new("point", "points");
 //! let partner = numbered("partner", Number::Singular);
-//! let hand = text!(HAS, " ", count(1u8, POINT), " and ")
+//! let hand = text!(HAS, " ", 1 * POINT, " and ")
 //!     + List::and(vec!["a singleton", "a void"]);
 //! let sentence: Text = agree(partner, hand).sentence();
 //! assert_eq!(

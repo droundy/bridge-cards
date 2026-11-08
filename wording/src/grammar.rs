@@ -1,4 +1,4 @@
-use crate::{text, AddTo, NoMarkup, Text};
+use crate::{text, AddTo, Text};
 use std::fmt::{self, Display, Formatter};
 
 /// Whether something is one or many, which nouns and verbs agree with.
@@ -100,11 +100,30 @@ impl<M, T: AddTo<M>> Subject<M> for Numbered<T> {
 /// points".
 ///
 /// The noun is any phrase, and its words and markup agree with the amount,
-/// so "at most 1 spade" is singular and "1+ spades" plural.
+/// so "at most 1 spade" is singular and "1+ spades" plural.  Make one with
+/// [`count`], [`at_least`], [`at_most`] or [`between`], or by multiplying a
+/// [`Word`], a [`Text`] or [`countable!`](crate::countable!) markup by a
+/// number or a range:
+///
+/// ```
+/// use display_as::{format_as, UTF8};
+/// use wording::{text, Text, Word};
+///
+/// const POINT: Word = Word::new("point", "points");
+/// let n: u8 = 3;
+/// let t: Text = text!(1 * POINT, ", ", n * POINT, ", ", (5..) * POINT, ", ")
+///     + (..=1) * POINT
+///     + " or "
+///     + (6..=9) * text!("high card ", POINT);
+/// assert_eq!(
+///     format_as!(UTF8, t).into_string(),
+///     "1 point, 3 points, 5+ points, at most 1 point or 6–9 high card points"
+/// );
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Quantity<M = NoMarkup> {
+pub struct Quantity<N> {
     amount: Amount,
-    noun: Text<M>,
+    noun: N,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,52 +158,102 @@ impl Display for Amount {
 }
 
 /// `n` of `noun`, as in "1 spade" or "7 spades".
-pub fn count<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+pub fn count<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::Exactly(n.into()), noun)
 }
 
 /// `n` or more of `noun`, as in "5+ spades".
-pub fn at_least<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+pub fn at_least<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::AtLeast(n.into()), noun)
 }
 
 /// `n` or fewer of `noun`, as in "at most 1 spade".
-pub fn at_most<M>(n: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+pub fn at_most<N>(n: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::AtMost(n.into()), noun)
 }
 
 /// From `lo` to `hi` of `noun`, as in "6–9 points".
-pub fn between<M>(lo: impl Into<u64>, hi: impl Into<u64>, noun: impl AddTo<M>) -> Quantity<M> {
+pub fn between<N>(lo: impl Into<u64>, hi: impl Into<u64>, noun: N) -> Quantity<N> {
     Quantity::new(Amount::Between(lo.into(), hi.into()), noun)
 }
 
-impl<M> Quantity<M> {
-    fn new(amount: Amount, noun: impl AddTo<M>) -> Self {
-        Quantity {
-            amount,
-            noun: text!(noun),
-        }
+impl<N> Quantity<N> {
+    fn new(amount: Amount, noun: N) -> Self {
+        Quantity { amount, noun }
     }
     /// An amount the other constructors can't write, as in "6½ losers".
     /// The noun agrees with `number`.
-    pub fn other(amount: impl Display, number: Number, noun: impl AddTo<M>) -> Self {
+    pub fn other(amount: impl Display, number: Number, noun: N) -> Self {
         Quantity::new(Amount::Other(amount.to_string(), number), noun)
     }
 }
 
-impl<M> AddTo<M> for Quantity<M> {
+impl<M, N: AddTo<M>> AddTo<M> for Quantity<N> {
     fn add_to(self, text: &mut Text<M>) {
         let number = self.amount.number();
         text.push_words(&format!("{} ", self.amount));
-        self.noun.agreeing(number).add_to(text);
+        text!(self.noun).agreeing(number).add_to(text);
     }
 }
 
-impl<M> Subject<M> for Quantity<M> {
+impl<M, N: AddTo<M>> Subject<M> for Quantity<N> {
     fn number(&self) -> Number {
         self.amount.number()
     }
 }
+
+/// Lets a number or a range multiply a noun into a [`Quantity`]:
+/// `5 * noun` is [`count`], `(5..) * noun` [`at_least`], `(..=1) * noun`
+/// [`at_most`] and `(6..=9) * noun` [`between`].
+///
+/// [`Word`] and [`Text`] already multiply.  Use this for markup of your
+/// own, as in `wording::countable!(Suit)`.  Rust allows these impls only in
+/// the crate that defines the noun's type.  A negative number panics.
+#[macro_export]
+macro_rules! countable {
+    ($noun:ty) => {
+        $crate::countable!(@generic [] $noun);
+    };
+    (@generic $generics:tt $noun:ty) => {
+        $crate::countable!(@each $generics $noun; u8, u16, u32, u64, usize, i32);
+    };
+    (@each $generics:tt $noun:ty; $($int:ty),*) => {
+        $( $crate::countable!(@one $generics $noun; $int); )*
+    };
+    (@one [$($g:ident),*] $noun:ty; $int:ty) => {
+        impl<$($g),*> ::core::ops::Mul<$noun> for $int {
+            type Output = $crate::Quantity<$noun>;
+            fn mul(self, noun: $noun) -> Self::Output {
+                $crate::count($crate::countable!(@u64 self), noun)
+            }
+        }
+        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeFrom<$int> {
+            type Output = $crate::Quantity<$noun>;
+            fn mul(self, noun: $noun) -> Self::Output {
+                $crate::at_least($crate::countable!(@u64 self.start), noun)
+            }
+        }
+        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeToInclusive<$int> {
+            type Output = $crate::Quantity<$noun>;
+            fn mul(self, noun: $noun) -> Self::Output {
+                $crate::at_most($crate::countable!(@u64 self.end), noun)
+            }
+        }
+        impl<$($g),*> ::core::ops::Mul<$noun> for ::core::ops::RangeInclusive<$int> {
+            type Output = $crate::Quantity<$noun>;
+            fn mul(self, noun: $noun) -> Self::Output {
+                let (lo, hi) = self.into_inner();
+                $crate::between($crate::countable!(@u64 lo), $crate::countable!(@u64 hi), noun)
+            }
+        }
+    };
+    (@u64 $n:expr) => {
+        <u64 as ::core::convert::TryFrom<_>>::try_from($n).expect("a count is never negative")
+    };
+}
+
+countable!(Word);
+countable!(@generic [M] Text<M>);
 
 /// A phrase with "a" or "an" in front of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

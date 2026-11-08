@@ -4,7 +4,7 @@ use expect_test::{expect, Expect};
 use std::fmt::{Error, Formatter};
 use wording::{
     a, agree, at_least, at_most, between, count, numbered, text, AddTo, List, Number, Plural,
-    Quantity, Text, Word, HAS, IS,
+    Quantity, Subject, Text, Word, HAS, IS,
 };
 
 /// A playing card's suit.
@@ -126,8 +126,8 @@ const LOSER: Word = Word::new("loser", "losers");
 
 #[test]
 fn markup_and_escapes() {
-    let hand = text!(HAS, " ", count(1u8, text!("high card ", POINT)), " & ")
-        + at_least(5u8, SPADES)
+    let hand = text!(HAS, " ", 1 * text!("high card ", POINT), " & ")
+        + (5..) * SPADES
         + " in 100% of "
         + Mark::Bid(1, Suit::Spades)
         + " openings";
@@ -142,18 +142,17 @@ fn markup_and_escapes() {
 
 #[test]
 fn quantities_agree() {
-    let quantities = vec![
-        count(7u8, CARD),
-        count(0u8, CARD),
-        at_least(1u8, CARD),
-        at_most(1u8, CARD),
-        between(6u8, 9u8, text!("high card ", POINT)),
-        Quantity::other("6½", Number::Plural, LOSER),
+    fn enough(quantity: impl Subject<Mark>) -> Text<Mark> {
+        agree(quantity, text!(IS, " enough"))
+    }
+    let phrases = vec![
+        enough(count(7u8, CARD)),
+        enough(count(0u8, CARD)),
+        enough(at_least(1u8, CARD)),
+        enough(at_most(1u8, CARD)),
+        enough(between(6u8, 9u8, text!("high card ", POINT))),
+        enough(Quantity::other("6½", Number::Plural, LOSER)),
     ];
-    let phrases: Vec<Text<Mark>> = quantities
-        .into_iter()
-        .map(|q| agree(q, text!(IS, " enough")))
-        .collect();
     check(
         &text!(List::with(phrases, "; ", "; ")),
         expect![[r#"
@@ -163,20 +162,24 @@ fn quantities_agree() {
     );
 }
 
+wording::countable!(Mark);
+
 #[test]
 fn quantities_of_markup() {
+    let n: u8 = 2;
     let phrases: Vec<Text<Mark>> = vec![
-        text!(count(1u8, SPADES)),
-        text!(at_least(5u8, SPADES)),
-        text!(at_most(1u8, HEARTS)),
-        text!(between(2u8, 3u8, HEARTS)),
+        text!(1 * SPADES),
+        text!((5..) * SPADES),
+        text!((..=1) * HEARTS),
+        text!((n..=n + 1) * HEARTS),
+        text!(3 * text!("long ", SPADES)),
     ];
     check(
         &text!(List::with(phrases, "; ", "; ")),
         expect![[r#"
-        1 spade; 5+ spades; at most 1 heart; 2–3 hearts
-        1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>
-        1 \spadesuit{}; 5+ \spadesuit{}; at most 1 \heartsuit{}; 2–3 \heartsuit{}"#]],
+            1 spade; 5+ spades; at most 1 heart; 2–3 hearts; 3 long spades
+            1 <span class="spades">♠</span>; 5+ <span class="spades">♠</span>; at most 1 <span class="hearts">♥</span>; 2–3 <span class="hearts">♥</span>; 3 long <span class="spades">♠</span>
+            1 \spadesuit{}; 5+ \spadesuit{}; at most 1 \heartsuit{}; 2–3 \heartsuit{}; 3 long \spadesuit{}"#]],
     );
 }
 
