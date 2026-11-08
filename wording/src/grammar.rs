@@ -23,9 +23,10 @@ impl Number {
 
 /// A noun such as "point" and "points", or a verb such as "is" and "are".
 ///
-/// A noun agrees with the amount of a quantity it is the head of, and a verb
-/// with the noun phrase it is in or the subject given to [`agree`].  Either
-/// is singular until then.
+/// A noun agrees with the amount of a quantity it is the head of.  A verb
+/// agrees with the subject of the [`Text`] it is added to, as in `partner +
+/// Word::HAS + "bid"`, or with the noun phrase it is in, as in "5 cards that
+/// are high".  Either is singular until then.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Word {
     singular: &'static str,
@@ -74,26 +75,10 @@ impl From<Word> for Text {
     }
 }
 
-/// `predicate` agreeing with `subject`, as in "partner has 5+ spades" or
-/// "North and South have bid".
-///
-/// The verbs in `predicate` agree with the subject's
-/// [number](Text::number), and nothing else does: in "partner is short in
-/// hearts" the hearts stay plural.  A clause already made with `agree` keeps
-/// its own verbs, as in "you know that partner has 5+ spades", and so does a
-/// noun phrase, whose verbs agree with it, as in "you have a hand that is
-/// balanced".
-pub fn agree(subject: impl Into<Text>, predicate: impl Into<Text>) -> Text {
-    let subject = text!(subject);
-    let mut predicate = text!(predicate);
-    predicate.settle_verbs(subject.number());
-    text!(subject, " ", predicate)
-}
-
 /// `phrase`, which is one or many as `number` says, as in
 /// `numbered("partner", Number::Singular)` or `numbered("you",
 /// Number::Plural)`.  Its first noun and its verbs agree with `number`, and
-/// so do the verbs [`agree`] gives it.
+/// so do the verbs added to it.
 pub fn numbered(phrase: impl Into<Text>, number: Number) -> Text {
     let mut text = text!(phrase);
     text.settle(number);
@@ -159,7 +144,7 @@ amount_from!(u8, u16, u32, u64, usize, i32);
 fn quantity(amount: impl Display, number: Number, noun: impl Into<Text>) -> Text {
     let mut text = Text::new();
     text.push_words(&format!("{amount} "));
-    text += noun;
+    text.append(noun.into());
     text.settle(number);
     text
 }
@@ -168,7 +153,8 @@ fn quantity(amount: impl Display, number: Number, noun: impl Into<Text>) -> Text
 ///
 /// The noun is any phrase.  Its first noun agrees with the amount, as in "7
 /// high card points in spades", and so do its verbs, as in "5 cards that
-/// are high".  A clause in it with a subject of its own needs [`agree`].
+/// are high".  A clause in it with a subject of its own goes in parentheses,
+/// as in `count(5, text!(CARD, " that ") + (partner + Word::HAS + "led"))`.
 /// Multiplying does the same: `n * noun` is `count(n, noun)`, and so on for
 /// the other quantities:
 ///
@@ -315,7 +301,7 @@ countable!(Text);
 pub fn a(phrase: impl Into<Text>) -> Text {
     let mut text = Text::new();
     text.push_article();
-    text += phrase;
+    text.append(phrase.into());
     text.settle(Number::Singular);
     text
 }

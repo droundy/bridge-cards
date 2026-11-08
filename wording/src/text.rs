@@ -19,6 +19,28 @@ use std::sync::Arc;
 /// for Text`.  `Display` shows it as plain text.  A `Text` is `Send`
 /// and `Sync`, so a server can keep one in shared state or across an
 /// `.await`.
+///
+/// Adding a verb makes a clause: the verb agrees with the subject of the
+/// text it is added to, which is its first noun or noun phrase (see
+/// [`number`](Text::number)), and plain words such as "partner" are
+/// singular.  It agrees with the number that subject ends up with, so a
+/// relative clause such as "that is high" follows the quantity it is later
+/// counted by.  `+` puts a space where letters or digits would otherwise
+/// run together, counting a [`Word`] or markup as letters, and leaves
+/// punctuation and spaces already there alone, so words can be added
+/// directly:
+///
+/// ```
+/// use wording::{numbered, Number, Word};
+///
+/// let partner = numbered("partner", Number::Singular);
+/// let you = numbered("you", Number::Plural);
+/// assert_eq!((partner.clone() + Word::HAS + "bid").to_string(), "partner has bid");
+/// // A clause inside a clause goes in parentheses, so that its verb agrees
+/// // with its own subject.
+/// let knows = you + "know that" + (partner + Word::HAS + "bid");
+/// assert_eq!(knows.to_string(), "you know that partner has bid");
+/// ```
 #[derive(Clone, Default)]
 pub struct Text {
     pieces: Vec<Piece>,
@@ -27,8 +49,8 @@ pub struct Text {
 #[derive(Clone)]
 enum Piece {
     Words(String),
-    /// A word, and the number it agrees with once that is settled.
-    Word(Word, Option<Number>),
+    /// A word, and what decides its number.
+    Word(Word, Agreement),
     /// Markup, and the number it agrees with once that is settled.
     Markup(Arc<dyn Markup>, Option<Number>),
     /// The number, as a subject, of the phrase that starts here: a quantity,
@@ -39,6 +61,17 @@ enum Piece {
     Capital,
     /// "a" or "an", whichever goes before what is shown next.
     Article,
+}
+
+/// What decides the number of a [`Word`].
+#[derive(Clone, Copy)]
+enum Agreement {
+    /// Nothing yet, so it is singular until something settles it.
+    Free,
+    /// Settled.
+    Settled(Number),
+    /// A verb that agrees with the subject this many pieces before it.
+    Subject(usize),
 }
 
 /// Something that displays itself differently in each format, such as a bid,
@@ -146,7 +179,7 @@ impl Text {
         }
     }
     pub(crate) fn push_word(&mut self, word: Word) {
-        self.pieces.push(Piece::Word(word, None));
+        self.pieces.push(Piece::Word(word, Agreement::Free));
     }
     pub(crate) fn push_article(&mut self) {
         self.pieces.push(Piece::Article);
@@ -167,15 +200,27 @@ impl Text {
     /// [`numbered`](crate::numbered).  Text with neither is singular, as for
     /// "partner".
     pub fn number(&self) -> Number {
-        self.pieces
-            .iter()
-            .find_map(|p| match p {
-                Piece::Number(n) => Some(*n),
-                Piece::Word(w, n) if w.is_noun() => Some(n.unwrap_or(Number::Singular)),
-                Piece::Markup(m, n) => m.noun().map(|default| n.unwrap_or(default)),
-                _ => None,
-            })
-            .unwrap_or(Number::Singular)
+        self.subject()
+            .map_or(Number::Singular, |i| self.number_at(i))
+    }
+    /// Where the subject is: the first noun or noun phrase.
+    fn subject(&self) -> Option<usize> {
+        self.pieces.iter().position(|p| match p {
+            Piece::Number(_) => true,
+            Piece::Word(w, _) => w.is_noun(),
+            Piece::Markup(m, _) => m.noun().is_some(),
+            _ => false,
+        })
+    }
+    /// The number of the piece at `i`.
+    fn number_at(&self, i: usize) -> Number {
+        match &self.pieces[i] {
+            Piece::Number(n) => *n,
+            Piece::Word(_, Agreement::Settled(n)) => *n,
+            Piece::Word(_, Agreement::Subject(back)) => self.number_at(i - back),
+            Piece::Markup(m, n) => n.or(m.noun()).unwrap_or(Number::Singular),
+            _ => Number::Singular,
+        }
     }
     /// Makes this a phrase that is one or many as `number` says, as a
     /// subject, without changing the words in it.
@@ -188,26 +233,27 @@ impl Text {
     /// is not yet settled, as in "5 cards that are high", so that the phrase
     /// reads the same in any sentence.
     pub(crate) fn settle(&mut self, number: Number) {
-        self.settle_verbs(number);
-        let head = self.pieces.iter_mut().find_map(|p| match p {
-            Piece::Word(w, n @ None) if w.is_noun() => Some(n),
-            Piece::Markup(m, n @ None) if m.noun().is_some() => Some(n),
-            _ => None,
-        });
-        if let Some(n) = head {
-            *n = Some(number);
-        }
-        self.mark_number(number);
-    }
-    /// Makes every verb whose number is not yet settled agree with `number`.
-    pub(crate) fn settle_verbs(&mut self, number: Number) {
         for piece in self.pieces.iter_mut() {
-            if let Piece::Word(w, n @ None) = piece {
+            if let Piece::Word(w, a @ Agreement::Free) = piece {
                 if !w.is_noun() {
-                    *n = Some(number);
+                    *a = Agreement::Settled(number);
                 }
             }
         }
+        for piece in self.pieces.iter_mut() {
+            match piece {
+                Piece::Word(w, a @ Agreement::Free) if w.is_noun() => {
+                    *a = Agreement::Settled(number);
+                    break;
+                }
+                Piece::Markup(m, n @ None) if m.noun().is_some() => {
+                    *n = Some(number);
+                    break;
+                }
+                _ => (),
+            }
+        }
+        self.mark_number(number);
     }
     /// The text starting with a capital letter.
     ///
@@ -238,15 +284,13 @@ impl Text {
 
     fn write(&self, out: Out, f: &mut Formatter) -> fmt::Result {
         let mut next = Next::default();
-        for piece in self.pieces.iter() {
+        for (i, piece) in self.pieces.iter().enumerate() {
             match piece {
                 Piece::Number(_) => {}
                 Piece::Capital => next.capital = true,
                 Piece::Article => next.article = true,
                 Piece::Words(w) => next.write_words(out, w, f)?,
-                Piece::Word(word, n) => {
-                    next.write_words(out, word.form(n.unwrap_or(Number::Singular)), f)?
-                }
+                Piece::Word(word, _) => next.write_words(out, word.form(self.number_at(i)), f)?,
                 Piece::Markup(m, n) => {
                     let number = n.or(m.noun()).unwrap_or(Number::Singular);
                     if std::mem::take(&mut next.article) {
@@ -357,14 +401,102 @@ impl fmt::Debug for Text {
 }
 
 impl Text {
-    /// Adds `other` to the end, keeping the numbers its words have settled.
+    /// Adds `other` to the end as it is, keeping what decides the number of
+    /// each of its words.
     pub(crate) fn append(&mut self, other: Text) {
+        self.join(other, FreeVerbs::Stay);
+    }
+    /// Adds `other` to the end as `+` does: with a space where words would
+    /// run together, and with each verb of `other` whose number is free
+    /// agreeing with this text's subject.
+    fn add_clause(&mut self, other: Text) {
+        if self.needs_space_before(&other) {
+            self.push_words(" ");
+        }
+        let verbs = self.free_verbs_agree_with();
+        self.join(other, verbs);
+    }
+    /// What the free verbs of a text added with `+` agree with: this text's
+    /// subject, or the singular when it has none, as for "partner".  They
+    /// stay free when nothing is shown yet, or when this text starts with a
+    /// free verb, since then it is a predicate whose subject is still to come.
+    fn free_verbs_agree_with(&self) -> FreeVerbs {
+        match (self.subject(), self.first_shown()) {
+            (_, None) => FreeVerbs::Stay,
+            (Some(subject), _) => FreeVerbs::Subject(subject),
+            (None, Some(Piece::Word(w, Agreement::Free))) if !w.is_noun() => FreeVerbs::Stay,
+            (None, _) => FreeVerbs::Singular,
+        }
+    }
+    /// Adds the pieces of `other`, settling its free verbs as `verbs` says.
+    fn join(&mut self, other: Text, verbs: FreeVerbs) {
         for piece in other.pieces {
-            match piece {
-                Piece::Words(w) => self.push_words(&w),
-                piece => self.pieces.push(piece),
+            match (piece, verbs) {
+                (Piece::Words(w), _) => self.push_words(&w),
+                (Piece::Word(w, Agreement::Free), FreeVerbs::Subject(at)) if !w.is_noun() => {
+                    let back = self.pieces.len() - at;
+                    self.pieces.push(Piece::Word(w, Agreement::Subject(back)));
+                }
+                (Piece::Word(w, Agreement::Free), FreeVerbs::Singular) if !w.is_noun() => {
+                    let singular = Agreement::Settled(Number::Singular);
+                    self.pieces.push(Piece::Word(w, singular));
+                }
+                (piece, _) => self.pieces.push(piece),
             }
         }
+    }
+    /// The first piece that shows something other than spaces.
+    fn first_shown(&self) -> Option<&Piece> {
+        self.pieces.iter().find(|p| shows(p))
+    }
+    /// Does a space go between this and `other`?  It does where letters or
+    /// digits would otherwise run together, counting a [`Word`] or markup as
+    /// letters, so punctuation and spaces already there are left alone.
+    fn needs_space_before(&self, other: &Text) -> bool {
+        let left = match self.pieces.iter().rev().find(|p| !is_marker(p)) {
+            Some(Piece::Words(w)) => w.ends_with(char::is_alphanumeric),
+            Some(_) => true,
+            None => false,
+        };
+        let right = match other
+            .pieces
+            .iter()
+            .find(|p| !is_marker(p) || matches!(p, Piece::Article))
+        {
+            Some(Piece::Words(w)) => w.starts_with(char::is_alphanumeric),
+            Some(_) => true,
+            None => false,
+        };
+        left && right
+    }
+}
+
+/// What happens to verbs whose number is free when a text is added.
+#[derive(Clone, Copy)]
+enum FreeVerbs {
+    /// They stay free.
+    Stay,
+    /// They agree with the subject at this index.
+    Subject(usize),
+    /// They are singular.
+    Singular,
+}
+
+/// Is this piece only a marker, showing nothing itself?
+fn is_marker(piece: &Piece) -> bool {
+    match piece {
+        Piece::Words(w) => w.is_empty(),
+        Piece::Number(_) | Piece::Capital | Piece::Article => true,
+        Piece::Word(..) | Piece::Markup(..) => false,
+    }
+}
+
+/// Does this piece show something other than spaces?
+fn shows(piece: &Piece) -> bool {
+    match piece {
+        Piece::Words(w) => !w.trim().is_empty(),
+        Piece::Word(..) | Piece::Markup(..) => true,
+        Piece::Number(_) | Piece::Capital | Piece::Article => false,
     }
 }
 
@@ -380,7 +512,7 @@ impl<T: Into<Text>> Add<T> for Text {
 /// `text += piece` adds anything that converts into a `Text`.
 impl<T: Into<Text>> AddAssign<T> for Text {
     fn add_assign(&mut self, piece: T) {
-        self.append(piece.into());
+        self.add_clause(piece.into());
     }
 }
 

@@ -4,13 +4,13 @@ use crate::{Number, Text};
 /// plural as a subject.
 ///
 /// ```
-/// use wording::{agree, and, or, text, Word};
+/// use wording::{and, or, Word};
 ///
 /// let suits = or(["clubs", "diamonds", "hearts"]);
 /// assert_eq!(suits.to_string(), "clubs, diamonds or hearts");
 ///
 /// let bidders = and(["North", "South"]);
-/// assert_eq!(agree(bidders, text!(Word::IS, " silent")).to_string(), "North and South are silent");
+/// assert_eq!((bidders + Word::IS + "silent").to_string(), "North and South are silent");
 /// ```
 pub fn and(items: impl IntoIterator<Item = impl Into<Text>>) -> Text {
     join(items, ", ", " and ", Some(Number::Plural))

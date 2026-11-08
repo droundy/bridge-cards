@@ -4,8 +4,8 @@
 //! Gluing sentences together with `format!` goes wrong as soon as a count is
 //! one ("1 spades"), a list has one item ("a, and b"), or a sentence starts
 //! with a variable.  Here each piece decides its own grammar instead: a
-//! quantity such as [`count`] makes its noun agree with its amount, [`agree`]
-//! makes the verbs of a predicate agree with their subject, [`a`] picks "a"
+//! quantity such as [`count`] makes its noun agree with its amount, a verb
+//! added with `+` agrees with the subject before it, [`a`] picks "a"
 //! or "an", and [`and`], [`or`] and [`then`] join items into a list.  A
 //! [`Word`] is a noun such as "point" or a verb such as [`Word::HAS`], with a
 //! singular and a plural form.
@@ -18,12 +18,12 @@
 //! as a playing card that HTML shows in colour, displays itself.
 //!
 //! ```
-//! use wording::{a, agree, and, numbered, text, Number, Word};
+//! use wording::{a, and, numbered, Number, Word};
 //!
 //! const POINT: Word = Word::noun("point", "points");
 //! let partner = numbered("partner", Number::Singular);
 //! let hand = and([1 * POINT, a("singleton"), a("void")]);
-//! let sentence = agree(partner, text!(Word::HAS, " ", hand)).sentence();
+//! let sentence = (partner + Word::HAS + hand).sentence();
 //! assert_eq!(sentence.to_string(), "Partner has 1 point, a singleton and a void.");
 //! ```
 #![deny(missing_docs)]
@@ -32,6 +32,6 @@ mod grammar;
 mod list;
 mod text;
 
-pub use grammar::{a, agree, at_least, at_most, between, count, numbered, Amount, Number, Word};
+pub use grammar::{a, at_least, at_most, between, count, numbered, Amount, Number, Word};
 pub use list::{and, or, then};
 pub use text::{Form, Markup, Text};

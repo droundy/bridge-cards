@@ -3,8 +3,8 @@ use display_as::{format_as, LaTeX, HTML, UTF8};
 use expect_test::{expect, Expect};
 use std::fmt::{self, Formatter};
 use wording::{
-    a, agree, and, at_least, at_most, between, count, numbered, or, text, then, Amount, Form,
-    Markup, Number, Text, Word,
+    a, and, at_least, at_most, between, count, numbered, or, text, then, Amount, Form, Markup,
+    Number, Text, Word,
 };
 
 /// A playing card's suit as a noun, which plain text spells out and HTML and
@@ -113,13 +113,17 @@ const LOSER: Word = Word::noun("loser", "losers");
 
 #[test]
 fn markup_and_escapes() {
-    let hand = text!(Word::HAS, " ", 1 * text!("high card ", POINT), " & ")
+    let partner = numbered("partner", Number::Singular);
+    let sentence = partner
+        + Word::HAS
+        + 1 * text!("high card ", POINT)
+        + " & "
         + (5..) * SPADES
         + " in 100% of "
         + Bid(1, Suit::Spades)
         + " openings";
     check(
-        agree(numbered("partner", Number::Singular), hand).sentence(),
+        sentence.sentence(),
         expect![[r#"
             Partner has 1 high card point & 5+ spades in 100% of 1♠ openings.
             Partner has 1 high card point &amp; 5+ <span class="spades">♠</span> in 100% of 1<span class="spades">♠</span> openings.
@@ -130,7 +134,7 @@ fn markup_and_escapes() {
 #[test]
 fn quantities_agree() {
     fn enough(quantity: Text) -> Text {
-        agree(quantity, text!(Word::IS, " enough"))
+        quantity + Word::IS + "enough"
     }
     check(
         joined(
@@ -182,39 +186,36 @@ fn only_the_head_noun_agrees() {
 
 #[test]
 fn subjects_agree() {
+    const KNOW: Word = Word::verb("knows", "know");
     let partner = || numbered("partner", Number::Singular);
     let you = || numbered("you", Number::Plural);
     let five_spades = (5..) * SPADES;
     check(
         joined(
             vec![
-                agree(
-                    and([
-                        numbered("North", Number::Singular),
-                        numbered("South", Number::Singular),
-                    ]),
-                    text!(Word::HAS, " bid"),
-                ),
-                agree(or([partner(), you()]), text!(Word::IS, " declarer")),
-                agree(SPADES, text!(Word::IS, " trumps")),
-                agree(partner(), text!(Word::IS, " short in ", HEARTS)),
-                agree(
-                    you(),
-                    text!(Word::HAS, " opened and ", Word::IS, " forcing"),
-                ),
-                agree(partner(), text!(Word::HAS, " ", five_spades.clone())),
-                agree(five_spades, text!(Word::IS, " enough")),
-                agree(
-                    you(),
-                    text!("know that ", agree(partner(), text!(Word::HAS, " bid"))),
-                ),
+                and([
+                    numbered("North", Number::Singular),
+                    numbered("South", Number::Singular),
+                ]) + Word::HAS
+                    + "bid",
+                or([partner(), you()]) + Word::IS + "declarer",
+                text!(SPADES) + Word::IS + "trumps",
+                partner() + Word::IS + "short in " + HEARTS,
+                // A predicate of its own, whose verbs all agree with the
+                // subject it is added to.
+                you() + text!(Word::HAS, " opened and ", Word::IS, " forcing"),
+                you() + Word::HAS + "opened and" + Word::IS + "forcing",
+                partner() + Word::HAS + five_spades.clone(),
+                five_spades + Word::IS + "enough",
+                // A clause in parentheses agrees with its own subject.
+                you() + KNOW + "that " + (partner() + Word::HAS + "bid"),
             ],
             "; ",
         ),
         expect![[r#"
-            North and South have bid; partner or you are declarer; spades are trumps; partner is short in hearts; you have opened and are forcing; partner has 5+ spades; 5+ spades are enough; you know that partner has bid
-            North and South have bid; partner or you are declarer; <span class="spades">♠</span> are trumps; partner is short in <span class="hearts">♥</span>; you have opened and are forcing; partner has 5+ <span class="spades">♠</span>; 5+ <span class="spades">♠</span> are enough; you know that partner has bid
-            North and South have bid; partner or you are declarer; \spadesuit{} are trumps; partner is short in \heartsuit{}; you have opened and are forcing; partner has 5+ \spadesuit{}; 5+ \spadesuit{} are enough; you know that partner has bid"#]],
+            North and South have bid; partner or you are declarer; spades are trumps; partner is short in hearts; you have opened and are forcing; you have opened and are forcing; partner has 5+ spades; 5+ spades are enough; you know that partner has bid
+            North and South have bid; partner or you are declarer; <span class="spades">♠</span> are trumps; partner is short in <span class="hearts">♥</span>; you have opened and are forcing; you have opened and are forcing; partner has 5+ <span class="spades">♠</span>; 5+ <span class="spades">♠</span> are enough; you know that partner has bid
+            North and South have bid; partner or you are declarer; \spadesuit{} are trumps; partner is short in \heartsuit{}; you have opened and are forcing; you have opened and are forcing; partner has 5+ \spadesuit{}; 5+ \spadesuit{} are enough; you know that partner has bid"#]],
     );
 }
 
@@ -230,34 +231,17 @@ fn noun_phrases_keep_their_number() {
     check(
         joined(
             vec![
-                agree(you(), text!(Word::HAS, " ", balanced())),
-                agree(partner(), text!(Word::HAS, " ", balanced())),
-                agree(you(), text!(Word::HAS, " ", high())),
-                agree(partner(), text!(Word::HAS, " ", high())),
-                agree(high(), text!(Word::IS, " enough")),
+                you() + Word::HAS + balanced(),
+                partner() + Word::HAS + balanced(),
+                you() + Word::HAS + high(),
+                partner() + Word::HAS + high(),
+                high() + Word::IS + "enough",
                 // A clause with a subject of its own keeps its own verbs.
-                agree(
-                    you(),
-                    text!(
-                        Word::HAS,
-                        " ",
-                        a(text!(
-                            SUIT,
-                            " that ",
-                            agree(partner(), text!(Word::HAS, " bid"))
-                        ))
-                    ),
-                ),
+                you() + Word::HAS + a(text!(SUIT, " that ") + (partner() + Word::HAS + "bid")),
                 // The first noun or noun phrase decides a subject's number.
-                agree(
-                    a(text!(HAND, " with ", (5..) * SPADES)),
-                    text!(Word::IS, " strong"),
-                ),
-                agree(
-                    text!("the ", CARD, " with ", count(5, POINT)),
-                    text!(Word::IS, " led"),
-                ),
-                agree(text!("your ", count(7, POINT)), text!(Word::IS, " enough")),
+                a(text!(HAND, " with ", (5..) * SPADES)) + Word::IS + "strong",
+                text!("the ", CARD, " with ", count(5, POINT)) + Word::IS + "led",
+                text!("your ", count(7, POINT)) + Word::IS + "enough",
             ],
             "; ",
         ),
@@ -346,15 +330,16 @@ fn sentences() {
                 text!("bid it. ").sentence(),
                 text!("say \"pass.\"").sentence(),
                 text!("(", "maybe)").sentence(),
-                agree(SPADES, text!(Word::IS, " trumps")).sentence(),
+                (text!(SPADES) + Word::IS + "trumps").sentence(),
+                text!("(") + Word::IS + "it?)",
                 text!(a("ace"), " is high").sentence(),
             ],
             " ",
         ),
         expect![[r#"
-            Bid it. Is that forcing? 1♠ is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). Spades are trumps. An ace is high.
-            Bid it. Is that forcing? 1<span class="spades">♠</span> is natural. Nothing optional. Has it Has it. Bid it. Say &quot;pass.&quot; (Maybe). <span class="spades">♠</span> are trumps. An ace is high.
-            Bid it. Is that forcing? 1\spadesuit{} is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). \spadesuit{} are trumps. An ace is high."#]],
+            Bid it. Is that forcing? 1♠ is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). Spades are trumps. (is it?) An ace is high.
+            Bid it. Is that forcing? 1<span class="spades">♠</span> is natural. Nothing optional. Has it Has it. Bid it. Say &quot;pass.&quot; (Maybe). <span class="spades">♠</span> are trumps. (is it?) An ace is high.
+            Bid it. Is that forcing? 1\spadesuit{} is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). \spadesuit{} are trumps. (is it?) An ace is high."#]],
     );
 }
 
