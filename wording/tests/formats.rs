@@ -331,3 +331,11 @@ fn sentences() {
             Bid it. Is that forcing? 1\spadesuit{} is natural. Nothing optional. Has it Has it. Bid it. Say "pass." (Maybe). \spadesuit{} are trumps. An ace is high."#]],
     );
 }
+
+#[test]
+fn text_is_send_and_sync() {
+    // So that a server can keep text in shared state or across an `.await`.
+    fn send_and_sync<T: Send + Sync>() {}
+    send_and_sync::<Text>();
+    send_and_sync::<List>();
+}
