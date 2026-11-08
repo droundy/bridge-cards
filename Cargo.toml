@@ -21,7 +21,7 @@ debug = true
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 
-display-as = { version = "0.7.0", optional = true }
+display-as = { version = "0.8.0", optional = true }
 scaling = { version = "0.10.2", optional = true }
 
 [features]
@@ -45,5 +45,6 @@ harness = false
 members = [
     "abridge",
     "bridge-solver",
-    "robot"
+    "robot",
+    "wording"
 ]

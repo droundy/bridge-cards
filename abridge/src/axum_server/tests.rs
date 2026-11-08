@@ -75,6 +75,11 @@ async fn serves_the_pages() {
         assert!(head.starts_with("HTTP/1.1 200"), "{path}: {head}");
         assert!(body.contains("New table"), "{path} is not the index");
     }
+    let (head, _) = get(addr, "/").await;
+    assert!(
+        header(&head, "content-type").is_some_and(|t| t.starts_with("text/html")),
+        "{head}"
+    );
     let (head, _) = get(addr, "/style.css").await;
     assert_eq!(header(&head, "content-type"), Some("text/css"));
 
@@ -238,9 +243,8 @@ async fn an_idle_table_tells_its_tabs_why_it_closed() {
     }
 }
 
-type Client = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Client =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// Connects to the websocket at `path`, and waits for the first thing it sends.
 async fn connect(addr: SocketAddr, path: &str) -> Client {
@@ -281,7 +285,10 @@ async fn an_empty_table_waits_for_its_players_to_come_back() {
     assert!(eventually(&game, |g| g.connections[Seat::South].is_none()).await);
 
     close_idle_tables(&app.tables, Instant::now() + Duration::from_mins(9)).await;
-    assert!(app.tables.get("t").is_some(), "an empty table closed too soon");
+    assert!(
+        app.tables.get("t").is_some(),
+        "an empty table closed too soon"
+    );
     close_idle_tables(&app.tables, Instant::now() + Duration::from_mins(11)).await;
     assert!(app.tables.get("t").is_none(), "an empty table stayed open");
 }
@@ -396,4 +403,51 @@ async fn the_robot_acts_only_for_seats_nobody_is_at() {
     send(&mut robot, &Action::Bid(Seat::West, Bid::Pass)).await;
     recv(&mut south).await;
     assert_eq!(vec![Bid::Pass, Bid::Pass], game.read().await.bids);
+}
+
+#[tokio::test]
+async fn a_seat_whose_page_never_connected_is_shown_as_a_robot() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    // West's page is loaded, but its websocket never connects.
+    get(addr, "/t/west").await;
+    assert!(matches!(
+        game.read().await.names[Seat::West],
+        PlayerName::Human(_)
+    ));
+    let _robot = connect(addr, "t/south/robot/ws").await;
+    let mut south = connect(addr, "t/south/ws").await;
+    send(&mut south, &Action::ToggleCountForMe).await;
+    recv(&mut south).await;
+    // The robot plays West, so West is named as a robot.
+    let g = game.read().await;
+    assert!(
+        matches!(g.names[Seat::West], PlayerName::Robot(_)),
+        "{:?}",
+        g.names[Seat::West]
+    );
+    assert!(matches!(g.names[Seat::South], PlayerName::Human(_)));
+}
+
+#[tokio::test]
+async fn a_websocket_takes_its_seat_with_its_name() {
+    use tungstenite::client::IntoClientRequest;
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    // With a name cookie, that name.
+    let mut request = ws_url(addr, "t/south/ws").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Cookie", "name=Ada".parse().unwrap());
+    let (mut south, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    recv(&mut south).await;
+    assert_eq!(
+        PlayerName::Human("Ada".to_string()),
+        game.read().await.names[Seat::South]
+    );
+    // Without one, the name the page showed.
+    get(addr, "/t/east").await;
+    let shown = game.read().await.names[Seat::East].clone();
+    let _east = connect(addr, "t/east/ws").await;
+    assert_eq!(shown, game.read().await.names[Seat::East]);
 }
