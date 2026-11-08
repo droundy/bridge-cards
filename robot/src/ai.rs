@@ -165,12 +165,9 @@ impl Described {
             entries,
         }
     }
-    /// Every way a hand can fit this bid, entry by entry in table order.
-    pub(crate) fn ways(&self) -> Vec<booklet::Way> {
-        self.entries
-            .iter()
-            .flat_map(|(_, c)| booklet::Way::of(c))
-            .collect()
+    /// The entries that describe this bid, each with its index in the table.
+    pub(crate) fn entries(&self) -> &[(usize, Convention)] {
+        &self.entries
     }
     /// The position in the table of the entry the robot goes by for `hand`: the
     /// first of the entries that describes this bid and fits it.
@@ -192,11 +189,23 @@ impl Described {
 /// the bids when one entry describes several.  `described` has the highest
 /// bid first, as `Convention::described_bids` gives it.
 pub(crate) fn robot_choice(described: &[Described], hand: &HandValuation) -> Option<Bid> {
+    choose(&fitting_calls(described, hand))
+}
+
+/// The bids among `described` that fit `hand`, each with the position in the
+/// table of the entry that makes it fit, in the order of `described`.
+pub(crate) fn fitting_calls(described: &[Described], hand: &HandValuation) -> Vec<(usize, Bid)> {
     described
         .iter()
         .filter_map(|d| d.rank(hand).map(|i| (i, d.bid)))
-        .min_by_key(|&(i, _)| i)
-        .map(|(_, bid)| bid)
+        .collect()
+}
+
+/// The bid the robot makes of `fitting`, as `fitting_calls` gives them: the
+/// one whose entry comes first, and the earlier of those in `fitting` (the
+/// higher bid) when it is the same entry.
+pub(crate) fn choose(fitting: &[(usize, Bid)]) -> Option<Bid> {
+    fitting.iter().min_by_key(|&&(i, _)| i).map(|&(_, bid)| bid)
 }
 
 impl Convention {
@@ -481,7 +490,7 @@ const OR: &str = "<br/><em>or</em><br/>";
 
 /// One way that a hand can fit a bid: bounds on its values, and rules about
 /// its shape that the bounds cannot say.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Fit {
     min: HandValuation,
     max: HandValuation,
