@@ -110,21 +110,26 @@ pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
         let handvalue = hand.values();
-        for (b, c) in self.0.ranked_bids(history) {
+        let ranked = self.0.ranked_bids(history);
+        if let Some((b, c)) = first_fitting(&ranked, handvalue) {
             let (min, max) = c.bounds();
-            if c.fits(handvalue) {
-                println!(
-                    "Bidding {:?} with convention {}",
-                    b,
-                    format_as!(HTML, c.description()).into_string()
-                );
-                println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
-                println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
-                return b;
-            }
+            println!(
+                "Bidding {:?} with convention {}",
+                b,
+                format_as!(HTML, c.description()).into_string()
+            );
+            println!("  hcp: {} < {} < {}", min.hcp, handvalue.hcp, max.hcp);
+            println!("  lhcp: {} < {} < {}", min.lhcp, handvalue.lhcp, max.lhcp);
+            return *b;
         }
         Bid::Pass
     }
+}
+
+/// The first of `ranked` bids, as given by `ranked_bids`, whose bounds fit
+/// `hand`.  That is the bid the robot makes, or it passes if there is none.
+fn first_fitting(ranked: &[(Bid, Convention)], hand: HandValuation) -> Option<&(Bid, Convention)> {
+    ranked.iter().find(|(_, c)| c.fits(hand))
 }
 
 impl Convention {
@@ -358,9 +363,12 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
+mod booklet;
 mod sayc;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
+pub use booklet::Booklet;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum Forcing {
     Forced,
     Passable,
@@ -1880,21 +1888,27 @@ fn test_sheets() {
     );
 }
 
+/// The four hands of the deal numbered `seed`, dealer first.
+fn seeded_hands(seed: u64) -> Vec<Cards> {
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut deck = Cards::ALL;
+    let mut hands = Vec::new();
+    for _ in 0..3 {
+        hands.push(deck.pick_rng(&mut rng, 13).unwrap());
+    }
+    hands.push(deck);
+    hands
+}
+
 /// Bid `deals` seeded deals with the robot in all four seats.  Each result is
 /// the seed, the hands (dealer first) and the auction.
 #[cfg(test)]
 fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
-    use rand::SeedableRng;
     let mut bidder = ConventionalBid(convention);
     let mut out = Vec::new();
     for seed in 0..deals {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let mut deck = Cards::ALL;
-        let mut hands = Vec::new();
-        for _ in 0..3 {
-            hands.push(deck.pick_rng(&mut rng, 13).unwrap());
-        }
-        hands.push(deck);
+        let hands = seeded_hands(seed);
         let mut bids = Vec::new();
         while bids.len() < 4 || bids[bids.len() - 3..] != [Bid::Pass, Bid::Pass, Bid::Pass] {
             let bid = bidder.bid(&bids, hands[bids.len() % 4]);

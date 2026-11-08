@@ -1,4 +1,4 @@
-pub use ai::{choose_play, BiddingSystem, BridgeAi, Convention};
+pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention};
 use bridge_deck::{Card, Cards};
 use display_as::{with_template, DisplayAs, HTML};
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 mod ai;
 mod utils;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Bid {
     Pass,
     Double,

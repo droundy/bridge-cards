@@ -934,7 +934,7 @@ fn iterate() {
 }
 
 /// The counts associated with a given hand
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct HandValuation {
     /// The high card points
     pub hcp: u8,
@@ -1060,7 +1060,7 @@ impl std::ops::IndexMut<Card> for CardMap {
 }
 
 /// A data type to hold an array of items, one per suit.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PerSuit<T> {
     internal: [T; 4],
 }
