@@ -766,11 +766,13 @@ impl Convention {
         }
     }
     /// How forcing partner's earlier bids were. A game force sticks once
-    /// seen; otherwise the result is the forcing level of partner's first bid.
+    /// seen; otherwise the result is the forcing level of partner's first bid
+    /// that was not a pass, so that a pass in third or fourth seat before
+    /// opening or responding does not hide it.
     fn partner_forcing(&self, actual_bids: &[Bid]) -> Forcing {
         let mut forcing = Forcing::Passable;
         for bids in earlier_auctions(actual_bids, 2) {
-            if forcing != Forcing::GameForcing {
+            if forcing != Forcing::GameForcing && bids.last() != Some(&Bid::Pass) {
                 forcing = self.check_forcing(bids);
             }
         }
@@ -1016,14 +1018,7 @@ impl Convention {
     /// Notrump openings with Stayman, Jacobi transfers and invitations.  The
     /// maximum `(hcp, shcp, lhcp)` for a 2NT opening is `two_nt_max`, and
     /// Stayman takes at least `stayman_hcp` points.
-    ///
-    /// The notrump openings also follow `opening_shape`, if any.
-    fn add_notrump(
-        &mut self,
-        two_nt_max: (u8, u8, u8),
-        stayman_hcp: u8,
-        opening_shape: Option<ShapeRule>,
-    ) {
+    fn add_notrump(&mut self, two_nt_max: (u8, u8, u8), stayman_hcp: u8) {
         let sheets = self;
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
@@ -1032,38 +1027,25 @@ impl Convention {
         min_nt.length = [2, 2, 2, 2].into();
         let mut max_nt = max;
         max_nt.length = [5, 5, 5, 5].into();
-        let opening = |regex: &str, the_name, min, max| match opening_shape {
-            None => Convention::Simple {
-                regex: RegexSet::new([regex]).unwrap(),
-                max,
-                min,
-                the_description: format_as!(HTML, ""),
-                the_name,
-                forcing: Forcing::Passable,
-            },
-            Some(rule) => Convention::Rule {
-                regex: RegexSet::new([regex]).unwrap(),
-                fits: vec![Fit::new(min, max).with(rule)],
-                the_description: format_as!(HTML, ""),
-                the_name,
-                forcing: Forcing::Passable,
-            },
-        };
-        sheets.add(opening(
-            r"^(P )*1N$",
-            "Opening 1NT",
-            min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
-            max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
-        ));
-        sheets.add(opening(
-            r"^(P )*2N$",
-            "Opening 2NT",
-            min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
-            max_nt
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new([r"^(P )*1N$"]).unwrap(),
+            max: max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
+            min: min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
+            the_description: format_as!(HTML, ""),
+            the_name: "Opening 1NT",
+            forcing: Forcing::Passable,
+        });
+        sheets.add(Convention::Simple {
+            regex: RegexSet::new([r"^(P )*2N$"]).unwrap(),
+            max: max_nt
                 .with_hcp(two_nt_max.0)
                 .with_shcp(two_nt_max.1)
                 .with_lhcp(two_nt_max.2),
-        ));
+            min: min_nt.with_hcp(20).with_shcp(20).with_lhcp(20),
+            the_description: format_as!(HTML, ""),
+            the_name: "Opening 2NT",
+            forcing: Forcing::Passable,
+        });
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*1N [PX] 2N$"]).unwrap(),
             max: max.with_hcp(10),
@@ -2002,7 +1984,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
 
-        sheets.add_notrump((22, 23, 23), 0, None);
+        sheets.add_notrump((22, 23, 23), 0);
 
         sheets.add_strong_two_clubs(23);
 
@@ -2897,5 +2879,78 @@ fn sheets_entries_do_not_overlap() {
     assert_eq!(
         Vec::<(usize, String)>::new(),
         overlaps(&Convention::sheets(), 200)
+    );
+}
+
+#[test]
+fn sayc_responds_to_1nt_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let over = |hand: &str| system_bid(BiddingSystem::Sayc, &[NT(1), Pass], hand);
+    // Stayman needs a four card major, so game and invitational hands
+    // without one bid notrump.
+    assert_eq!(NT(3), over("S 8 H AJ9 D QJ842 C Q975"));
+    assert_eq!(NT(2), over("S 65 H 52 D AK42 C J10963"));
+    assert_eq!(Suit(2, Clubs), over("S KJ32 H 52 D AK42 C J63"));
+    // A transfer with five hearts, however weak, and the relay to 3C with
+    // a weak six card minor.
+    assert_eq!(Suit(2, Diamonds), over("S 32 H 97532 D 542 C 763"));
+    assert_eq!(Suit(2, Spades), over("S J76 H 92 D J98653 C Q5"));
+    assert_eq!(NT(4), over("S KQ2 H AJ3 D KQ54 C Q32"));
+    // Opener accepts the transfer, at the three level with 17 and four
+    // trumps.
+    let transfer = [NT(1), Pass, Suit(2, Diamonds), Pass];
+    assert_eq!(
+        Suit(3, Hearts),
+        system_bid(BiddingSystem::Sayc, &transfer, "S AQ43 H K732 D KQ8 C A5")
+    );
+    assert_eq!(
+        Suit(2, Hearts),
+        system_bid(BiddingSystem::Sayc, &transfer, "S AQ4 H Q73 D KQ82 C A54")
+    );
+}
+
+#[test]
+fn stayman_is_understood_alike_in_every_seat() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in BiddingSystem::ALL {
+        let convention = system.convention();
+        let understood = |history: &[crate::Bid]| -> Vec<crate::Bid> {
+            legal_bids(history)
+                .into_iter()
+                .filter(|&b| convention.refine2(b, history).is_some())
+                .collect()
+        };
+        assert_eq!(
+            understood(&[NT(1), Pass, Suit(2, Clubs), Pass]),
+            understood(&[Pass, Pass, NT(1), Pass, Suit(2, Clubs), Pass]),
+            "{:?}",
+            system
+        );
+    }
+}
+
+#[test]
+fn sayc_opener_jumps_with_a_maximum() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let auction = [Suit(1, Clubs), Pass, Suit(1, Spades), Pass];
+    // Four trumps and 19 or more go straight to game.
+    assert_eq!(
+        Suit(4, Spades),
+        system_bid(BiddingSystem::Sayc, &auction, "S AKJ3 H KQ62 D 3 C KQJ10")
+    );
+    // A jump shift otherwise.
+    assert_eq!(
+        Suit(3, Hearts),
+        system_bid(
+            BiddingSystem::Sayc,
+            &[Suit(1, Diamonds), Pass, Suit(1, Spades), Pass],
+            "S A3 H AKJ4 D AQJ54 C 32"
+        )
     );
 }

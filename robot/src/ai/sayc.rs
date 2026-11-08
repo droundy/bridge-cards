@@ -27,11 +27,15 @@
 //! * In two over one the direct limit raise 3M takes three trumps, though
 //!   the usual way to show three is 1NT and then a jump.
 //!
+//! The notrump structure is SAYC's own (see `notrump`), with Stayman only
+//! for a four card major.  The strong 2C, the weak twos and threes, and the
+//! natural fallbacks are shared with Sheets.
+//!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
-//! Gerber), negative doubles, strong jump shifts, jump shifts by opener, a
-//! 3NT opening and Michaels over a major.  (Splinters are not part of SAYC.)
-//! Auctions the tables do not mention fall back on the natural bids shared
-//! with the other conventions.
+//! Gerber), negative doubles, responder's strong jump shifts, a 3NT opening,
+//! 3H or 3S over 1NT, and Michaels over a major.  (Splinters are not part of
+//! SAYC.)  Auctions the tables do not mention fall back on the natural bids
+//! shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
@@ -159,7 +163,7 @@ fn longest(mut fit: Fit, suit: Suit, others: impl Iterator<Item = Suit>) -> Fit 
 fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let mut s = Sheet(Convention::new(name));
     s.add_block(|t| t.add_strong_two_clubs(22));
-    s.add_block(|t| t.add_notrump((21, 22, 22), 8, Some(Balanced)));
+    notrump(&mut s);
     s.add_block(|t| t.add_preempts());
     openings(&mut s);
     responses(&mut s, two_over_one);
@@ -167,6 +171,373 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     competition(&mut s);
     s.add_block(|t| t.add_natural_bids());
     s.0
+}
+
+/// `calls` separated by passes or doubles, after any passes, as a regex.
+fn auction(calls: &[&str]) -> String {
+    format!("^{OPEN}{}$", calls.join(" [PX] "))
+}
+
+/// The notrump openings, and the booklet's responses to them in the order
+/// responder considers them: Jacoby transfers, Stayman with a four card
+/// major, the 2S relay to 3C with a weak minor, invitations, game and the
+/// quantitative 4NT, with the continuations the booklet gives.
+fn notrump(s: &mut Sheet) {
+    use Suit::*;
+    // Each opening, with responder's points to invite (if 1NT), for game,
+    // and to invite a slam.
+    for (nt, (lo, hi), invite, game, slam) in [
+        ("2N", (20, 21), None, 5, (11, 12)),
+        ("1N", (15, 17), Some((8, 9)), 10, (16, 17)),
+    ] {
+        let name = if nt == "1N" {
+            "Opening 1NT"
+        } else {
+            "Opening 2NT"
+        };
+        s.add(
+            name,
+            &auction(&[nt]),
+            "",
+            Forcing::Passable,
+            [balanced_hcp(lo, hi)],
+        );
+        let level = if nt == "1N" { 2 } else { 3 };
+        let call = |strain: char| format!("{level}{strain}");
+        let (stayman, to_hearts, to_spades) = (call('C'), call('D'), call('H'));
+        // The top two points of 1NT's range, and the top point of 2NT's.
+        let maximum = MIN.with_hcp(if nt == "1N" { hi - 1 } else { hi });
+        let stayman_min = invite.map_or(game, |(lo, _)| lo);
+
+        // Responder's first bid.
+        s.add(
+            "Jacoby transfer",
+            &auction(&[nt, &to_spades]),
+            "5+ spades",
+            Forcing::Forcing,
+            [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
+        );
+        s.add(
+            "Jacoby transfer",
+            &auction(&[nt, &to_hearts]),
+            "5+ hearts",
+            Forcing::Forcing,
+            [fit(MIN.min_len(Hearts, 5), MAX)],
+        );
+        s.add(
+            "Stayman",
+            &auction(&[nt, &stayman]),
+            "A 4 card major",
+            Forcing::Forcing,
+            [
+                fit(MIN.with_hcp(stayman_min).min_len(Hearts, 4), MAX),
+                fit(MIN.with_hcp(stayman_min).min_len(Spades, 4), MAX),
+            ],
+        );
+        if let Some((invite_lo, invite_hi)) = invite {
+            let weak = MAX.with_hcp(invite_lo - 1);
+            s.add(
+                "Minor relay",
+                &auction(&[nt, "2S"]),
+                "Weak, with a 6+ card minor",
+                Forcing::Forcing,
+                [
+                    fit(MIN.min_len(Clubs, 6), weak),
+                    fit(MIN.min_len(Diamonds, 6), weak),
+                ],
+            );
+            for minor in [Diamonds, Clubs] {
+                s.add(
+                    "Response",
+                    &auction(&[nt, &format!("3{}", minor.latin())]),
+                    "6+ cards, invitational",
+                    Forcing::Passable,
+                    [fit(
+                        MIN.with_hcp(invite_lo).min_len(minor, 6),
+                        MAX.with_hcp(invite_hi),
+                    )],
+                );
+            }
+            s.add(
+                "Game invite",
+                &auction(&[nt, "2N"]),
+                "",
+                Forcing::Passable,
+                [fit(MIN.with_hcp(invite_lo), MAX.with_hcp(invite_hi))],
+            );
+        }
+        s.add(
+            "Game",
+            &auction(&[nt, "3N"]),
+            "To play",
+            Forcing::Passable,
+            [fit(MIN.with_hcp(game), MAX.with_hcp(slam.0 - 1))],
+        );
+        s.add(
+            "Slam invite",
+            &auction(&[nt, "4N"]),
+            "Quantitative",
+            Forcing::Passable,
+            [fit(MIN.with_hcp(slam.0), MAX.with_hcp(slam.1))],
+        );
+
+        // Opener's replies.
+        s.add(
+            "Stayman response",
+            &auction(&[nt, &stayman, &call('H')]),
+            "4+ hearts",
+            Forcing::Passable,
+            [fit(MIN.min_len(Hearts, 4), MAX)],
+        );
+        s.add(
+            "Stayman response",
+            &auction(&[nt, &stayman, &call('S')]),
+            "4+ spades, not 4 hearts",
+            Forcing::Passable,
+            [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
+        );
+        s.add(
+            "Stayman response",
+            &auction(&[nt, &stayman, &call('D')]),
+            "No 4 card major",
+            Forcing::Passable,
+            [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
+        );
+        for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
+            let accept = call(major.latin());
+            if nt == "1N" {
+                s.add(
+                    "Transfer accepted",
+                    &auction(&[nt, transfer, &format!("3{}", major.latin())]),
+                    "17 points and 4 card support",
+                    Forcing::Passable,
+                    [fit(MIN.with_hcp(17).min_len(major, 4), MAX)],
+                );
+            }
+            s.add(
+                "Transfer accepted",
+                &auction(&[nt, transfer, &accept]),
+                "",
+                Forcing::Passable,
+                [fit(MIN, MAX)],
+            );
+        }
+        if invite.is_some() {
+            s.add(
+                "Minor relay",
+                &auction(&[nt, "2S", "3C"]),
+                "Forced",
+                Forcing::Passable,
+                [fit(MIN, MAX)],
+            );
+            for response in ["2N", "3D", "3C"] {
+                s.add(
+                    "Game",
+                    &auction(&[nt, response, "3N"]),
+                    "Maximum",
+                    Forcing::Passable,
+                    [fit(maximum, MAX)],
+                );
+            }
+        }
+        s.add(
+            "Slam",
+            &auction(&[nt, "4N", "6N"]),
+            "Maximum",
+            Forcing::Passable,
+            [fit(maximum, MAX)],
+        );
+
+        // Responder's second bid.
+        let invitational = invite.map(|(lo, hi)| (MIN.with_hcp(lo), MAX.with_hcp(hi)));
+        let game_values = MIN.with_hcp(game);
+        if invite.is_some() {
+            s.add(
+                "Minor relay",
+                &auction(&[nt, "2S", "3C", "3D"]),
+                "Diamonds",
+                Forcing::Passable,
+                [fit(MIN.min_len(Diamonds, 6), MAX)],
+            );
+        }
+        for reply in ['D', 'H', 'S'] {
+            let reply = call(reply);
+            let fit_in = match reply.as_bytes()[1] {
+                b'H' => Some(Hearts),
+                b'S' => Some(Spades),
+                _ => None,
+            };
+            let after = |bid: &str| auction(&[nt, &stayman, &reply, bid]);
+            if let Some(major) = fit_in {
+                let m = major.latin();
+                s.add(
+                    "Raise",
+                    &after(&format!("4{m}")),
+                    "4 card support, game",
+                    Forcing::Passable,
+                    [fit(game_values.min_len(major, 4), MAX)],
+                );
+                if let Some((min, max)) = invitational {
+                    s.add(
+                        "Raise",
+                        &after(&format!("3{m}")),
+                        "4 card support, invitational",
+                        Forcing::Passable,
+                        [fit(min.min_len(major, 4), max)],
+                    );
+                }
+            }
+            s.add(
+                "Game",
+                &after("3N"),
+                "",
+                Forcing::Passable,
+                [fit(game_values, MAX)],
+            );
+            if let Some((min, max)) = invitational {
+                s.add(
+                    "Game invite",
+                    &after("2N"),
+                    "",
+                    Forcing::Passable,
+                    [fit(min, max)],
+                );
+            }
+        }
+        for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
+            let m = major.latin();
+            let accept = call(m);
+            let after = |bid: &str| auction(&[nt, transfer, &accept, bid]);
+            s.add(
+                "Game",
+                &after(&format!("4{m}")),
+                "6+ cards",
+                Forcing::Passable,
+                [fit(game_values.min_len(major, 6), MAX)],
+            );
+            s.add(
+                "Game",
+                &after("3N"),
+                "5 cards, a choice of games",
+                Forcing::Passable,
+                [fit(game_values, MAX.max_len(major, 5))],
+            );
+            if let Some((min, max)) = invitational {
+                s.add(
+                    "Game invite",
+                    &after(&format!("3{m}")),
+                    "6+ cards",
+                    Forcing::Passable,
+                    [fit(min.min_len(major, 6), max)],
+                );
+                s.add(
+                    "Game invite",
+                    &after("2N"),
+                    "5 cards",
+                    Forcing::Passable,
+                    [fit(min, max.max_len(major, 5))],
+                );
+            }
+        }
+
+        // Opener's third bid.
+        for major in [Hearts, Spades] {
+            let m = major.latin();
+            let reply = call(m);
+            if invite.is_some() {
+                s.add(
+                    "Game",
+                    &auction(&[nt, &stayman, &reply, &format!("3{m}"), &format!("4{m}")]),
+                    "Maximum",
+                    Forcing::Passable,
+                    [fit(maximum, MAX)],
+                );
+            }
+        }
+        // Responder's notrump after 2H may hide four spades, so opener with
+        // four of them bids them.
+        s.add(
+            "Game",
+            &auction(&[nt, &stayman, &call('H'), "3N", "4S"]),
+            "4 spades",
+            Forcing::Passable,
+            [fit(MIN.min_len(Spades, 4), MAX)],
+        );
+        if invite.is_some() {
+            let after_invite = |bid: &str| auction(&[nt, &stayman, &call('H'), "2N", bid]);
+            s.add(
+                "Game",
+                &after_invite("4S"),
+                "Maximum, 4 spades",
+                Forcing::Passable,
+                [fit(maximum.min_len(Spades, 4), MAX)],
+            );
+            s.add(
+                "Game",
+                &after_invite("3N"),
+                "Maximum",
+                Forcing::Passable,
+                [fit(maximum, MAX)],
+            );
+            s.add(
+                "Rebid",
+                &after_invite("3S"),
+                "Minimum, 4 spades",
+                Forcing::Passable,
+                [fit(MIN.min_len(Spades, 4), MAX)],
+            );
+            for reply in ['D', 'S'] {
+                s.add(
+                    "Game",
+                    &auction(&[nt, &stayman, &call(reply), "2N", "3N"]),
+                    "Maximum",
+                    Forcing::Passable,
+                    [fit(maximum, MAX)],
+                );
+            }
+        }
+        for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
+            let m = major.latin();
+            let accepted = |bid: &str, then: &str| auction(&[nt, transfer, &call(m), bid, then]);
+            s.add(
+                "Game",
+                &accepted("3N", &format!("4{m}")),
+                "3+ card support",
+                Forcing::Passable,
+                [fit(MIN.min_len(major, 3), MAX)],
+            );
+            if invite.is_some() {
+                s.add(
+                    "Game",
+                    &accepted(&format!("3{m}"), &format!("4{m}")),
+                    "Maximum",
+                    Forcing::Passable,
+                    [fit(maximum, MAX)],
+                );
+                s.add(
+                    "Game",
+                    &accepted("2N", &format!("4{m}")),
+                    "Maximum, 3+ card support",
+                    Forcing::Passable,
+                    [fit(maximum.min_len(major, 3), MAX)],
+                );
+                s.add(
+                    "Game",
+                    &accepted("2N", "3N"),
+                    "Maximum, 2 card support",
+                    Forcing::Passable,
+                    [fit(maximum, MAX)],
+                );
+                s.add(
+                    "Rebid",
+                    &accepted("2N", &format!("3{m}")),
+                    "Minimum, 3+ card support",
+                    Forcing::Passable,
+                    [fit(MIN.min_len(major, 3), MAX)],
+                );
+            }
+        }
+    }
 }
 
 /// One of a suit, after the strong 2C, the notrump openings and the weak
@@ -477,6 +848,42 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 );
             };
 
+            // With a maximum, 19-21, opener jumps to game in a major or
+            // jumps in a new suit, forcing to game.
+            if level == 1 {
+                let maximum = MIN.with_lhcp(19);
+                if is_major(response) {
+                    s.add(
+                        "Raise",
+                        &format!("{after}4{r}$"),
+                        "4+ card support, maximum",
+                        Forcing::Passable,
+                        [fit(maximum.min_len(response, 4), MAX)],
+                    );
+                }
+                if is_major(opening) {
+                    s.add(
+                        "Jump rebid",
+                        &format!("{after}4{o}$"),
+                        "6+ card suit, maximum",
+                        Forcing::Passable,
+                        [fit(maximum.min_len(opening, 6), MAX)],
+                    );
+                }
+                for &(zlevel, z, _) in new_suits.iter() {
+                    s.add(
+                        "Jump shift",
+                        &format!("{after}{}{}$", zlevel + 1, z.latin()),
+                        "4+ cards, maximum",
+                        Forcing::GameForcing,
+                        [longest(
+                            fit(maximum.min_len(z, 4), MAX),
+                            z,
+                            new_suits.iter().map(|&(_, other, _)| other),
+                        )],
+                    );
+                }
+            }
             for &(zlevel, z, reverse) in new_suits.iter() {
                 if reverse {
                     s.add(
