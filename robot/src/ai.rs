@@ -1109,10 +1109,16 @@ impl Convention {
             the_name: "Game after 2N opening",
             forcing: Forcing::Passable,
         });
-        sheets.add(Convention::Simple {
+        // Stayman needs a four card major, so that a hand without one bids
+        // notrump.
+        let with_four = |major: Suit| {
+            let mut min = min.with_hcp(stayman_hcp);
+            min.length[major] = 4;
+            Fit::new(min, max)
+        };
+        sheets.add(Convention::Rule {
             regex: RegexSet::new([r"^(P )*(1N [PX] 2|2N [PX] 3)C$"]).unwrap(),
-            max,
-            min: min.with_hcp(stayman_hcp),
+            fits: vec![with_four(Hearts), with_four(Spades)],
             the_description: format_as!(HTML, "4-card major?"),
             the_name: "Stayman",
             forcing: Forcing::Forcing,
@@ -1522,6 +1528,143 @@ impl Convention {
             min: HandValuation::MIN,
             max: HandValuation::MAX,
         });
+    }
+
+    /// Sheets' two-suited overcalls of a one-level `opening`: a Michaels
+    /// cuebid, which over a minor shows both majors and over a major the
+    /// other major and a minor, and the unusual 2NT for the two lowest unbid
+    /// suits, with advancer's replies.
+    fn add_two_suited_overcalls(&mut self, opening: Suit) {
+        use bridge_deck::Suit::*;
+        let o = opening.latin();
+        let five_five = |a: Suit, b: Suit, (lo, hi): (u8, u8)| {
+            let mut min = HandValuation::MIN.with_hcp(lo);
+            min.length[a] = 5;
+            min.length[b] = 5;
+            Fit::new(min, HandValuation::MAX.with_hcp(hi))
+        };
+        let any = || Fit::new(HandValuation::MIN, HandValuation::MAX);
+        let mut add = |the_name, regex: String, description: &str, forcing, fits| {
+            self.add(Convention::Rule {
+                regex: RegexSet::new([regex]).unwrap(),
+                the_description: format_as!(HTML, description),
+                the_name,
+                fits,
+                forcing,
+            })
+        };
+        let cuebid = format!("^(P )*1{o} 2{o}");
+        match opening {
+            Clubs | Diamonds => {
+                add(
+                    "Michael's cuebid",
+                    format!("{cuebid}$"),
+                    "Both majors",
+                    Forcing::Forcing,
+                    vec![five_five(Hearts, Spades, (9, 12))],
+                );
+                // Advancer bids the longer major, spades with equal length.
+                add(
+                    "Michaels response",
+                    format!("{cuebid} [PX] 2S$"),
+                    "",
+                    Forcing::Passable,
+                    vec![any().with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
+                );
+                add(
+                    "Michaels response",
+                    format!("{cuebid} [PX] 2H$"),
+                    "",
+                    Forcing::Passable,
+                    vec![any()],
+                );
+            }
+            Hearts | Spades => {
+                let major = if opening == Hearts { Spades } else { Hearts };
+                add(
+                    "Michael's cuebid",
+                    format!("{cuebid}$"),
+                    "The other major and a minor",
+                    Forcing::Forcing,
+                    vec![
+                        five_five(major, Clubs, (9, 12)),
+                        five_five(major, Diamonds, (9, 12)),
+                    ],
+                );
+                // Advancer supports the major with three, and otherwise asks
+                // for the minor with 2NT.
+                let mut support = HandValuation::MIN;
+                support.length[major] = 3;
+                let mut short = HandValuation::MAX;
+                short.length[major] = 2;
+                let level = if major == Spades { 2 } else { 3 };
+                add(
+                    "Michaels response",
+                    format!("{cuebid} [PX] {level}{}$", major.latin()),
+                    "3+ card support",
+                    Forcing::Passable,
+                    vec![Fit::new(support, HandValuation::MAX)],
+                );
+                add(
+                    "Michaels response",
+                    format!("{cuebid} [PX] 2N$"),
+                    "Which minor?",
+                    Forcing::Forcing,
+                    vec![Fit::new(HandValuation::MIN, short)],
+                );
+                add(
+                    "Michaels minor",
+                    format!("{cuebid} [PX] 2N [PX] 3D$"),
+                    "5+ diamonds",
+                    Forcing::Passable,
+                    vec![Fit::new(
+                        HandValuation {
+                            length: [0, 5, 0, 0].into(),
+                            ..HandValuation::MIN
+                        },
+                        HandValuation::MAX,
+                    )],
+                );
+                add(
+                    "Michaels minor",
+                    format!("{cuebid} [PX] 2N [PX] 3C$"),
+                    "5+ clubs",
+                    Forcing::Passable,
+                    vec![any()],
+                );
+            }
+        }
+        let (low, high) = match opening {
+            Clubs => (Diamonds, Hearts),
+            Diamonds => (Clubs, Hearts),
+            Hearts | Spades => (Clubs, Diamonds),
+        };
+        let unusual = format!("^(P )*1{o} 2N");
+        add(
+            "Unusual 2NT",
+            format!("{unusual}$"),
+            "The two lowest unbid suits",
+            Forcing::Forcing,
+            vec![
+                five_five(low, high, (9, 12)),
+                five_five(low, high, (17, 37)),
+            ],
+        );
+        // Advancer bids the longer suit, the higher with equal length.
+        add(
+            "Unusual 2NT response",
+            format!("{unusual} [PX] 3{}$", high.latin()),
+            "",
+            Forcing::Passable,
+            vec![any().with(ShapeRule::AtLeastAsLong(high, low))],
+        );
+        add(
+            "Unusual 2NT response",
+            format!("{unusual} [PX] 3{}$", low.latin()),
+            "",
+            Forcing::Passable,
+            vec![any()],
+        );
     }
 
     pub fn sheets() -> Self {
@@ -2048,26 +2191,7 @@ impl Convention {
 
         // Overcall bids and responses!
         for opening in Suit::ALL.iter().cloned() {
-            // This matches responder's 2NT, not an overcall, and over a
-            // major Jacoby 2NT is that bid.
-            if opening == Clubs || opening == Diamonds {
-                sheets.add(Convention::Simple {
-                    the_name: "Unusual 2NT",
-                    regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
-                    max: max.with_hcp(12),
-                    min: HandValuation {
-                        length: match opening {
-                            Clubs => [0, 5, 5, 0],
-                            _ => [5, 0, 5, 0],
-                        }
-                        .into(),
-                        hcp: 9,
-                        ..min
-                    },
-                    the_description: format_as!(HTML, "9-12 hcp or 17+ hcp"),
-                    forcing: Forcing::Forcing,
-                });
-            }
+            sheets.add_two_suited_overcalls(opening);
 
             for overcall in Suit::ALL.iter().cloned().filter(|s| *s != opening) {
                 let mut min_overcall = min.with_hcp(9);
@@ -3010,4 +3134,72 @@ fn sayc_opener_jumps_with_a_maximum() {
             "S A3 H AKJ4 D AQJ54 C 32"
         )
     );
+}
+
+#[test]
+fn sheets_two_suited_overcalls() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets =
+        |auction: &[crate::Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    // Michaels over a minor shows both majors, and advancer bids the
+    // longer.
+    assert_eq!(
+        Suit(2, Clubs),
+        sheets(&[Suit(1, Clubs)], "S KQ432 H AJ432 D 32 C 2")
+    );
+    let michaels = [Suit(1, Clubs), Suit(2, Clubs), Pass];
+    assert_eq!(
+        Suit(2, Hearts),
+        sheets(&michaels, "S 32 H Q54 D K5432 C 432")
+    );
+    // With nine trumps between them, the Law of Total Tricks jumps.
+    assert_eq!(
+        Suit(3, Hearts),
+        sheets(&michaels, "S 32 H Q542 D K543 C 432")
+    );
+    assert_eq!(
+        Suit(2, Spades),
+        sheets(&michaels, "S Q32 H 542 D K543 C 432")
+    );
+    // Over a major it shows the other major and a minor, and advancer
+    // without support asks which minor with 2NT.
+    assert_eq!(
+        Suit(2, Hearts),
+        sheets(&[Suit(1, Hearts)], "S KQ432 H 2 D AJ432 C 32")
+    );
+    let michaels = [Suit(1, Hearts), Suit(2, Hearts), Pass];
+    assert_eq!(
+        Suit(2, Spades),
+        sheets(&michaels, "S Q32 H 5432 D K54 C 432")
+    );
+    assert_eq!(NT(2), sheets(&michaels, "S 32 H 5432 D K543 C Q43"));
+    assert_eq!(
+        Suit(3, Diamonds),
+        sheets(
+            &[Suit(1, Hearts), Suit(2, Hearts), Pass, NT(2), Pass],
+            "S KQ432 H 2 D AJ432 C 32"
+        )
+    );
+    // The unusual 2NT, and advancer's choice of its suits.
+    assert_eq!(
+        NT(2),
+        sheets(&[Suit(1, Spades)], "S 2 H 32 D KQ432 C AJ432")
+    );
+    assert_eq!(
+        Suit(3, Clubs),
+        sheets(&[Suit(1, Spades), NT(2), Pass], "S 5432 H K543 D 32 C Q43")
+    );
+}
+
+#[test]
+fn sheets_stayman_needs_a_four_card_major() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let over = |hand: &str| system_bid(BiddingSystem::Sheets, &[NT(1), Pass], hand);
+    assert_eq!(Suit(2, Clubs), over("S KJ32 H 52 D AK42 C J63"));
+    assert_ne!(Suit(2, Clubs), over("S 8 H AJ9 D QJ842 C Q975"));
+    assert_ne!(Suit(2, Clubs), over("S 432 H 432 D 5432 C 432"));
 }
