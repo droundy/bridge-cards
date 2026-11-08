@@ -76,7 +76,11 @@ fn redirect_to(segments: &[&str]) -> Response {
         uri.extend(utf8_percent_encode(s, NON_ALPHANUMERIC));
     }
     let location = HeaderValue::try_from(uri).expect("a percent-encoded path is a valid header");
-    (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, location)]).into_response()
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, location)],
+    )
+        .into_response()
 }
 
 /// The response when a path doesn't name anything: a page that links back to
@@ -130,7 +134,10 @@ fn router(app: AppState) -> Router {
 }
 
 async fn style_css() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css")], include_str!("style.css"))
+    (
+        [(header::CONTENT_TYPE, "text/css")],
+        include_str!("style.css"),
+    )
 }
 
 async fn audio() -> impl IntoResponse {
@@ -164,7 +171,8 @@ async fn room(tables: &TableMap) -> Room {
         .collect::<Vec<_>>();
     let mut room = Room { tables: Vec::new() };
     for (name, game) in games {
-        room.tables.push(TableToJoin::new(name, &*game.read().await));
+        room.tables
+            .push(TableToJoin::new(name, &*game.read().await));
     }
     room
 }
@@ -236,11 +244,17 @@ async fn table_random_seat(State(app): State<AppState>, Path(table): Path<String
 async fn table_sock(
     State(app): State<AppState>,
     Path((table, seat)): Path<(String, String)>,
+    jar: CookieJar,
     ws: WebSocketUpgrade,
 ) -> Result<Response, NotFound> {
     let seat = parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
-    Ok(ws.on_upgrade(move |socket| ws_connected(Some(seat), socket, game, app.table_updates)))
+    let name = jar.get("name").map(|c| c.value().to_string());
+    Ok(
+        ws.on_upgrade(move |socket| {
+            ws_connected(Some(seat), name, socket, game, app.table_updates)
+        }),
+    )
 }
 
 async fn table_robot_sock(
@@ -250,7 +264,7 @@ async fn table_robot_sock(
 ) -> Result<Response, NotFound> {
     parse_seat(&seat)?;
     let game = Arc::clone(&app.tables.entry(table));
-    Ok(ws.on_upgrade(move |socket| ws_connected(None, socket, game, app.table_updates)))
+    Ok(ws.on_upgrade(move |socket| ws_connected(None, None, socket, game, app.table_updates)))
 }
 
 /// Sends everything on port 80 to the same path on `domain` over https.
