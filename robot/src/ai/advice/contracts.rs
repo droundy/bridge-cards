@@ -7,11 +7,13 @@
 //! partner, what matters is what our next bid tells them: once they know we
 //! have that much, they can bid the contract when they hold the rest.
 use super::{
-    describe, AddTo, Bound, Candidate, Line, List, Measure, Need, Reach, Shown, Strain, Text,
+    describe, partner_text, phrases, you, Bound, Candidate, Line, Measure, Need, Reach, Shown,
+    Strain, KNOW,
 };
 use crate::ai::{legal_bids, Convention};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
+use wording::{and, Text, Word};
 
 /// How many contracts the advice lists, so that it fits on a screen.
 const CONTRACTS: usize = 6;
@@ -89,17 +91,15 @@ impl Convention {
                 let needs = describe(&c.needs, &HandValuation::MAX);
                 let route = match c.reach {
                     Reach::IfPartnerHas(_) => route(c, me, partner, candidates),
-                    _ => text!(),
+                    _ => Text::new(),
                 };
-                let text = text!(
-                    Kind::of(c.bid).name(),
-                    ": needs ",
-                    List::and(needs),
-                    " between you; ",
-                    c.reach.verdict(),
-                    ".",
-                    route
-                );
+                let text = Text::from(Kind::of(c.bid).name())
+                    + ": needs"
+                    + phrases(needs)
+                    + "between you;"
+                    + c.reach.verdict()
+                    + "."
+                    + route;
                 (Strain::of(c.bid, &c.needs), Line { bid: c.bid, text })
             })
             .collect()
@@ -134,7 +134,7 @@ pub(super) fn together(hand: &HandValuation, partner: &Shown) -> Option<Text> {
     if has.is_empty() {
         None
     } else {
-        Some(text!("Together you have ", List::and(has), "."))
+        Some(Text::from("Together you have") + and(has.into_iter().map(Bound::text)) + ".")
     }
 }
 
@@ -196,7 +196,7 @@ impl Kind {
 fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candidate]) -> Text {
     let fitting = candidates.iter().filter(|c| c.fits && c.bid != Bid::Pass);
     if fitting.clone().any(|c| c.bid == contract.bid) {
-        return text!(" You can bid it now.");
+        return Text::from("You can bid it now.");
     }
     // The robot's choice comes first, and wins a tie.
     let best = fitting
@@ -213,39 +213,32 @@ fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candida
         .min_by_key(|&(stretch, ..)| stretch);
     let (bid, after, reach) = match best {
         Some((_, bid, after, reach)) => (bid, after, reach),
-        None => return text!(),
+        None => return Text::new(),
     };
     let knows: Vec<Bound> = Measure::all()
         .filter(|&m| m.of(&contract.needs) > 0)
         .filter_map(|m| Bound::at_least(m, m.of(&after.least())))
         .collect();
     if knows.is_empty() {
-        return text!();
+        return Text::new();
     }
     let then = match reach {
-        Reach::IfPartnerHas(needs) => text!("so they can bid it with ", List::and(needs)),
-        _ => text!("which is enough for them to bid it"),
+        Reach::IfPartnerHas(needs) => {
+            Text::from("so they can bid it with") + and(needs.into_iter().map(Need::text))
+        }
+        _ => Text::from("which is enough for them to bid it"),
     };
     let points = Measure::Hcp;
+    let knows = you() + Word::HAS + and(knows.into_iter().map(Bound::text));
     if me.range(points).0 > 0 && after.range(points).0 > me.range(points).0 {
-        text!(
-            " Bidding ",
-            bid,
-            " shows more than you have so far: partner then knows you have ",
-            List::and(knows),
-            ", ",
-            then,
-            "."
-        )
+        Text::from("Bidding")
+            + bid
+            + "shows more than you have so far:"
+            + (partner_text() + "then" + KNOW + knows)
+            + ","
+            + then
+            + "."
     } else {
-        text!(
-            " After ",
-            bid,
-            ", partner knows you have ",
-            List::and(knows),
-            ", ",
-            then,
-            "."
-        )
+        Text::from("After") + bid + "," + (partner_text() + KNOW + knows) + "," + then + "."
     }
 }
