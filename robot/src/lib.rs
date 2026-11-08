@@ -116,6 +116,28 @@ impl DisplayAs<UTF8> for Bid {
     }
 }
 
+/// A bid as `wording::Markup`, so that it goes into sentences.  It is not a
+/// noun, so it is always singular.
+impl wording::Markup for Bid {
+    fn html(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        <Bid as DisplayAs<HTML>>::fmt(self, f)
+    }
+    fn utf8(&self, _: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        <Bid as DisplayAs<UTF8>>::fmt(self, f)
+    }
+    fn latex(&self, form: wording::Form, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Bid::Suit(level, suit) => {
+                write!(f, "{}", level)?;
+                wording::Markup::latex(suit, form, f)
+            }
+            bid => wording::Markup::utf8(bid, form, f),
+        }
+    }
+}
+
+wording::markup!(Bid);
+
 impl Bid {
     pub fn level(self) -> Option<usize> {
         match self {
@@ -192,6 +214,13 @@ impl<C> Default for GameState<C> {
 
 impl<C> GameState<C> {
     pub fn new() -> GameState<C> {
+        Self::with_conventions(vec![Convention::sheets()])
+    }
+
+    /// A new deal at a new table that explains bids with `conventions`.
+    /// Building conventions compiles many regexes, so `redeal` hands over
+    /// the ones it already has.
+    fn with_conventions(conventions: Vec<Convention>) -> GameState<C> {
         let mut deck = Cards::ALL;
         let north = deck.pick(13).unwrap();
         let south = deck.pick(13).unwrap();
@@ -219,7 +248,7 @@ impl<C> GameState<C> {
             ew_tricks: 0,
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
-            conventions: vec![Convention::sheets()],
+            conventions,
         }
     }
 
@@ -303,8 +332,7 @@ impl<C> GameState<C> {
             ai,
             count_for_me,
             system,
-            conventions,
-            ..GameState::new()
+            ..GameState::with_conventions(conventions)
         }
     }
 

@@ -5,7 +5,8 @@
 //! every bound as a phrase such as "5+ spades" or "6–9 high card points".
 //! When describing a bid it leaves out bounds that only shape a balanced hand
 //! or break a tie with another bid, such as the "at most 5 hearts" of a 1S
-//! opening.  The bid the robot would make is the first in `ranked_bids` that
+//! opening.  The bid the robot would make is the fitting one whose table entry
+//! comes first (`first_fit`), that
 //! fits the hand, and the other bids are explained by the bounds the hand
 //! misses.  Natural bids state what the partnership needs between them, so
 //! for those the advice weighs the hand against what partner has shown, and
@@ -13,7 +14,7 @@
 //! advice is arranged by strain: for each, the contracts to aim for and then
 //! the closest bids about it.  It reads the same as HTML or plain text (see
 //! `text`).
-use super::{Convention, Forcing};
+use super::{legal_bids, Convention, Fit, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 #[cfg(test)]
@@ -78,16 +79,28 @@ impl Convention {
         situation.push(hand_summary(&hand));
         situation.extend(contracts::together(&hand, &partner));
 
-        let candidates: Vec<Candidate> = self
-            .ranked_bids(history)
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        let candidates: Vec<Candidate> = legal_bids(history)
             .into_iter()
-            .map(|(bid, meaning)| {
-                let mut bids = history.to_vec();
-                bids.push(bid);
-                Candidate::new(bid, meaning, self.entry(&bids), &hand, &partner)
+            .rev()
+            .filter_map(|bid| {
+                *bids.last_mut().unwrap() = bid;
+                let meaning = self.refine(&bids)?;
+                let rank = self.first_fit(&bids, &hand, usize::MAX).map(|(i, _)| i);
+                Some(Candidate::new(
+                    bid,
+                    meaning,
+                    self.entry(&bids),
+                    &hand,
+                    &partner,
+                    rank,
+                ))
             })
             .collect();
-        let chosen = candidates.iter().find(|c| c.fits);
+        // The robot bids the fitting bid whose table entry comes first, and
+        // the highest of those when one entry describes several.
+        let chosen = candidates.iter().filter(|c| c.fits).min_by_key(|c| c.rank);
 
         // Partner's bid forces us only if the opponent after them passed.
         let partner_forcing = if n >= 2 && history[n - 1] == Bid::Pass {
@@ -166,6 +179,19 @@ impl Convention {
         }
     }
 
+    /// The bounds a bid states outright, if it is described only by entries
+    /// that do: not by a natural bid, whose bounds say what the partnership
+    /// needs between them.
+    fn stated(&self) -> Option<(HandValuation, HandValuation)> {
+        match self {
+            Convention::Simple { .. } | Convention::Rule { .. } => Some(self.bounds()),
+            Convention::Either(options) if options.iter().all(|c| c.stated().is_some()) => {
+                Some(self.bounds())
+            }
+            _ => None,
+        }
+    }
+
     /// The table entry that gives the last bid of `bids` its meaning, before
     /// `refine` adjusts it for earlier bids.
     fn entry(&self, bids: &[Bid]) -> Option<&Convention> {
@@ -186,7 +212,7 @@ impl Convention {
         };
         for i in (0..n).filter(|i| (n - i) % 4 == offset) {
             shown.bids.push((i, history[i]));
-            if let Some(Convention::Simple { min, max, .. }) = self.refine(&history[..=i]) {
+            if let Some((min, max)) = self.refine(&history[..=i]).and_then(|c| c.stated()) {
                 shown.min = shown.min.max(min);
                 shown.max = shown.max.min(max);
             }
@@ -277,9 +303,9 @@ impl Shown {
     /// What they will have shown after also making a bid that means `meaning`.
     fn and(&self, meaning: &Convention) -> Shown {
         let mut shown = self.clone();
-        if let Convention::Simple { min, max, .. } = meaning {
-            shown.min = shown.min.max(*min);
-            shown.max = shown.max.min(*max);
+        if let Some((min, max)) = meaning.stated() {
+            shown.min = shown.min.max(min);
+            shown.max = shown.max.min(max);
         }
         shown
     }
@@ -295,6 +321,9 @@ struct Candidate {
     /// For a natural bid, how what partner has shown bears on it.
     verdict: Option<Text>,
     fits: bool,
+    /// For a bid that fits the hand, the position in the table of the entry
+    /// that the robot uses, where a lower one is preferred.
+    rank: Option<usize>,
     /// The bounds the hand misses, each with what the hand has.
     misses: Text,
     /// How far the hand is from fitting, to find the closest misses.
@@ -309,9 +338,10 @@ impl Candidate {
         entry: Option<&Convention>,
         hand: &HandValuation,
         partner: &Shown,
+        rank: Option<usize>,
     ) -> Self {
-        let (min, max) = meaning.bounds();
-        let (misses, distance) = misses(&min, &max, hand);
+        let (min, _) = meaning.bounds();
+        let (misses, distance) = closest_misses(&meaning, hand);
         let together = match entry {
             Some(Convention::Natural { min, .. }) => Some(*min),
             _ => None,
@@ -320,7 +350,8 @@ impl Candidate {
             bid,
             needs: together.map(|t| describe(&t, &HandValuation::MAX)),
             verdict: together.map(|t| Reach::of(&t, hand, partner).verdict()),
-            fits: meaning.fits(*hand),
+            fits: rank.is_some(),
+            rank,
             misses: text!(List::and(misses)),
             distance,
             // A natural bid's own bounds are reduced by what partner has
@@ -348,9 +379,22 @@ impl Candidate {
                     text!(*the_name, " (", Text::html(the_description), ")")
                 }
             }
+            Convention::Rule {
+                the_name,
+                the_description,
+                ..
+            } => {
+                let d = the_description.as_str();
+                if d.is_empty() || d == *the_name {
+                    text!(*the_name)
+                } else {
+                    text!(*the_name, " (", Text::html(the_description), ")")
+                }
+            }
             Convention::Natural { the_name, .. } | Convention::Forced { the_name, .. } => {
                 text!(*the_name)
             }
+            Convention::Either(_) => Text::html(&self.meaning.name()),
             Convention::Ordered { .. } => text!(),
         }
     }
@@ -366,7 +410,13 @@ impl Candidate {
             );
         }
         let (min, max) = self.meaning.bounds();
-        let features = describe(&min, &max);
+        let mut features = describe(&min, &max);
+        for shape in fitting_shape(&self.meaning, hand) {
+            // A balanced hand may be asked for by the bounds as well.
+            if !features.iter().any(|f| f.to_string() == shape.to_string()) {
+                features.push(shape);
+            }
+        }
         let shows = if features.is_empty() {
             text!()
         } else {
@@ -649,6 +699,7 @@ impl Display for Range {
 enum Feature {
     Balanced,
     Bound(Bound),
+    Shape(ShapeRule),
 }
 
 impl Display for Feature {
@@ -656,6 +707,13 @@ impl Display for Feature {
         match self {
             Feature::Balanced => write!(f, "a balanced hand"),
             Feature::Bound(b) => b.fmt(f),
+            Feature::Shape(ShapeRule::AtLeastAsLong(a, b)) => {
+                write!(f, "{} at least as long as {}", a.name(), b.name())
+            }
+            Feature::Shape(ShapeRule::Longer(a, b)) => {
+                write!(f, "{} longer than {}", a.name(), b.name())
+            }
+            Feature::Shape(ShapeRule::Balanced) => write!(f, "a balanced hand"),
         }
     }
 }
@@ -755,6 +813,64 @@ fn misses(min: &HandValuation, max: &HandValuation, hand: &HandValuation) -> (Ve
         }
     }
     (misses, distance)
+}
+
+/// The bounds and shape rules of `fit` that `hand` misses, and how far it is
+/// from fitting.
+fn fit_misses(fit: &Fit, hand: &HandValuation) -> (Vec<Miss>, u32) {
+    let (mut misses, mut distance) = self::misses(&fit.min, &fit.max, hand);
+    for &rule in fit.shape.iter().filter(|r| !r.holds(hand)) {
+        let feature = Feature::Shape(rule);
+        if !misses
+            .iter()
+            .any(|m| m.feature.to_string() == feature.to_string())
+        {
+            misses.push(Miss {
+                feature,
+                have: None,
+            });
+            distance += 3;
+        }
+    }
+    (misses, distance)
+}
+
+/// What `hand` misses of the way of fitting `meaning` that it comes closest
+/// to, and how far it is from fitting that way.
+fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Miss>, u32) {
+    match meaning {
+        Convention::Rule { fits, .. } => fits
+            .iter()
+            .map(|f| fit_misses(f, hand))
+            .min_by_key(|&(_, distance)| distance)
+            .unwrap_or_default(),
+        Convention::Either(options) => options
+            .iter()
+            .map(|c| closest_misses(c, hand))
+            .min_by_key(|&(_, distance)| distance)
+            .unwrap_or_default(),
+        c => {
+            let (min, max) = c.bounds();
+            misses(&min, &max, hand)
+        }
+    }
+}
+
+/// The shape rules of the way that `hand` fits `meaning`.
+fn fitting_shape(meaning: &Convention, hand: &HandValuation) -> Vec<Feature> {
+    match meaning {
+        Convention::Rule { fits, .. } => fits
+            .iter()
+            .find(|f| f.holds(hand))
+            .map(|f| f.shape.iter().map(|&r| Feature::Shape(r)).collect())
+            .unwrap_or_default(),
+        Convention::Either(options) => options
+            .iter()
+            .find(|c| c.fits(hand))
+            .map(|c| fitting_shape(c, hand))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// How what a partnership needs compares with a hand plus what partner has
@@ -932,11 +1048,11 @@ fn advice_after_a_one_spade_opening() {
             ♠ 3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
             ♠ 4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
             ♠ 2NT Jacoby 2NT (4+ card support): needs 4+ spades (you have 3) and 13+ high card points (you have 7).
-            ♠ 3♠ Limit raise (4+ card support): needs 4+ spades (you have 3) and 10–12 high card points (you have 7).
+            ♠ 3♠ Limit raise (3+ card support): needs 10–11 high card points (you have 7).
             ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
-            ♣ 2♣ Two-level response (New suit): needs 4+ clubs (you have 3) and 10+ high card points (you have 7).
             NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points.
-            NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠."#]],
+            NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
+            Other 2♣ Two-level response: needs 10+ high card points (you have 7)."#]],
     );
     check(
         &one_spade,
@@ -947,10 +1063,10 @@ fn advice_after_a_one_spade_opening() {
             Together you have 13–21 high card points.
             Suggested: Pass Response pass. It shows at most 5 high card points.
             ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
+            ♠ 3♠ Limit raise (3+ card support): needs 3+ spades (you have 2) and 10–11 high card points (you have 0).
             ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
-            ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3) and 10+ high card points (you have 0).
-            ♣ 2♣ Two-level response (New suit): needs 10+ high card points (you have 0).
-            NT 1NT Response (No fit and no suit to bid): needs 6–10 high card points (you have 0)."#]],
+            NT 1NT Response (No fit and no suit to bid): needs 6–9 high card points (you have 0).
+            Other 2♣ Two-level response: needs 10+ high card points (you have 0)."#]],
     );
 }
 
@@ -965,13 +1081,12 @@ fn advice_after_one_notrump() {
             Partner opened 1NT, showing a balanced hand and 15–17 high card points.
             Your hand: 6 HCP, 6 LHCP and 7 SHCP, with 4♠ 4♥ 2♦ 3♣.
             Together you have 21–23 high card points.
-            You should bid, since a pass would show at most 5 high card points (you have 6).
-            No bid fits your hand, so the robot would pass.
-            ♠ 2♥ Jacobi transfer: needs 5+ spades (you have 4).
-            ♥ 2♦ Jacobi transfer: needs 5+ hearts (you have 4).
-            NT 2NT Game invite: needs 8–10 high card points (you have 6).
-            NT 4NT Slam invite: needs 16–17 high card points (you have 6).
-            Other 2♣ Stayman (4-card major?): needs 8+ high card points (you have 6)."#]],
+            Suggested: Pass Response pass (Too weak to invite). It shows at most 7 high card points.
+            ♠ 2♥ Jacoby transfer (5+ spades): needs 5+ spades (you have 4).
+            ♥ 2♦ Jacoby transfer (5+ hearts): needs 5+ hearts (you have 4).
+            NT 2NT Game invite: needs 8–9 high card points (you have 6).
+            NT 3NT Game (To play): needs 10–15 high card points (you have 6).
+            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6)."#]],
     );
 }
 
@@ -1008,19 +1123,19 @@ fn advice_on_a_rebid_after_one_notrump() {
         &[Suit(1, Hearts), Pass, NT(1), Pass],
         "S A2 H KQ976 D AJ3 C KQ2",
         expect![[r#"
-            Partner bid 1NT, showing at most 3 spades and 6–10 high card points.
+            Partner bid 1NT, showing 6–9 high card points.
             You opened 1♥, showing 5+ hearts and 13–21 long high card points.
             Your hand: 19 HCP, 20 LHCP and 20 SHCP, with 2♠ 5♥ 3♦ 3♣.
-            Together you have 25–29 high card points.
+            Together you have 25–28 high card points.
             Suggested: 2NT Rebid (Balanced, 18-19 hcp). It shows a balanced hand and 18–19 high card points. Your 19 high card points are near the top of that range.
             ♠ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
             ♥ 3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
-            ♥ 4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
-            ♥ 2♥ Rebid (Long suit): needs 6+ hearts (you have 5) and 13–16 long high card points (you have 20).
-            ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 17–18 long high card points (you have 20).
+            ♥ 4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
+            ♥ 2♥ Rebid (6+ card suit): needs 6+ hearts (you have 5) and 13–15 long high card points (you have 20).
+            ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 16–18 long high card points (you have 20).
             ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
             ♣ 2♣ New suit: needs 4+ clubs (you have 3).
-            NT 3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–10). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
+            NT 3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
     );
 }
 

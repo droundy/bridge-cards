@@ -21,10 +21,14 @@ debug = true
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 
-display-as = { version = "0.7.0", optional = true }
+display-as = { version = "0.8.0", optional = true }
+wording = { version = "0.1.0", path = "wording", optional = true }
 scaling = { version = "0.10.2", optional = true }
 
 [features]
+
+# Lets a Suit be wording::Markup, so that it goes into sentences.
+wording = ["dep:wording", "display-as"]
 
 # Registers the benchmarks in src/benches.rs with scaling.  benchmarks/ runs
 # them, against the same benchmarks from the main branch.
@@ -45,5 +49,6 @@ harness = false
 members = [
     "abridge",
     "bridge-solver",
-    "robot"
+    "robot",
+    "wording"
 ]

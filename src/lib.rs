@@ -883,6 +883,9 @@ impl DoubleEndedIterator for Cards {
 #[cfg(feature = "display-as")]
 mod display;
 
+#[cfg(feature = "wording")]
+mod markup;
+
 #[cfg(feature = "benchmarks")]
 mod benches;
 
