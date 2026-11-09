@@ -343,9 +343,12 @@ pub(crate) fn contracted_fits(
     // A fit that might yet be found matters only on the way to notrump: one
     // that is known, as in partner's suit, is not given up to look for it.
     let looking = unsure_explores && ours.trumps.is_none();
+    // A known fit rules out a slam in notrump even though the rules cannot
+    // bid a slam in the suit, which waits for the table or a sure slam.
+    let notrump_slam = ours.trumps.is_none() && Kind::of(reason.contract) > Kind::Game;
     let rating = ours.rating(hand, lo);
     rivals.iter().all(|r| match r.fit(hand) {
-        (true, _) if r.available => r.rating(hand, lo) < rating,
+        (true, _) if r.available || notrump_slam => r.rating(hand, lo) < rating,
         (false, true) if looking => r.rating(hand, lo) < rating,
         _ => true,
     })
@@ -430,12 +433,19 @@ impl Strain<'_> {
     /// The bid that invites `contract`: the lowest of the kind below it that
     /// no table entry describes, other than one that places a game.  As in
     /// the booklet, a game is invited only in notrump or a major, and a slam
-    /// only in notrump once this side plays notrump (as with the
-    /// quantitative 4NT), since 4NT is otherwise Blackwood.  Partner's own
-    /// invitation is answered, not invited again.
+    /// only in notrump once this side has bid notrump (as with the
+    /// quantitative 4NT, also after Stayman or a transfer), since 4NT is
+    /// otherwise Blackwood.  Partner's own invitation is answered, not
+    /// invited again.
     fn invitation(&self, contract: Bid) -> Option<Bid> {
         let kind = Kind::of(contract);
-        let in_notrump = self.ours.is_some_and(|c| trump(c).is_none());
+        let in_notrump = self
+            .history
+            .iter()
+            .rev()
+            .skip(1)
+            .step_by(2)
+            .any(|b| matches!(b, Bid::NT(_)));
         // Nothing is invited that this side has already reached.
         let reached = self.ours.is_some_and(|c| Kind::of(c) >= kind);
         let minor = matches!(self.strain, Some(Suit::Clubs | Suit::Diamonds));

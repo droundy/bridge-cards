@@ -43,9 +43,9 @@
 //! response opener rebids the suit with a minimum.
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
-//! Gerber), negative doubles, responder's strong jump shifts, a 3NT opening,
-//! the feature that opener shows over a weak two's 2NT with a maximum, and
-//! Michaels over a major.  (Splinters are not part of
+//! Gerber), negative doubles, responder's strong jump shifts, the feature
+//! that opener shows over a weak two's 2NT with a maximum, and Michaels over
+//! a major.  (Splinters are not part of
 //! SAYC.)  Auctions the tables do not mention fall back on the natural bids
 //! shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
@@ -200,9 +200,11 @@ fn longest(mut fit: Fit, suit: Suit, others: impl Iterator<Item = Suit>) -> Fit 
 
 fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let mut s = Sheet(Convention::new(name), Convention::new(""));
-    // The notrump structure comes first, so that opener rebids 2NT over
-    // 2C-2D with a balanced 22-24 rather than 3NT.
+    // The notrump structure comes first, so that a balanced hand opens 2NT
+    // or 3NT rather than 2C, and rebids 2NT over 2C-2D with 22-24 rather
+    // than 3NT.
     notrump(&mut s);
+    three_notrump(&mut s);
     s.add_block(|t| t.add_strong_two_clubs(22, false));
     s.add_block(|t| t.add_preempts());
     weak_two_rebids(&mut s);
@@ -597,6 +599,122 @@ fn weak_two_rebids(s: &mut Sheet) {
             [fit(MIN, MAX.with_hcp(8))],
         );
     }
+}
+
+/// The 3NT opening, which comes before the strong 2C that its hands also
+/// fit, with the booklet's Stayman and transfers at the four level.  The
+/// quantitative 4NT and the slams come from the contract rules.
+fn three_notrump(s: &mut Sheet) {
+    use Suit::*;
+    let (lo, hi) = (25, 27);
+    s.add(
+        "Opening 3NT",
+        &auction(&["3N"]),
+        "",
+        Forcing::Passable,
+        [balanced_hcp(lo, hi)],
+    );
+    // Game is already bid, so Stayman looks for a slam in a major, with the
+    // points that make one possible opposite 3NT's maximum.  After 4D there
+    // is no way back to 3NT, and 4NT is then quantitative.  With 5-5 in the
+    // majors it finds the eight card fit that 3NT's balanced hand must have
+    // in one of them, at any strength, which a transfer might miss.
+    let five_five = MIN.min_len(Hearts, 5).min_len(Spades, 5);
+    s.add(
+        "Stayman",
+        &auction(&["3N", "4C"]),
+        "5-5 in the majors",
+        Forcing::Forcing,
+        [fit(five_five, MAX)],
+    );
+    s.add(
+        "Jacoby transfer",
+        &auction(&["3N", "4H"]),
+        "5+ spades",
+        Forcing::Forcing,
+        [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
+    );
+    s.add(
+        "Jacoby transfer",
+        &auction(&["3N", "4D"]),
+        "5+ hearts",
+        Forcing::Forcing,
+        [fit(MIN.min_len(Hearts, 5), MAX)],
+    );
+    let slam_possible = MIN.with_hcp(33 - hi);
+    s.add(
+        "Stayman",
+        &auction(&["3N", "4C"]),
+        "A 4 card major, slam interest",
+        Forcing::Forcing,
+        [
+            fit(slam_possible.min_len(Hearts, 4), MAX),
+            fit(slam_possible.min_len(Spades, 4), MAX),
+        ],
+    );
+    s.add(
+        "Response pass",
+        &auction(&["3N", "P"]),
+        "No slam interest",
+        Forcing::Passable,
+        [fit(MIN, MAX.with_hcp(33 - hi - 1))],
+    );
+
+    // Opener's replies.
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4H"]),
+        "4+ hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Hearts, 4), MAX)],
+    );
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4S"]),
+        "4+ spades, not 4 hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
+    );
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4D"]),
+        "No 4 card major",
+        Forcing::Passable,
+        [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
+    );
+    for (transfer, accept) in [("4D", "4H"), ("4H", "4S")] {
+        s.add(
+            "Transfer accepted",
+            &auction(&["3N", transfer, accept]),
+            "",
+            Forcing::Passable,
+            [fit(MIN, MAX)],
+        );
+    }
+
+    // With 5-5 after 4D, responder lets opener choose the major, which the
+    // booklet does not say.
+    s.add(
+        "Pass or correct",
+        &auction(&["3N", "4C", "4D", "4H"]),
+        "5-5 in the majors",
+        Forcing::Passable,
+        [fit(five_five, MAX)],
+    );
+    s.add(
+        "Choice of games",
+        &auction(&["3N", "4C", "4D", "4H", "P"]),
+        "3 hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Hearts, 3), MAX)],
+    );
+    s.add(
+        "Choice of games",
+        &auction(&["3N", "4C", "4D", "4H", "4S"]),
+        "2 hearts, so 3 spades",
+        Forcing::Passable,
+        [fit(MIN.min_len(Spades, 3), MAX.max_len(Hearts, 2))],
+    );
 }
 
 /// One of a suit, after the strong 2C, the notrump openings and the weak
