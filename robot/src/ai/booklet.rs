@@ -13,11 +13,11 @@ use super::ShapeRule;
 use super::{choose, fitting_calls, seeded_hands, Convention, Described, Fit, Forcing};
 use crate::utils::plain;
 use crate::Bid;
-#[cfg(test)]
-use bridge_deck::HandValuation;
-use bridge_deck::Suit;
+use bridge_deck::{HandValuation, Suit};
 #[cfg(test)]
 use display_as::{format_as, HTML};
+mod html;
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -168,6 +168,77 @@ fn one_line(html: &str) -> String {
     line
 }
 
+/// How many different counts of points the bars show: 0 to 40.
+const POINTS: usize = 41;
+
+/// The way of counting points that a page's bars are drawn along.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Points {
+    Hcp,
+    Lhcp,
+    Shcp,
+}
+
+impl Points {
+    /// The count of these points in `hand`, as a place along a bar.
+    fn of(self, hand: &HandValuation) -> usize {
+        let points = match self {
+            Points::Hcp => hand.hcp,
+            Points::Lhcp => hand.lhcp,
+            Points::Shcp => hand.shcp,
+        };
+        (points as usize).min(POINTS - 1)
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Points::Hcp => "high card points",
+            Points::Lhcp => "long points (high card points and length)",
+            Points::Shcp => "short points (high card points and shortness)",
+        }
+    }
+}
+
+/// The points that the calls made most often bound, so that the bars say as
+/// much as they can: a call's bar is blocked out where its bounds on those
+/// points allow it.  `made` is how often each call was made.  High card points
+/// when none is clearly more used.
+fn points_axis(decisions: &[Decision], made: &HashMap<Bid, u64>) -> Points {
+    let bounded = |points: Points| -> u64 {
+        let of = |hand: &HandValuation| match points {
+            Points::Hcp => hand.hcp,
+            Points::Lhcp => hand.lhcp,
+            Points::Shcp => hand.shcp,
+        };
+        decisions
+            .iter()
+            .filter(|d| {
+                d.fits.iter().any(|f| {
+                    of(&f.min) > of(&HandValuation::MIN) || of(&f.max) < of(&HandValuation::MAX)
+                })
+            })
+            .map(|d| made.get(&d.call).copied().unwrap_or(0))
+            .sum()
+    };
+    let mut best = Points::Hcp;
+    for points in [Points::Lhcp, Points::Shcp] {
+        if bounded(points) > bounded(best) {
+            best = points;
+        }
+    }
+    best
+}
+
+/// How often each call was made after the auctions of a page.
+fn made_on_page(members: &[Vec<Bid>], auctions: &HashMap<Vec<Bid>, Auction>) -> HashMap<Bid, u64> {
+    let mut made: HashMap<Bid, u64> = HashMap::new();
+    for bids in members {
+        for (&call, &times) in auctions[bids].calls.iter() {
+            *made.entry(call).or_default() += times;
+        }
+    }
+    made
+}
+
 struct Page {
     /// The auctions this page covers, most often reached first.
     auctions: Vec<Vec<Bid>>,
@@ -175,6 +246,12 @@ struct Page {
     decisions: Vec<Decision>,
     /// The calls the system understands after them, in the robot's order.
     table: Vec<Meaning>,
+    /// The points that the bars are drawn along.
+    points: Points,
+    /// How often each count of those points reached the page.
+    visits: [u32; POINTS],
+    /// How often each call was made with each count.
+    made: HashMap<Bid, [u32; POINTS]>,
 }
 
 impl Page {
@@ -206,6 +283,9 @@ impl Booklet {
     /// to every auction it reached at least `min_reached` times.
     pub fn new(convention: &Convention, deals: u64, min_reached: u64) -> Self {
         let mut auctions: HashMap<Vec<Bid>, Auction> = HashMap::new();
+        // The whole auction of each deal, to count by points once the pages
+        // are known without bidding again.
+        let mut deal_auctions: Vec<Vec<Bid>> = Vec::with_capacity(deals as usize);
         for seed in 0..deals {
             let hands = seeded_hands(seed);
             let mut bids = Vec::new();
@@ -226,6 +306,7 @@ impl Booklet {
                 *auction.calls.entry(call).or_default() += 1;
                 bids.push(call);
             }
+            deal_auctions.push(bids);
         }
         auctions.retain(|_, a| a.reached >= min_reached);
 
@@ -262,14 +343,49 @@ impl Booklet {
             (std::cmp::Reverse(*reached), auction_key(&members[0]))
         });
         for (_, members, decisions) in pages {
+            let points = points_axis(&decisions, &made_on_page(&members, &booklet.auctions));
             booklet.pages.push(Page {
                 auctions: members,
                 table: meanings(&decisions),
+                points,
+                visits: [0; POINTS],
+                made: HashMap::new(),
                 decisions,
             });
         }
         booklet.put_in_reading_order();
+        booklet.count_by_points(&deal_auctions);
         booklet
+    }
+
+    /// Go through the deals again, with the auction of each, to count for
+    /// each page how often each call was made with each count of points.
+    /// The pages are known by now, so nothing is kept for the auctions that
+    /// have none.
+    fn count_by_points(&mut self, deal_auctions: &[Vec<Bid>]) {
+        for (seed, bids) in deal_auctions.iter().enumerate() {
+            let hands = seeded_hands(seed as u64);
+            for (i, &call) in bids.iter().enumerate() {
+                if let Some(&page) = self.page_of.get(&bids[..i]) {
+                    let hand = hands[i % 4].values();
+                    let page = &mut self.pages[page];
+                    let place = page.points.of(&hand);
+                    page.visits[place] += 1;
+                    page.made.entry(call).or_insert([0; POINTS])[place] += 1;
+                }
+            }
+        }
+    }
+
+    /// A short number for the tables, so that a booklet made from the same
+    /// kind of tables can be told from one made from changed tables: the
+    /// sketch of a small booklet, boiled down.
+    pub fn fingerprint(convention: &Convention) -> String {
+        let sketch = Booklet::new(convention, 300, 3).to_string();
+        let hash = sketch.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ byte as u64).wrapping_mul(0x100000001b3)
+        });
+        format!("{:016x}", hash)
     }
 
     /// Number the pages from the opening, each followed by the pages its calls
@@ -822,4 +938,114 @@ fn a_summary_reads_as_one_line() {
                 &amp; so on<br/><br/><em>or</em><br/><strong>Other</strong><br/>";
     let html = html.replace("<br/><br/><em>or</em><br/>", super::OR);
     assert_eq!(one_line(&html), "Stayman; 8+ hcp; no & so on or Other");
+}
+
+#[test]
+fn the_bars_add_up() {
+    let booklet = small_booklet();
+    for page in booklet.pages.iter() {
+        // At every count of points, the calls made are the visits.
+        for place in 0..POINTS {
+            let made: u32 = page.made.values().map(|m| m[place]).sum();
+            assert_eq!(made, page.visits[place], "{:?}", page.auctions[0]);
+        }
+        // And each call was made as often as the first pass counted.
+        for line in booklet.lines(page) {
+            let counted: u32 = page.made.get(&line.call).map_or(0, |m| m.iter().sum());
+            assert_eq!(counted as u64, line.made, "{}", call(line.call));
+        }
+        let visits: u32 = page.visits.iter().sum();
+        assert_eq!(visits as u64, booklet.reached(page));
+    }
+}
+
+#[test]
+fn the_html_booklet_has_every_page_and_links_to_them() {
+    let booklet = small_booklet();
+    let html = booklet.html("SAYC", &Booklet::fingerprint(&Convention::sayc()));
+    for n in 1..=booklet.pages.len() {
+        assert_eq!(html.matches(&format!("id=\"p{}\"", n)).count(), 1);
+    }
+    // Every link goes to a page that is there.
+    for link in html.split("href=\"#p").skip(1) {
+        let n: usize = link.split('"').next().unwrap().parse().unwrap();
+        assert!((1..=booklet.pages.len()).contains(&n), "p{}", n);
+    }
+    // Every element that is opened is closed.
+    for tag in [
+        "section", "table", "tr", "th", "td", "span", "p", "i", "a", "h1", "h2", "strong", "style",
+    ] {
+        let opened = html.matches(&format!("<{} ", tag)).count()
+            + html.matches(&format!("<{}>", tag)).count();
+        assert_eq!(
+            opened,
+            html.matches(&format!("</{}>", tag)).count(),
+            "{}",
+            tag
+        );
+    }
+    // The first page shows what the game shows for an opening of 1NT.
+    let first = booklet.page_of[&Vec::new()];
+    let hover = Convention::sayc()
+        .refine(&[Bid::NT(1)])
+        .unwrap()
+        .description()
+        .into_string();
+    assert_eq!(first, 0);
+    assert!(html.contains(&hover));
+}
+
+#[test]
+fn the_fingerprint_does_not_change_between_runs() {
+    let convention = Convention::sayc();
+    assert_eq!(
+        Booklet::fingerprint(&convention),
+        Booklet::fingerprint(&convention)
+    );
+    assert!(Booklet::fingerprint(&convention) != Booklet::fingerprint(&Convention::sheets()));
+}
+
+/// Where the booklets of the bidding systems are kept: one HTML page each,
+/// which the game's server embeds and serves.
+#[cfg(test)]
+fn booklet_path(system: super::BiddingSystem) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("booklets")
+        .join(format!("{}.html", system.slug()))
+}
+
+/// Writes the booklet of every bidding system, from 100,000 deals each:
+/// `cargo test -p robot --release write_booklets -- --ignored`.  Run it
+/// after changing a system's tables, and commit the result.
+#[test]
+#[ignore]
+fn write_booklets() {
+    std::fs::create_dir_all(booklet_path(super::BiddingSystem::Sayc).parent().unwrap()).unwrap();
+    for system in super::BiddingSystem::ALL {
+        let convention = system.convention();
+        let booklet = Booklet::new(&convention, 100_000, 100);
+        let html = booklet.html(system.name(), &Booklet::fingerprint(&convention));
+        std::fs::write(booklet_path(system), html).unwrap();
+    }
+}
+
+#[test]
+fn the_booklets_match_the_tables() {
+    // Each page records the fingerprint of the tables it was made from.  When
+    // this fails, run `write_booklets` (see above) and commit the pages.
+    for system in super::BiddingSystem::ALL {
+        let html = std::fs::read_to_string(booklet_path(system))
+            .unwrap_or_else(|e| panic!("no booklet for {}: {}", system.name(), e));
+        let recorded = html
+            .split("<!-- fingerprint: ")
+            .nth(1)
+            .and_then(|rest| rest.split(" -->").next())
+            .unwrap_or("");
+        assert_eq!(
+            recorded,
+            Booklet::fingerprint(&system.convention()),
+            "the {} booklet is out of date",
+            system.name()
+        );
+    }
 }

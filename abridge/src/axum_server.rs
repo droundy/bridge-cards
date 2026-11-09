@@ -122,6 +122,7 @@ fn router(app: AppState) -> Router {
         .route("/your-play.mp3", get(audio))
         .route("/robot.js", get(robot_js))
         .route("/robot_bg.wasm", get(robot_bg_wasm))
+        .route("/booklet/{system}", get(booklet))
         .route("/random", get(random_seat))
         .route("/{table}/random", get(table_random_seat))
         .route("/{table}/{seat}", get(table_seat))
@@ -138,6 +139,24 @@ async fn style_css() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/css")],
         include_str!("style.css"),
     )
+}
+
+/// The booklet of the bidding system that `system` names, which is one HTML
+/// page that `write_booklets` in the robot crate makes.
+async fn booklet(Path(system): Path<String>) -> Response {
+    use robot::BiddingSystem::*;
+    let Some(system) = robot::BiddingSystem::ALL
+        .iter()
+        .find(|s| s.slug() == system)
+    else {
+        return NotFound.into_response();
+    };
+    let html = match system {
+        Sheets => include_str!("../../robot/booklets/sheets.html"),
+        Sayc => include_str!("../../robot/booklets/sayc.html"),
+        TwoOverOne => include_str!("../../robot/booklets/two-over-one.html"),
+    };
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
 async fn audio() -> impl IntoResponse {

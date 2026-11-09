@@ -31,6 +31,14 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "2/1",
         }
     }
+    /// The system's name as a word that can be part of a path.
+    pub fn slug(self) -> &'static str {
+        match self {
+            BiddingSystem::Sheets => "sheets",
+            BiddingSystem::Sayc => "sayc",
+            BiddingSystem::TwoOverOne => "two-over-one",
+        }
+    }
     /// The conventions this system bids by.
     pub fn convention(self) -> Convention {
         match self {
@@ -119,18 +127,7 @@ fn all_bids() -> Vec<Bid> {
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        let hand = hand.values();
-        let mut bids = history.to_vec();
-        bids.push(Bid::Pass);
-        let mut best: Option<(usize, Bid, Convention)> = None;
-        for b in legal_bids(history).into_iter().rev() {
-            *bids.last_mut().unwrap() = b;
-            let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
-            if let Some((i, c)) = self.0.first_fit(&bids, &hand, before) {
-                best = Some((i, b, c));
-            }
-        }
-        if let Some((_, b, c)) = best {
+        if let Some((b, c)) = self.0.robot_bid(history, &hand.values()) {
             println!(
                 "Bidding {:?} with convention {}",
                 b,
@@ -140,6 +137,30 @@ impl BidAI for ConventionalBid {
         } else {
             Bid::Pass
         }
+    }
+}
+
+impl Convention {
+    /// The bid the robot makes with `hand` after `history`, with what the
+    /// entry that it goes by says about it, or `None` when nothing fits and
+    /// it passes.  It is the legal bid whose entry comes first in the table,
+    /// and the highest of the bids when one entry describes several.
+    pub(crate) fn robot_bid(
+        &self,
+        history: &[Bid],
+        hand: &HandValuation,
+    ) -> Option<(Bid, Convention)> {
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        let mut best: Option<(usize, Bid, Convention)> = None;
+        for b in legal_bids(history).into_iter().rev() {
+            *bids.last_mut().unwrap() = b;
+            let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
+            if let Some((i, c)) = self.first_fit(&bids, hand, before) {
+                best = Some((i, b, c));
+            }
+        }
+        best.map(|(_, b, c)| (b, c))
     }
 }
 
