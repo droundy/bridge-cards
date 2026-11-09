@@ -42,7 +42,7 @@
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
 //! Gerber), negative doubles, responder's strong jump shifts, a 3NT opening,
-//! 3H or 3S over 1NT, and Michaels over a major.  (Splinters are not part of
+//! and Michaels over a major.  (Splinters are not part of
 //! SAYC.)  Auctions the tables do not mention fall back on the natural bids
 //! shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
@@ -256,7 +256,25 @@ fn notrump(s: &mut Sheet) {
         let maximum = MIN.with_hcp(if nt == "1N" { hi - 1 } else { hi });
         let stayman_min = invite.map_or(game, |(lo, _)| lo);
 
-        // Responder's first bid.
+        // Responder's first bid.  The booklet gives 1NT-3M no points, so it
+        // takes what makes a small slam possible opposite 1NT's maximum.
+        if nt == "1N" {
+            let slam_interest = MIN.with_lhcp(33 - hi);
+            s.add(
+                "Response",
+                &auction(&[nt, "3S"]),
+                "6+ spades, slam interest",
+                Forcing::GameForcing,
+                [fit(slam_interest.min_len(Spades, 6), MAX).with(AtLeastAsLong(Spades, Hearts))],
+            );
+            s.add(
+                "Response",
+                &auction(&[nt, "3H"]),
+                "6+ hearts, slam interest",
+                Forcing::GameForcing,
+                [fit(slam_interest.min_len(Hearts, 6), MAX)],
+            );
+        }
         s.add(
             "Jacoby transfer",
             &auction(&[nt, &to_spades]),
@@ -664,6 +682,18 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 "4+ card support",
                 Forcing::GameForcing,
                 [fit(MIN.with_shcp(13).min_len(opening, 4), MAX)],
+            );
+            // The booklet's 4M is "usually" five trumps and a singleton or
+            // void with fewer than 10 HCP; here it is always that, and short
+            // of Jacoby's dummy points.
+            let preempt = MAX.with_hcp(9).with_shcp(12);
+            s.add(
+                "Preemptive raise",
+                &format!("{after}4{o}$"),
+                "5+ card support, a singleton or void",
+                Forcing::Passable,
+                suits_except(&[opening])
+                    .map(|short| fit(MIN.min_len(opening, 5), preempt.max_len(short, 1))),
             );
             s.add(
                 "Response",

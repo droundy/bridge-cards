@@ -1127,10 +1127,10 @@ fn advice_after_one_notrump() {
             Together you have 21–23 high card points.
             Suggested: Pass Response pass (Too weak to invite). It shows at most 7 high card points.
             ♠ 2♥ Jacoby transfer (5+ spades): needs 5+ spades (you have 4).
-            ♠ 3♠ Game invite (invites 4♠): needs 6+ spades (you have 4) and 8–9 long high card points (you have 6).
             ♥ 2♦ Jacoby transfer (5+ hearts): needs 5+ hearts (you have 4).
             NT 2NT Game invite (invites 3NT): needs 8–9 high card points (you have 6).
-            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6)."#]],
+            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6).
+            Other 2♠ Minor relay (Weak, with a 6+ card minor): needs 6+ clubs (you have 3)."#]],
     );
 }
 

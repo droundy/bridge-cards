@@ -812,6 +812,7 @@ impl Convention {
     /// Does this describe a hand, as far as partner can tell?  It does if the
     /// hand fits it, or, for what the contract rules make of a bid, if the
     /// hand lies within its bounds, whatever led the robot to choose it.
+    #[cfg(test)]
     fn describes(&self, hand: &HandValuation) -> bool {
         match self {
             Convention::Contracted { min, max, .. } => !hand.exceeds(*max) && !min.exceeds(*hand),
@@ -3574,4 +3575,69 @@ fn sayc_responder_rebids_as_the_booklet_says() {
     new_suit.push(Suit(2, Clubs));
     let description = sayc.refine(&new_suit).unwrap().description().into_string();
     assert!(description.contains("Forcing"), "{}", description);
+}
+
+#[test]
+fn sayc_jumps_to_three_and_four_of_a_major_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 1M-4M is five trumps and a singleton or void with at most 9
+            // HCP.  Without the shortness it is a single raise, and with 10
+            // HCP it is too strong.
+            (
+                &[Suit(1, Spades), Pass][..],
+                "S Q5432 H 3 D 8765 C 432",
+                Suit(4, Spades),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S KJ432 H - D QJ765 C 432",
+                Suit(4, Spades),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S KJ432 H 32 D Q76 C 432",
+                Suit(2, Spades),
+            ),
+            // 1NT-3M is a six card suit with slam interest: slam may make
+            // with 16 long points opposite 1NT's maximum.  With less,
+            // responder transfers.
+            (&[NT(1), Pass], "S AKJ432 H K2 D A32 C 32", Suit(3, Spades)),
+            (&[NT(1), Pass], "S 32 H AKJ432 D A32 C K2", Suit(3, Hearts)),
+            (&[NT(1), Pass], "S AKJ432 H K2 D Q32 C 32", Suit(2, Hearts)),
+            // Opener bids the slam that is sure opposite 16, and otherwise
+            // game, after which responder bids the slam that is sure.
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass],
+                "S Q2 H AQ3 D KJ54 C AJ43",
+                Suit(6, Spades),
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass],
+                "S Q2 H AQ3 D KJ54 C K543",
+                Suit(4, Spades),
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass, Suit(4, Spades), Pass],
+                "S AKJ432 H K2 D A32 C 32",
+                Pass,
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass, Suit(4, Spades), Pass],
+                "S AKJ432 H K2 D A32 C A2",
+                Suit(6, Spades),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{:?} {}",
+                auction,
+                hand
+            );
+        }
+    }
 }
