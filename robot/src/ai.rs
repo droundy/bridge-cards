@@ -82,15 +82,6 @@ pub trait PlayAI: std::fmt::Debug {
     fn play<C>(&mut self, game: &GameState<C>) -> Card;
 }
 
-#[derive(Debug)]
-pub struct AllPass;
-impl BidAI for AllPass {
-    fn bid(&mut self, _history: &[Bid], _hand: Cards) -> Bid {
-        println!("Using AllPass AI");
-        Bid::Pass
-    }
-}
-
 /// The bids that may follow `history`, lowest priority first: Pass, then
 /// Double, then contract bids from lowest to highest.
 fn legal_bids(history: &[Bid]) -> Vec<Bid> {
