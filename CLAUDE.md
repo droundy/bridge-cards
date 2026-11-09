@@ -19,7 +19,10 @@ cargo test -p bridge-deck -p bridge-solver -p robot -p wording   # all real test
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
+prek run --all-files                                   # quick checks, including cargo check with warnings as errors
 ```
+
+CI (`.github/workflows/warnings.yml`) builds everything with `RUSTFLAGS=-D warnings`, so a warning fails the PR. `.pre-commit-config.yaml` runs the same check quickly under [prek](https://github.com/j178/prek) (`prek install` to run it on every commit); it uses `target/prek` so that its flags don't invalidate your normal build.
 
 Benchmarks are written in each crate's `src/benches.rs` and only compiled with the crate's `benchmarks` feature. They are run by `benchmarks/`, a separate crate with its own `[workspace]`, which has to be run from inside that directory so that its `.cargo/config.toml` (function alignment) applies. `cargo bench` at the top of the repository does that for you (`benches/benchmarks.rs` runs `cargo bench` in `benchmarks/` and passes on its arguments):
 

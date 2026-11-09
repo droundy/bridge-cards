@@ -1,0 +1,28 @@
+name: Warnings
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Turns every rustc warning into an error.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  no-warnings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      # abridge embeds robot/pkg, so the wasm build has to come first.  It also
+      # checks that robot has no warnings when built for wasm.
+      - name: Build robot for wasm
+        run: wasm-pack build --target web --no-typescript --release
+        working-directory: robot
+      - name: Build everything
+        run: cargo build --workspace --all-targets --all-features
