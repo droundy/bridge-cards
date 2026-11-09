@@ -330,7 +330,7 @@ impl Convention {
             .iter()
             .enumerate()
             // A pass after a real bid says little.
-            .filter(|&(j, &(_, b))| b != Bid::Pass || first_bid.map_or(true, |f| j < f))
+            .filter(|&(j, &(_, b))| b != Bid::Pass || first_bid.is_none_or(|f| j < f))
             .map(|(_, &(i, bid))| match bid {
                 Bid::Pass => Text::from("passed"),
                 Bid::Double => Text::from("doubled"),
@@ -918,7 +918,7 @@ enum Reach {
     /// Enough if partner has these.
     IfPartnerHas(Vec<Need>),
     /// More than partner can have, given the most they have shown.
-    OutOfReach(Vec<Bound>),
+    Beyond(Vec<Bound>),
 }
 
 impl Reach {
@@ -941,7 +941,7 @@ impl Reach {
             }
         }
         if !out_of_reach.is_empty() {
-            Reach::OutOfReach(out_of_reach)
+            Reach::Beyond(out_of_reach)
         } else if !partner_needs.is_empty() {
             Reach::IfPartnerHas(partner_needs)
         } else {
@@ -958,7 +958,7 @@ impl Reach {
                 });
                 Text::from("that works if") + (partner_text() + Word::HAS + and(needs))
             }
-            Reach::OutOfReach(bounds) => {
+            Reach::Beyond(bounds) => {
                 partner_text()
                     + Word::HAS
                     + "shown"

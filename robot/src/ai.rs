@@ -47,6 +47,12 @@ pub struct BridgeAi {
     player: RandomPlay,
 }
 
+impl Default for BridgeAi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BridgeAi {
     pub fn new() -> Self {
         Self::with_system(BiddingSystem::default())
@@ -215,7 +221,7 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
         let best_goodness = goodness.iter().cloned().max().unwrap();
         for i in (0..3).rev() {
             if goodness[i] == best_goodness && suits_to_consider[i].non_empty() {
-                let cards = suits_to_consider[i];
+                let mut cards = suits_to_consider[i];
                 let have_ace = cards.aces().non_empty();
                 let have_king = cards.kings().non_empty();
                 let have_queen = cards.queens().non_empty();
@@ -224,7 +230,7 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
                 if have_ace && have_king {
                     return cards.kings().next().unwrap();
                 } else if ((have_king || have_jack) && have_queen) || (cards.len() == 2) {
-                    return cards.rev().next().unwrap();
+                    return cards.next_back().unwrap();
                 } else if have_jack && have_ten {
                     return cards.jacks().next().unwrap();
                 }
@@ -304,7 +310,7 @@ impl PlayAI for RandomPlay {
         };
         println!("trump is {:?}", nt_or_trump);
         let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
-        if game.played.len() % 4 == 0 && starting.hands[0].len() == 13 {
+        if game.played.len().is_multiple_of(4) && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
         } else if tricks_left < 14 && game.could_be_played().clone().len() > 1 {
             let cards_played: &[Card] = if game.played.len() == 4 {
@@ -348,6 +354,9 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 mod sayc;
 
+// The names say how forcing a bid is, so `Forcing` and `GameForcing` are
+// clearer than renaming them would be.
+#[allow(clippy::enum_variant_names)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
     Forced,
@@ -2637,7 +2646,7 @@ fn test_every_system_finishes_seeded_auctions() {
         let passed_out = auctions.lines().filter(|l| l.ends_with("P P P P")).count();
         let first_round_pass = auctions
             .lines()
-            .filter(|l| l.splitn(2, ' ').nth(1).unwrap().starts_with("P P P P"))
+            .filter(|l| l.split_once(' ').unwrap().1.starts_with("P P P P"))
             .count();
         assert_eq!(passed_out, first_round_pass, "{:?}", system);
         // About one deal in eight is passed out when nobody has an opening.

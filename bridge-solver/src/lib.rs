@@ -524,7 +524,7 @@ impl Eq for Score {}
 
 impl PartialOrd for Score {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.mean().partial_cmp(&other.mean())
+        Some(self.cmp(other))
     }
 }
 impl Ord for Score {

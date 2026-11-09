@@ -17,6 +17,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - uses: jetli/wasm-pack-action@v0.4.0
       # abridge embeds robot/pkg, so the wasm build has to come first.  It also
@@ -24,5 +25,6 @@ jobs:
       - name: Build robot for wasm
         run: wasm-pack build --target web --no-typescript --release
         working-directory: robot
-      - name: Build everything
-        run: cargo build --workspace --all-targets --all-features
+      # Clippy also reports every warning rustc does.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features

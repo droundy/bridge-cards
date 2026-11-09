@@ -62,7 +62,7 @@ impl Convention {
             let mut kinds: Vec<&Contract> = Vec::new();
             for c in contracts.iter().filter(|c| {
                 Strain::of(c.bid, &c.needs) == strain
-                    && !matches!(c.reach, Reach::OutOfReach(_))
+                    && !matches!(c.reach, Reach::Beyond(_))
                     && likely_fit(c, hand, partner)
             }) {
                 match kinds.last_mut() {
@@ -209,7 +209,7 @@ fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candida
             let stretch = match &reach {
                 Reach::Sure => 0,
                 Reach::IfPartnerHas(needs) => needs.iter().map(Need::stretch).sum(),
-                Reach::OutOfReach(_) => return None,
+                Reach::Beyond(_) => return None,
             };
             Some((stretch, c.rank, c.bid, after, reach))
         })
