@@ -354,9 +354,10 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 mod sayc;
 
-// The names say how forcing a bid is, so `Forcing` and `GameForcing` are
-// clearer than renaming them would be.
-#[allow(clippy::enum_variant_names)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the names say how forcing a bid is, which renaming them would obscure"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
     Forced,

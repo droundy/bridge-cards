@@ -51,6 +51,7 @@ Inputs must have the same type in both versions, so they are plain integers. `Ca
 
 ## Conventions worth knowing
 
+- Silence a lint with `#[expect(lint, reason = "...")]`, never `#[allow]`, so that the attribute is reported once it stops being needed.
 - `Card` encoding is `offset = rank + 16 * suit`, with rank 2–14 (ace = 14) and suits ordered Clubs < Diamonds < Hearts < Spades. `Cards` is a `u64` bitset over those offsets, so set operations (`+`, `-`, `&`, `in_suit`) are single bit operations.
 - `Seat` is `South=0, West=1, North=2, East=3`. `Seat + n` wraps modulo 4 and `next()` moves clockwise. Index per-seat data with `Seated<T>`, not raw arrays.
 - `bridge_solver::Starting.hands` are ordered relative to the **leader of the current trick**, not by `Seat`. `GameState::starting()` does the rotation.
