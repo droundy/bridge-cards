@@ -130,6 +130,12 @@ impl BidAI for ConventionalBid {
                 best = Some((i, b, c));
             }
         }
+        if best.is_none() {
+            best = self
+                .0
+                .contract_known(history, &hand)
+                .map(|(b, c)| (usize::MAX, b, c));
+        }
         if let Some((_, b, c)) = best {
             println!(
                 "Bidding {:?} with convention {}",
@@ -144,6 +150,23 @@ impl BidAI for ConventionalBid {
 }
 
 impl Convention {
+    /// When no entry fits `hand` after `history`, the contract the rules know
+    /// for it, though they would rather have explored: the highest bid of
+    /// the rules that fits it, if any.
+    pub(crate) fn contract_known(
+        &self,
+        history: &[Bid],
+        hand: &HandValuation,
+    ) -> Option<(Bid, Convention)> {
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        legal_bids(history).into_iter().rev().find_map(|b| {
+            *bids.last_mut().unwrap() = b;
+            self.refine(&bids)
+                .filter(|c| c.fits_when_nothing_explores(hand))
+                .map(|c| (b, c))
+        })
+    }
     /// The first entry of this table before the one at `before` that
     /// describes the last of `bids` and fits `hand`, with its index and what it
     /// says about that bid.  The robot bids the legal bid whose entry comes
@@ -155,7 +178,7 @@ impl Convention {
         before: usize,
     ) -> Option<(usize, Convention)> {
         let auction = bids_string(bids);
-        let default = self.default_for(&auction);
+        let default = self.default_for(&auction, bids);
         for i in self.candidates(&auction) {
             if before <= i {
                 break;
@@ -355,7 +378,9 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
+pub(crate) mod rules;
 mod sayc;
+use rules::{contracted_fits, Choice, Reason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
@@ -411,6 +436,9 @@ pub struct Fit {
     min: HandValuation,
     max: HandValuation,
     shape: Vec<ShapeRule>,
+    /// Is this a limit bid, whose most points are the fewest with which the
+    /// system makes a stronger bid instead?  See `Convention::limit`.
+    limit: bool,
 }
 
 impl Fit {
@@ -420,11 +448,18 @@ impl Fit {
             min,
             max,
             shape: Vec::new(),
+            limit: false,
         }
     }
     /// A hand that also follows `rule`.
     pub fn with(mut self, rule: ShapeRule) -> Self {
         self.shape.push(rule);
+        self
+    }
+    /// A limit bid, whose most points are derived from the rest of the
+    /// system rather than written down.
+    pub fn limit(mut self) -> Self {
+        self.limit = true;
         self
     }
     fn holds(&self, hand: &HandValuation) -> bool {
@@ -457,8 +492,8 @@ impl Fit {
 /// defaults, for bids that no other entry describes, and only the first of
 /// them to match a bid applies.
 ///
-/// What this cannot yet say: points for shortness when raising ("dummy
-/// points"), and that a bid denies the entries before it.
+/// What this cannot yet say: that a bid denies the entries before it,
+/// except where the contract rules derive a limit bid's maximum.
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
@@ -489,6 +524,25 @@ pub enum Convention {
         min: HandValuation,
         max: HandValuation,
     },
+    /// A natural bid of a contract in an auction where the opponents have
+    /// only passed, which means whatever the contract rules make it mean
+    /// (see `rules`).  Like `Natural`, it is a default, and only when the
+    /// rules give the bid a meaning.
+    Contract {
+        the_name: &'static str,
+        regex: RegexSet,
+    },
+    /// What the contract rules make of a bid: the hands that make it, and
+    /// why.  Placing a contract opposite a limit bid shows nothing, so then
+    /// its bounds say only when the robot bids it.
+    Contracted {
+        the_name: &'static str,
+        min: HandValuation,
+        max: HandValuation,
+        reason: Reason,
+        /// What the rules weigh to choose the bid for a hand.
+        choice: Choice,
+    },
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
@@ -496,6 +550,9 @@ pub enum Convention {
         /// the bid as `bids_string` writes it, or by `*` for entries that
         /// can describe any bid.
         by_bid: std::collections::HashMap<String, Vec<usize>>,
+        /// What auctions have been found to mean, since the contract rules
+        /// ask about partner's calls again and again.
+        meanings: Meanings,
     },
     /// Several entries that describe the same bid, of which the bidder may
     /// have used any.
@@ -578,6 +635,40 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
             )
         }
     )
+}
+
+/// What the auctions a table has been asked about mean, remembered.  A copy
+/// of a table starts with none remembered.
+#[derive(Default)]
+pub struct Meanings(std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>);
+
+impl Meanings {
+    /// What `bids` mean, from `find` the first time.
+    fn get(&self, bids: &[Bid], find: impl FnOnce() -> Option<Convention>) -> Option<Convention> {
+        let key = bids_string(bids);
+        if let Some(meaning) = self.0.lock().unwrap().get(&key) {
+            return meaning.clone();
+        }
+        // Not holding the lock, since finding a meaning asks about others.
+        let meaning = find();
+        self.0.lock().unwrap().insert(key, meaning.clone());
+        meaning
+    }
+    fn clear(&mut self) {
+        self.0.get_mut().unwrap().clear();
+    }
+}
+
+impl Clone for Meanings {
+    fn clone(&self) -> Self {
+        Meanings::default()
+    }
+}
+
+impl std::fmt::Debug for Meanings {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("Meanings")
+    }
 }
 
 /// The smallest bounds that hold all of `bounds`.
@@ -691,7 +782,13 @@ impl Convention {
             | Convention::Forced { min, max, .. } => (*min, *max),
             Convention::Rule { fits, .. } => hull(fits.iter().map(|f| (f.min, f.max))),
             Convention::Either(options) => hull(options.iter().map(|c| c.bounds())),
-            Convention::Ordered { .. } => (HandValuation::MIN, HandValuation::MAX),
+            Convention::Contracted { reason, .. } if reason.shows_nothing() => {
+                (HandValuation::MIN, HandValuation::MAX)
+            }
+            Convention::Contracted { min, max, .. } => (*min, *max),
+            Convention::Ordered { .. } | Convention::Contract { .. } => {
+                (HandValuation::MIN, HandValuation::MAX)
+            }
         }
     }
     /// Does a hand with these values fit this bid?
@@ -699,10 +796,41 @@ impl Convention {
         match self {
             Convention::Rule { fits, .. } => fits.iter().any(|f| f.holds(hand)),
             Convention::Either(options) => options.iter().any(|c| c.fits(hand)),
+            Convention::Contracted {
+                min,
+                max,
+                reason,
+                choice,
+                ..
+            } => contracted_fits(min, max, reason, choice, hand, true),
             _ => {
                 let (min, max) = self.bounds();
                 !hand.exceeds(max) && !min.exceeds(*hand)
             }
+        }
+    }
+    /// Does this describe a hand, as far as partner can tell?  It does if the
+    /// hand fits it, or, for what the contract rules make of a bid, if the
+    /// hand lies within its bounds, whatever led the robot to choose it.
+    fn describes(&self, hand: &HandValuation) -> bool {
+        match self {
+            Convention::Contracted { min, max, .. } => !hand.exceeds(*max) && !min.exceeds(*hand),
+            Convention::Either(options) => options.iter().any(|c| c.describes(hand)),
+            c => c.fits(hand),
+        }
+    }
+    /// Does a hand fit what the contract rules make of a bid, when nothing
+    /// else fits, so that it bids the contract it knows rather than explore?
+    fn fits_when_nothing_explores(&self, hand: &HandValuation) -> bool {
+        match self {
+            Convention::Contracted {
+                min,
+                max,
+                reason,
+                choice,
+                ..
+            } => contracted_fits(min, max, reason, choice, hand, false),
+            _ => false,
         }
     }
     /// The bounds on the hand that made the last of `actual_bids`.
@@ -717,8 +845,14 @@ impl Convention {
     /// What the last of `actual_bids` means: the entry that describes it, or
     /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
+        if let Convention::Ordered { meanings, .. } = self {
+            return meanings.get(actual_bids, || self.refine_afresh(actual_bids));
+        }
+        self.refine_afresh(actual_bids)
+    }
+    fn refine_afresh(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
-        let default = self.default_for(&auction);
+        let default = self.default_for(&auction, actual_bids);
         let mut found: Vec<Convention> = self
             .candidates(&auction)
             .into_iter()
@@ -731,10 +865,11 @@ impl Convention {
             _ => Some(Convention::Either(found)),
         }
     }
-    /// The index of the default for the last bid of `auction`: the first
-    /// `Natural` or `Forced` entry of this table to match it, when no
-    /// `Simple` or `Rule` entry does.
-    fn default_for(&self, auction: &str) -> Option<usize> {
+    /// The index of the default for the last bid of `auction`, whose bids are
+    /// `bids`: the first `Natural`, `Forced` or `Contract` entry of this table
+    /// to match it, when no `Simple` or `Rule` entry does.  A `Contract` entry
+    /// matches only when the contract rules give the bid a meaning.
+    fn default_for(&self, auction: &str, bids: &[Bid]) -> Option<usize> {
         let mut default = None;
         for i in self.candidates(auction) {
             match &self.entries()[i] {
@@ -745,6 +880,13 @@ impl Convention {
                 }
                 Convention::Natural { regex, .. } | Convention::Forced { regex, .. }
                     if default.is_none() && regex.is_match(auction) =>
+                {
+                    default = Some(i);
+                }
+                Convention::Contract { regex, .. }
+                    if default.is_none()
+                        && regex.is_match(auction)
+                        && self.contract_meaning(bids, "").is_some() =>
                 {
                     default = Some(i);
                 }
@@ -769,9 +911,29 @@ impl Convention {
         let is_default = default == Some(index);
         let entry = &self.entries()[index];
         match entry {
-            Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
-                regex.is_match(auction).then(|| entry.clone())
-            }
+            Convention::Simple { regex, .. } => regex.is_match(auction).then(|| entry.clone()),
+            Convention::Rule {
+                regex,
+                the_description,
+                the_name,
+                fits,
+                forcing,
+            } if regex.is_match(auction) => Some(Convention::Rule {
+                regex: regex.clone(),
+                the_description: the_description.clone(),
+                the_name,
+                fits: fits
+                    .iter()
+                    .map(|f| {
+                        if f.limit {
+                            self.limit(bids, f)
+                        } else {
+                            f.clone()
+                        }
+                    })
+                    .collect(),
+                forcing: *forcing,
+            }),
             Convention::Natural {
                 the_name,
                 regex,
@@ -811,6 +973,12 @@ impl Convention {
                     min,
                     max,
                 })
+            }
+            Convention::Contract { the_name, regex } if regex.is_match(auction) => {
+                if !in_table || !is_default {
+                    return None;
+                }
+                self.contract_meaning(bids, the_name)
             }
             Convention::Ordered { .. } => entry.refine(bids),
             _ => None,
@@ -952,6 +1120,22 @@ impl Convention {
                     suit_ranges(min, max)
                 )
             }
+            Convention::Contract { the_name, .. } => {
+                format_as!(HTML, "<strong>" the_name "</strong>")
+            }
+            Convention::Contracted {
+                the_name, reason, ..
+            } => {
+                let (min, max) = self.bounds();
+                format_as!(HTML,
+                    "<strong>" the_name "</strong><br/>"
+                    ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                    ValueRange::new(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
+                    ValueRange::new(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+                    suit_ranges(&min, &max) ""
+                    reason.text()
+                )
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -971,6 +1155,8 @@ impl Convention {
             | Convention::Rule { the_name, .. }
             | Convention::Natural { the_name, .. }
             | Convention::Forced { the_name, .. }
+            | Convention::Contract { the_name, .. }
+            | Convention::Contracted { the_name, .. }
             | Convention::Ordered { the_name, .. } => the_name,
             Convention::Either(options) => options[0].the_name(),
         }
@@ -982,6 +1168,9 @@ impl Convention {
             Convention::Rule { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Contract { the_name, .. } | Convention::Contracted { the_name, .. } => {
+                format_as!(HTML, the_name)
+            }
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
             Convention::Either(options) => options[0].name(),
         }
@@ -996,7 +1185,9 @@ impl Convention {
     fn is_forcing(&self) -> Forcing {
         match self {
             Convention::Simple { forcing, .. } | Convention::Rule { forcing, .. } => *forcing,
-            Convention::Natural { .. } => Forcing::Passable,
+            Convention::Natural { .. }
+            | Convention::Contract { .. }
+            | Convention::Contracted { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
             Convention::Ordered { .. } => Forcing::Passable,
             Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
@@ -1009,6 +1200,7 @@ impl Convention {
             the_name: name,
             conventions: Vec::new(),
             by_bid: Default::default(),
+            meanings: Meanings::default(),
         }
     }
     /// Add another possibility to the OrderedConvention
@@ -1017,8 +1209,10 @@ impl Convention {
             Convention::Ordered {
                 conventions,
                 by_bid,
+                meanings,
                 ..
             } => {
+                meanings.clear();
                 for key in convention.bids_described() {
                     by_bid.entry(key).or_default().push(conventions.len());
                 }
@@ -1082,7 +1276,8 @@ impl Convention {
             Convention::Simple { regex, .. }
             | Convention::Rule { regex, .. }
             | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. } => Some(regex),
+            | Convention::Forced { regex, .. }
+            | Convention::Contract { regex, .. } => Some(regex),
             _ => None,
         }
     }
@@ -1093,7 +1288,8 @@ impl Convention {
             Convention::Simple { regex, .. }
             | Convention::Rule { regex, .. }
             | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
+            | Convention::Forced { regex, .. }
+            | Convention::Contract { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
             _ => unreachable!(),
         }
         entry
@@ -2813,8 +3009,12 @@ fn sayc_raises_a_major_as_the_booklet_says() {
             Suit(2, Diamonds),
         ),
         ("S KJ43 H 32 D AK3 C Q432", NT(2), NT(2)),
-        // Twelve with three trumps is too strong for SAYC's limit raise.
-        ("S KJ4 H 32 D AK3 C J5432", Suit(2, Clubs), Suit(3, Spades)),
+        // Twelve dummy points with three trumps is too strong for SAYC's
+        // limit raise, but not for two over one's.
+        ("S KJ4 H 432 D AK3 C J543", Suit(2, Clubs), Suit(3, Spades)),
+        // Raises count dummy points, so a doubleton makes twelve high card
+        // points into thirteen, a game force in both.
+        ("S KJ4 H 32 D AK3 C J5432", Suit(2, Clubs), Suit(2, Clubs)),
     ] {
         assert_eq!(sayc, system_bid(BiddingSystem::Sayc, &auction, hand));
         assert_eq!(
@@ -3130,6 +3330,54 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
         }
     }
     seen.into_iter().map(|(k, v)| (v, k)).collect()
+}
+
+/// The holes the robots fall into in seeded auctions: a pass when partner's
+/// bid forces, for want of anything that fits, and a call whose meaning does
+/// not cover the hand that made it, so that partner is told something false.
+#[cfg(test)]
+fn holes(convention: &Convention, deals: u64) -> Vec<String> {
+    let mut holes = Vec::new();
+    for (seed, hands, bids) in seeded_deals(convention.clone(), deals) {
+        for n in 0..bids.len() {
+            let hand = hands[n % 4];
+            let values = hand.values();
+            let auction = &bids[..=n];
+            let mut hole = |what: String| {
+                holes.push(format!(
+                    "{seed} {}: {what} with {}",
+                    bids_string(auction),
+                    format_as!(UTF8, hand).into_string().replace('\n', " ")
+                ))
+            };
+            let forced = n >= 2
+                && bids[n - 1] == Bid::Pass
+                && convention.check_forcing(&bids[..n - 1]) >= Forcing::Forcing;
+            if bids[n] == Bid::Pass && forced {
+                hole("passes a forcing bid".to_string());
+            }
+            if let Some(meaning) = convention.refine(auction) {
+                if !meaning.describes(&values) {
+                    hole(format!("{} does not describe the hand", meaning.the_name()));
+                }
+            }
+        }
+    }
+    holes
+}
+
+#[test]
+fn sayc_has_no_holes() {
+    let mut report = String::new();
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let holes = holes(&system.convention(), 300);
+        if !holes.is_empty() {
+            report.push_str(&format!("{:?} has {} holes:\n", system, holes.len()));
+            report.push_str(&holes[..holes.len().min(40)].join("\n"));
+            report.push('\n');
+        }
+    }
+    assert!(report.is_empty(), "{}", report);
 }
 
 /// Sheets has no fallbacks, so that read in order it bids just as it did
