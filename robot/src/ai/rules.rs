@@ -1,6 +1,6 @@
 //! The contract rules, which give natural bids their meaning from the
 //! contracts within reach instead of from table entries, in auctions where
-//! the opponents have only passed.
+//! the opponents have only passed or doubled.
 //!
 //! A contract needs points between the two hands: 25 for game in notrump or
 //! a major, 28 in a minor, 33 for a small slam and 37 for a grand slam, and
@@ -185,15 +185,16 @@ fn trump(bid: Bid) -> Option<Suit> {
 }
 
 /// Have the opponents of the player making the last bid of `auction` (as
-/// `bids_string` writes it) only passed?  After a double, as after a bid,
-/// the booklet gives bids other meanings, such as 2NT as a limit raise.
+/// `bids_string` writes it) bid nothing, only passing or doubling?  A
+/// double takes no room, and where the booklet gives a bid another meaning
+/// after one, such as 2NT as a limit raise, the table says so.
 pub(crate) fn uncontested(auction: &str) -> bool {
     auction
         .split(' ')
         .rev()
         .skip(1)
         .step_by(2)
-        .all(|call| call == "P")
+        .all(|call| matches!(call, "P" | "X" | "XX"))
 }
 
 /// Which of the three rules makes a bid.
@@ -640,7 +641,7 @@ impl Convention {
     }
 
     /// What the contract rules make of the last of `bids`, a natural bid in
-    /// an auction where the opponents have only passed, if they make it at
+    /// an auction where the opponents have only passed or doubled, if they make it at
     /// all: a contract it places or invites, or a bid that explores.
     pub(crate) fn contract_meaning(
         &self,

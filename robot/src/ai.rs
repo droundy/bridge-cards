@@ -545,8 +545,8 @@ pub enum Convention {
         max: HandValuation,
     },
     /// A natural bid of a contract in an auction where the opponents have
-    /// only passed, which means whatever the contract rules make it mean
-    /// (see `rules`).  Like `Natural`, it is a default, and only when the
+    /// only passed or doubled, which means whatever the contract rules make
+    /// it mean (see `rules`).  Like `Natural`, it is a default, and only when the
     /// rules give the bid a meaning.
     Contract {
         the_name: &'static str,
@@ -1539,9 +1539,26 @@ impl Convention {
 
     /// The strong artificial 2C opening, which shows `base` or more points,
     /// and its responses, with opener's 2NT rebid unless the system gives
-    /// its own (`two_notrump_rebid` false).
-    fn add_strong_two_clubs(&mut self, base: u8, two_notrump_rebid: bool) {
+    /// its own (`two_notrump_rebid` false).  With `natural_after_double`, a
+    /// double of 2C makes 2D the natural positive response, instead of 3D,
+    /// and a pass the waiting one.
+    fn add_strong_two_clubs(
+        &mut self,
+        base: u8,
+        two_notrump_rebid: bool,
+        natural_after_double: bool,
+    ) {
         let sheets = self;
+        // The waiting response, 2D.  With `natural_after_double`, as the
+        // SAYC booklet has it, a double cancels it: 2D is then natural and
+        // positive, and a pass waits.
+        let waiting = if natural_after_double {
+            "2C (P 2D|X P)"
+        } else {
+            "2C [PX] 2D"
+        };
+        // Where 3D is the positive response in diamonds.
+        let diamonds = if natural_after_double { "P" } else { "[PX]" };
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
         let min = HandValuation::MIN;
@@ -1554,7 +1571,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting}$")]).unwrap(),
             max: max.with_lhcp(7),
             min,
             the_description: format_as!(HTML, ""),
@@ -1562,7 +1579,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2S$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2S$")]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 0, 5].into(),
@@ -1573,7 +1590,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2H$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2H$")]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 5, 0].into(),
@@ -1584,7 +1601,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3C$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3C$")]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 4, 4].into(),
                 ..max
@@ -1598,7 +1615,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3D$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3D$")]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 4, 4].into(),
                 ..max
@@ -1613,7 +1630,7 @@ impl Convention {
         });
         if two_notrump_rebid {
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
+                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2N$")]).unwrap(),
                 max: max.with_lhcp(base + 1),
                 min: min.with_lhcp(base),
                 the_description: format_as!(HTML, ""),
@@ -1622,7 +1639,7 @@ impl Convention {
             });
         }
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3N$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3N$")]).unwrap(),
             max: max.with_lhcp(base + 4),
             min: min.with_lhcp(base + 2),
             the_description: format_as!(HTML, ""),
@@ -1630,7 +1647,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D ..? 4N$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} ..? 4N$")]).unwrap(),
             max: max.with_lhcp(base + 7),
             min: min.with_lhcp(base + 5),
             the_description: format_as!(HTML, ""),
@@ -1638,13 +1655,28 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D ..? 5N$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*{waiting} ..? 5N$")]).unwrap(),
             max: max.with_lhcp(base + 9),
             min: min.with_lhcp(base + 8),
             the_description: format_as!(HTML, ""),
             the_name: "Strong two rebid",
             forcing: Forcing::Passable,
         });
+        if natural_after_double {
+            sheets.add(Convention::Simple {
+                regex: RegexSet::new([r"^(P )*2C X 2D$"]).unwrap(),
+                max,
+                min: HandValuation {
+                    length: [0, 5, 0, 0].into(),
+                    hcp_in_suit: [0, 3, 0, 0].into(),
+                    hcp: 8,
+                    ..min
+                },
+                the_description: format_as!(HTML, ""),
+                the_name: "Strong response",
+                forcing: Forcing::GameForcing,
+            });
+        }
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*2C [PX] 2H$"]).unwrap(),
             max,
@@ -1685,7 +1717,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 3D$"]).unwrap(),
+            regex: RegexSet::new([format!(r"^(P )*2C {diamonds} 3D$")]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 5, 0, 0].into(),
@@ -2511,7 +2543,7 @@ impl Convention {
 
         sheets.add_notrump((22, 23, 23), 0);
 
-        sheets.add_strong_two_clubs(23, true);
+        sheets.add_strong_two_clubs(23, true, false);
 
         sheets.add_preempts();
 
@@ -2960,7 +2992,11 @@ fn robot_bids_are_what_the_server_accepts() {
     }
     assert!(legal_bids(&[Suit(1, Hearts), Pass, Pass]).contains(&Double));
     assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Double));
-    assert!(!legal_bids(&[Suit(1, Hearts), Double]).contains(&Redouble));
+    assert!(legal_bids(&[Suit(1, Hearts), Double]).contains(&Redouble));
+    assert!(legal_bids(&[Suit(1, Hearts), Double, Pass, Pass]).contains(&Redouble));
+    assert!(!legal_bids(&[Suit(1, Hearts), Double, Pass]).contains(&Redouble));
+    assert!(!legal_bids(&[Suit(1, Hearts), Double, Redouble]).contains(&Redouble));
+    assert!(!legal_bids(&[Suit(1, Hearts), Pass]).contains(&Redouble));
     assert_eq!(legal_bids(&[NT(7)]), vec![Pass, Double]);
 }
 
@@ -4033,4 +4069,67 @@ fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
             );
         }
     }
+}
+
+#[test]
+fn sayc_answers_a_takeout_double_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    let sayc = |bids: &[Bid], hand| system_bid(BiddingSystem::Sayc, bids, hand);
+    let name = |bids: &[Bid]| {
+        Convention::sayc()
+            .refine(bids)
+            .map(|m| m.name().into_string())
+    };
+
+    // 1D (X), with the booklet's answers.
+    let doubled = [Suit(1, Diamonds), Double];
+    assert_eq!(Suit(1, Hearts), sayc(&doubled, "S 32 H KQ94 D 32 C K8432"));
+    assert_eq!(Suit(2, Clubs), sayc(&doubled, "S 32 H 432 D 32 C KQJ1043"));
+    assert_eq!(NT(2), sayc(&doubled, "S A32 H K2 D QJ54 C 5432"));
+    assert_eq!(
+        Suit(3, Diamonds),
+        sayc(&doubled, "S 32 H 432 D QJ543 C 432")
+    );
+    assert_eq!(Redouble, sayc(&doubled, "S A32 H K32 D 32 C KJ432"));
+    assert_eq!(Suit(2, Hearts), sayc(&doubled, "S 32 H KQJ943 D 32 C 432"));
+    // After the redouble opener defends, and doubles an escape with four
+    // of their trumps.
+    let redoubled = [Suit(1, Diamonds), Double, Redouble, Pass];
+    assert_eq!(Pass, sayc(&redoubled, "S A2 H K32 D AQ932 C J32"));
+    assert_eq!(
+        Double,
+        sayc(
+            &[Suit(1, Diamonds), Double, Redouble, Suit(2, Clubs)],
+            "S A2 H K32 D AQ32 C QJ32"
+        )
+    );
+
+    // A double turns conventions off: Jacoby 2NT becomes a limit raise or
+    // better, and Stayman is off over a doubled 2NT, though not 1NT.
+    assert_eq!(
+        Some(String::from("Limit raise or better")),
+        name(&[Suit(1, Hearts), Double, NT(2)])
+    );
+    assert_eq!(
+        Some(String::from("Jacoby 2NT")),
+        name(&[Suit(1, Hearts), Pass, NT(2)])
+    );
+    assert_eq!(
+        Some(String::from("Stayman")),
+        name(&[NT(1), Double, Suit(2, Clubs)])
+    );
+    assert_ne!(
+        Some(String::from("Stayman")),
+        name(&[NT(2), Double, Suit(3, Clubs)])
+    );
+    // Over a doubled 2C, 2D is natural and positive, and a pass waits.
+    assert_eq!(
+        Pass,
+        sayc(&[Suit(2, Clubs), Double], "S J32 H Q432 D 432 C 432")
+    );
+    assert_eq!(
+        Suit(2, Diamonds),
+        sayc(&[Suit(2, Clubs), Double], "S 2 H K32 D AQJ32 C 5432")
+    );
 }
