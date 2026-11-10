@@ -355,6 +355,8 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
+#[cfg(test)]
+mod daily_columns;
 mod sayc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
