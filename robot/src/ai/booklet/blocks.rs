@@ -72,7 +72,7 @@ impl Feature {
 const FEATURES: usize = 128;
 
 /// The tests that the entries of `decisions` make of a hand, other than those
-/// on its points, which the table has its own way of telling apart.
+/// on its points, which the table runs along.
 pub(super) fn features(decisions: &[super::Decision]) -> Vec<Feature> {
     let mut found: Vec<Feature> = Vec::new();
     let mut add = |feature: Feature| {
@@ -98,23 +98,30 @@ pub(super) fn features(decisions: &[super::Decision]) -> Vec<Feature> {
 }
 
 /// What tells hands apart in the table: which of the tests of the page a hand
-/// passes, one bit each, and how far its long and short points are above its
-/// high card points.  A hand with more points of every kind, by the same
-/// amount, is of the same kind: the table moves along the points a hand has.
-pub(super) type Kind = (u128, i16, i16);
+/// passes, one bit each.  Points are not among them, since the table runs
+/// along them.
+pub(super) type Kind = u128;
+
+/// `hand` with `points` of every kind, as bidders talk of points: the table
+/// does not say which kind a call counts, and the calls that count different
+/// kinds meet at the same number.
+fn with_points(hand: &HandValuation, points: usize) -> HandValuation {
+    let points = points.min(POINTS - 1) as u8;
+    HandValuation {
+        hcp: points,
+        lhcp: points,
+        shcp: points,
+        ..*hand
+    }
+}
 
 /// The kind of `hand`.
 pub(super) fn kind(features: &[Feature], hand: &HandValuation) -> Kind {
-    let tests = features
+    features
         .iter()
         .enumerate()
         .filter(|(_, f)| f.holds(hand))
-        .fold(0, |bits, (i, _)| bits | 1 << i);
-    (
-        tests,
-        hand.lhcp as i16 - hand.hcp as i16,
-        hand.shcp as i16 - hand.hcp as i16,
-    )
+        .fold(0, |bits, (i, _)| bits | 1 << i)
 }
 
 /// Calls that a block lumps together.
@@ -337,7 +344,7 @@ impl Blocks {
                 let hand = &page.representatives[&kind];
                 let cells = (0..POINTS)
                     .map(|p| {
-                        let call = page.choose(&page.points.with(hand, p));
+                        let call = page.choose(&with_points(hand, p));
                         Cell::from([(families.of(call), mass)])
                     })
                     .collect();
