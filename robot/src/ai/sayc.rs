@@ -44,12 +44,12 @@
 //! Sheets, though over a weak two's 2NT response opener rebids the suit
 //! with a minimum.
 //!
-//! Not covered, though the booklet has them: slam conventions (Blackwood and
-//! Gerber), negative doubles, the feature
+//! Blackwood and Gerber come from the contract rules (see `rules::slam`).
+//!
+//! Not covered, though the booklet has them: negative doubles, the feature
 //! that opener shows over a weak two's 2NT with a maximum, and Michaels over
-//! a major.  (Splinters are not part of
-//! SAYC.)  Auctions the tables do not mention fall back on the natural bids
-//! shared with the other conventions.
+//! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
+//! mention fall back on the natural bids shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};

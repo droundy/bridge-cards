@@ -380,7 +380,7 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 pub(crate) mod rules;
 mod sayc;
-use rules::{contracted_fits, explored_fits, Choice, Exploration, Reason};
+use rules::{asking_fits, contracted_fits, explored_fits, Asking, Choice, Exploration, Reason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
@@ -495,6 +495,8 @@ impl Fit {
             ValueRange::new(self.min.hcp, self.max.hcp, HandValuation::MAX.hcp, "hcp") ""
             ValueRange::new(self.min.shcp, self.max.shcp, HandValuation::MAX.lhcp, "shcp") ""
             ValueRange::new(self.min.lhcp, self.max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+            ValueRange::new(self.min.aces, self.max.aces, HandValuation::MAX.aces, "aces") ""
+            ValueRange::new(self.min.kings, self.max.kings, HandValuation::MAX.kings, "kings") ""
             suit_ranges(&self.min, &self.max) ""
             FormattedString::<HTML>::from_formatted(shape)
         )
@@ -568,6 +570,12 @@ pub enum Convention {
         min: HandValuation,
         max: HandValuation,
         exploration: Exploration,
+    },
+    /// An ask for aces or kings before a slam, which shows nothing (see
+    /// `rules::slam`).
+    SlamAsk {
+        the_name: &'static str,
+        asking: Asking,
     },
     Ordered {
         conventions: Vec<Convention>,
@@ -814,9 +822,9 @@ impl Convention {
             Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
                 (*min, *max)
             }
-            Convention::Ordered { .. } | Convention::Contract { .. } => {
-                (HandValuation::MIN, HandValuation::MAX)
-            }
+            Convention::Ordered { .. }
+            | Convention::Contract { .. }
+            | Convention::SlamAsk { .. } => (HandValuation::MIN, HandValuation::MAX),
         }
     }
     /// Does a hand with these values fit this bid?
@@ -837,6 +845,7 @@ impl Convention {
                 exploration,
                 ..
             } => explored_fits(min, max, exploration, hand),
+            Convention::SlamAsk { asking, .. } => asking_fits(asking, hand),
             _ => {
                 let (min, max) = self.bounds();
                 !hand.exceeds(max) && !min.exceeds(*hand)
@@ -852,6 +861,7 @@ impl Convention {
             Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
                 !hand.exceeds(*max) && !min.exceeds(*hand)
             }
+            Convention::SlamAsk { .. } => true,
             Convention::Either(options) => options.iter().any(|c| c.describes(hand)),
             c => c.fits(hand),
         }
@@ -921,9 +931,7 @@ impl Convention {
                     default = Some(i);
                 }
                 Convention::Contract { regex, .. }
-                    if default.is_none()
-                        && regex.is_match(auction)
-                        && self.contract_meaning(bids, "").is_some() =>
+                    if default.is_none() && regex.is_match(auction) && self.rules_decide(bids) =>
                 {
                     default = Some(i);
                 }
@@ -1185,6 +1193,9 @@ impl Convention {
                     exploration.text()
                 )
             }
+            Convention::SlamAsk { the_name, asking } => {
+                format_as!(HTML, "<strong>" the_name "</strong><br/>" asking.text())
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -1207,6 +1218,7 @@ impl Convention {
             | Convention::Contract { the_name, .. }
             | Convention::Contracted { the_name, .. }
             | Convention::Explored { the_name, .. }
+            | Convention::SlamAsk { the_name, .. }
             | Convention::Ordered { the_name, .. } => the_name,
             Convention::Either(options) => options[0].the_name(),
         }
@@ -1220,7 +1232,8 @@ impl Convention {
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
             Convention::Contract { the_name, .. }
             | Convention::Contracted { the_name, .. }
-            | Convention::Explored { the_name, .. } => format_as!(HTML, the_name),
+            | Convention::Explored { the_name, .. }
+            | Convention::SlamAsk { the_name, .. } => format_as!(HTML, the_name),
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
             Convention::Either(options) => options[0].name(),
         }
@@ -1240,6 +1253,7 @@ impl Convention {
             | Convention::Contracted { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
             Convention::Explored { .. } => Forcing::GameForcing,
+            Convention::SlamAsk { .. } => Forcing::Forcing,
             Convention::Ordered { .. } => Forcing::Passable,
             Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
         }
@@ -3882,22 +3896,15 @@ fn sayc_jump_shifts_and_explores_in_a_game_force() {
                 "S A2 H 32 D K32 C AKQJ32",
                 Suit(4, Hearts),
             ),
-            (
-                &then(Suit(3, Hearts)),
-                "S A2 H K2 D A32 C AKJ432",
-                Suit(6, Hearts),
-            ),
+            // With a slam sure, Blackwood checks the aces.
+            (&then(Suit(3, Hearts)), "S A2 H K2 D A32 C AKJ432", NT(4)),
             (&then(Suit(3, Spades)), "S A2 H 32 D K32 C AKQJ32", NT(3)),
             (
                 &then(Suit(4, Clubs)),
                 "S A2 H 32 D K32 C AKQJ32",
                 Suit(5, Clubs),
             ),
-            (
-                &then(Suit(4, Clubs)),
-                "S A2 H K2 D A32 C AKJ432",
-                Suit(6, Clubs),
-            ),
+            (&then(Suit(4, Clubs)), "S A2 H K2 D A32 C AKJ432", NT(4)),
             (&then(NT(3)), "S A2 H 32 D K32 C AKQJ32", Pass),
         ] {
             assert_eq!(
@@ -3924,5 +3931,106 @@ fn sayc_jump_shifts_and_explores_in_a_game_force() {
                 four_clubs.length[Spades]
             )
         );
+    }
+}
+
+#[test]
+fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let jump = [
+        Suit(1, Hearts),
+        Pass,
+        Suit(3, Clubs),
+        Pass,
+        Suit(3, Hearts),
+        Pass,
+    ];
+    let after = |calls: &[Bid]| {
+        let mut bids = jump.to_vec();
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let gerber = |calls: &[Bid]| {
+        let mut bids = vec![NT(1), Pass, Suit(4, Clubs), Pass];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    // Three aces, and two.
+    let asker = "S A2 H K2 D A32 C AKJ432";
+    let short = "S K2 H K2 D AQ2 C AKJ432";
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Blackwood, answered in steps.
+            (jump.to_vec(), asker, NT(4)),
+            (jump.to_vec(), short, NT(4)),
+            (after(&[NT(4)]), "S K2 H KQJ1032 D KQ2 C K2", Suit(5, Clubs)),
+            (
+                after(&[NT(4)]),
+                "S K2 H AQJ1032 D K32 C K2",
+                Suit(5, Diamonds),
+            ),
+            (
+                after(&[NT(4)]),
+                "S A2 H AQJ1032 D K32 C K2",
+                Suit(5, Hearts),
+            ),
+            // Two aces missing sign off, one missing bids the slam, and the
+            // one who answered passes.
+            (after(&[NT(4), Suit(5, Clubs)]), short, Suit(5, Hearts)),
+            (after(&[NT(4), Suit(5, Clubs)]), asker, Suit(6, Hearts)),
+            (
+                after(&[NT(4), Suit(5, Diamonds), Suit(6, Hearts)]),
+                "S K2 H AQJ1032 D K32 C K2",
+                Pass,
+            ),
+            // Without an ace there is no asking, so the slam is bid on
+            // points.
+            (
+                vec![
+                    Suit(1, Clubs),
+                    Pass,
+                    Suit(1, Hearts),
+                    Pass,
+                    Suit(4, Hearts),
+                    Pass,
+                ],
+                "S Q6 H KQJ1086 D KJ9 C 96",
+                Suit(6, Hearts),
+            ),
+            // Gerber over 1NT, before a slam in a suit or in notrump.
+            (
+                vec![NT(1), Pass],
+                "S A3 H K4 D AQ2 C AKQJ32",
+                Suit(4, Clubs),
+            ),
+            (gerber(&[]), "S KQ2 H AQJ103 D K32 C 32", Suit(4, Hearts)),
+            (
+                gerber(&[Suit(4, Diamonds)]),
+                "S KQ3 H KQ4 D KQ2 C AKJ2",
+                NT(4),
+            ),
+            // With every ace, and the points for a grand slam, 5C asks for
+            // kings, and the grand slam needs them all.
+            (gerber(&[NT(4)]), "S K3 H K4 D KQ2 C AKQJ32", Suit(5, Clubs)),
+            (
+                gerber(&[NT(4), Suit(5, Clubs), Suit(5, Diamonds)]),
+                "S K3 H K4 D KQ2 C AKQJ32",
+                Suit(7, Clubs),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, &auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
     }
 }
