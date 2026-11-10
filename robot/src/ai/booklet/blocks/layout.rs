@@ -1,42 +1,42 @@
-//! The packing of the table of blocks: how tall each block is in each column.
+//! The blocks of the table and their packing: how tall each block is in each
+//! column.
 //!
-//! The row model of `Blocks` says which call every kind of hand makes at
-//! every count of points, and so which blocks there are and which counts of
-//! points each one covers.  The vertical axis of the table means nothing, so
-//! this step lays the same blocks out again, as compactly as it can and
-//! without any randomness, with no block moving sideways:
+//! The row model of `Blocks` says which call every kind of hand makes at every
+//! count of points.  Its rows are only a way to find that out, and the
+//! vertical axis of the table means nothing, so the blocks are made from it
+//! without regard to the rows, and then packed as compactly as they go, with
+//! no randomness:
 //!
+//! * A block is a family of calls over a run of counts of points.  Cells of
+//!   one family in one column, whatever rows they are in, are one band of the
+//!   block, and cells of one family in neighbouring columns are one block.  So
+//!   a family is one block over every unbroken run of counts of points that it
+//!   covers, and it is two blocks only where the counts have a gap, where no
+//!   hand of any kind makes any call of the family.  Two calls of one family
+//!   are never in one column twice.
 //! * A block is as thick in a column as it needs to be to show it, and one
-//!   unit is enough: wherever a block exists it has at least one unit, and
-//!   it has more only where there is room to spare, since every column is
-//!   as tall as the table.
-//! * Every column is filled from top to bottom, so no space is left inside
-//!   the table.  A column with few blocks is not shorter: its blocks are
-//!   thicker.
-//! * The table is as tall as the column with the most blocks in it, in
-//!   units.  No layout can be shorter, since each block of that column needs
-//!   a unit of its own, and this one is never taller, so it is the shortest
-//!   there is.
-//! * A block that is in the table twice in a column, because the row model
-//!   has cells of its family in two rows of it that are only joined in
-//!   another column, is one band in this layout: the cells that are apart
-//!   in the rows come together.  Two blocks of one family that are apart in
-//!   every column of the row model stay two blocks, as they were, even where
-//!   they now touch.
+//!   unit is enough: wherever a block exists it has at least one unit, and it
+//!   has more only where there is room to spare, since every column is as tall
+//!   as the table.
+//! * Every column is filled from top to bottom, so no space is left inside the
+//!   table.  A column with few blocks is not shorter: its blocks are thicker.
+//! * The table is as tall as the column with the most blocks in it, in units.
+//!   No layout can be shorter, since each block of that column needs a unit of
+//!   its own, and this one is never taller, so it is the shortest there is.
 //!
-//! The columns are laid out from left to right.  Blocks that go on keep
-//! their order and their thickness, so that a boundary between two of them
-//! runs straight.  When a block ends, the thinner of its neighbours that
-//! goes on takes over its unit, and when one begins, it goes between the
-//! blocks whose rows are nearest to its own in the row model and takes one
-//! unit from the nearest block that has two or more.  So a boundary only
-//! moves where a block begins or ends, and it moves in a step, by as few
-//! units as it takes.  A column where nothing goes on is laid out afresh,
-//! with the spare units shared out in proportion to the cells of the row
-//! model.  Every choice breaks its ties by the position in the column or by
-//! the block's number, which is the order that `regions` finds them in.
+//! The columns are laid out from left to right.  Blocks that go on keep their
+//! order and their thickness, so that a boundary between two of them runs
+//! straight.  When a block ends, the thinner of its neighbours that goes on
+//! takes over its units, and when one begins, it goes between the blocks whose
+//! rows are nearest to its own in the row model and takes one unit from the
+//! nearest block that has two or more.  So a boundary only moves where a block
+//! begins or ends, and it moves in a step, by as few units as it takes.  A
+//! column where nothing goes on is laid out afresh, with the spare units
+//! shared out in proportion to the cells of the row model.  Every choice
+//! breaks its ties by the position in the column or by the block's number,
+//! which is the order of its family and then of its first column.
 
-use super::{regions, Family};
+use super::Family;
 
 /// One block of the table, laid out.
 pub(super) struct Block {
@@ -82,8 +82,7 @@ pub(super) struct Layout {
     pub(super) height: usize,
     /// The number of columns.
     pub(super) width: usize,
-    /// The blocks, in the order that `regions` finds them: the same blocks,
-    /// each over the same columns, as the row model has.
+    /// The blocks, by family and then by first column.
     pub(super) blocks: Vec<Block>,
 }
 
@@ -125,44 +124,53 @@ fn share_out(weights: &[usize], extra: usize) -> Vec<usize> {
 impl Layout {
     /// The blocks of `rows`, packed.  Every row has the same length.
     pub(super) fn of(rows: &[Vec<Family>]) -> Layout {
-        let (found, _) = regions(rows);
         let width = rows[0].len();
-        let spans: Vec<Span> = found
-            .iter()
-            .map(|region| {
-                let columns = region.cells.iter().map(|&(_, c)| c);
-                let (first, last) = (columns.clone().min().unwrap(), columns.max().unwrap());
-                let cells = (first..=last)
-                    .map(|c| {
-                        let here: Vec<usize> = region
-                            .cells
-                            .iter()
-                            .filter(|&&(_, cc)| cc == c)
-                            .map(|&(r, _)| r)
-                            .collect();
-                        (
-                            here.len(),
-                            here.iter().sum::<usize>() as f64 / here.len() as f64,
-                        )
-                    })
-                    .collect();
-                Span { first, last, cells }
-            })
-            .collect();
+        let mut families: Vec<Family> = rows.iter().flatten().copied().collect();
+        families.sort();
+        families.dedup();
+        let mut spans: Vec<Span> = Vec::new();
+        let mut blocks: Vec<Block> = Vec::new();
+        for family in families {
+            // The cells of the family in a column: how many, and their mean row.
+            let cells = |c: usize| -> Option<(usize, f64)> {
+                let here: Vec<usize> = (0..rows.len()).filter(|&r| rows[r][c] == family).collect();
+                (!here.is_empty()).then(|| {
+                    (
+                        here.len(),
+                        here.iter().sum::<usize>() as f64 / here.len() as f64,
+                    )
+                })
+            };
+            let mut c = 0;
+            while c < width {
+                let Some(first_cells) = cells(c) else {
+                    c += 1;
+                    continue;
+                };
+                let first = c;
+                let mut run = vec![first_cells];
+                c += 1;
+                while let Some(more) = (c < width).then(|| cells(c)).flatten() {
+                    run.push(more);
+                    c += 1;
+                }
+                spans.push(Span {
+                    first,
+                    last: c - 1,
+                    cells: run,
+                });
+                blocks.push(Block {
+                    family,
+                    first,
+                    bands: Vec::new(),
+                });
+            }
+        }
         let height = (0..width)
             .map(|c| spans.iter().filter(|s| s.has(c)).count())
             .max()
             .unwrap_or(0);
 
-        let mut blocks: Vec<Block> = found
-            .iter()
-            .zip(&spans)
-            .map(|(region, span)| Block {
-                family: region.family,
-                first: span.first,
-                bands: Vec::new(),
-            })
-            .collect();
         // The blocks of the last column, top to bottom, and how thick each is.
         let mut order: Vec<usize> = Vec::new();
         let mut thick = vec![0; spans.len()];
@@ -259,26 +267,43 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{regions, Blocks};
+    use super::super::Blocks;
     use super::*;
     use crate::ai::booklet::{small_booklet, Booklet};
 
-    /// Checks `layout` against the row model `rows` that it packs, and gives
-    /// the height that the table had.
+    /// Checks `layout` against the row model `rows` that it is made from, and
+    /// gives the height that the table had.
     fn check(rows: &[Vec<Family>], layout: &Layout) -> usize {
-        let (found, _) = regions(rows);
         let width = rows[0].len();
         assert_eq!(layout.width, width);
-        // The same blocks, in the same order, each over the same columns.
-        assert_eq!(layout.blocks.len(), found.len());
-        for (block, region) in layout.blocks.iter().zip(&found) {
-            assert!(block.family == region.family);
-            let mut columns: Vec<usize> = region.cells.iter().map(|&(_, c)| c).collect();
-            columns.dedup();
-            columns.sort();
-            columns.dedup();
-            let packed: Vec<usize> = (block.first..=block.last()).collect();
-            assert_eq!(packed, columns);
+        // Each family is one block over every unbroken run of the counts of
+        // points where the rows have it, so over the union of its cells'
+        // columns, with a gap between two blocks of one family.
+        let has = |family: Family, c: usize| rows.iter().any(|row| row[c] == family);
+        let mut families: Vec<Family> = rows.iter().flatten().copied().collect();
+        families.sort();
+        families.dedup();
+        for family in families {
+            let mut expected = Vec::new();
+            let mut c = 0;
+            while c < width {
+                if has(family, c) {
+                    let first = c;
+                    while c < width && has(family, c) {
+                        c += 1;
+                    }
+                    expected.push((first, c - 1));
+                } else {
+                    c += 1;
+                }
+            }
+            let packed: Vec<(usize, usize)> = layout
+                .blocks
+                .iter()
+                .filter(|b| b.family == family)
+                .map(|b| (b.first, b.last()))
+                .collect();
+            assert_eq!(packed, expected);
         }
         // Every unit of every column belongs to exactly one block.
         let mut filled = vec![vec![0; width]; layout.height];
@@ -291,7 +316,8 @@ mod tests {
             }
         }
         assert!(filled.iter().all(|row| row.iter().all(|&n| n == 1)));
-        // And no table is shorter: its fullest column has a unit for each block.
+        // And no table is shorter: its fullest column has a unit for each
+        // distinct block.
         let fullest = (0..width)
             .map(|c| {
                 layout
@@ -303,12 +329,25 @@ mod tests {
             .max()
             .unwrap();
         assert_eq!(layout.height, fullest);
+        // One family is never twice in a column.
+        for c in 0..width {
+            let mut here: Vec<Family> = layout
+                .blocks
+                .iter()
+                .filter(|b| b.first <= c && c <= b.last())
+                .map(|b| b.family)
+                .collect();
+            let n = here.len();
+            here.sort();
+            here.dedup();
+            assert_eq!(here.len(), n);
+        }
         assert!(layout.height <= rows.len());
         rows.len()
     }
 
     #[test]
-    fn packing_keeps_every_block_over_the_same_points() {
+    fn packing_makes_a_block_of_each_run_of_a_family() {
         let booklet = small_booklet();
         let (mut before, mut after) = (0, 0);
         for page in booklet.pages.iter() {
@@ -324,9 +363,9 @@ mod tests {
 
     #[test]
     fn packing_leaves_no_gaps_in_a_hand_made_table() {
-        // D is in two rows that only join in the first column, so it is one
-        // block with two cells in some columns, and the two rows of A that
-        // never touch are two blocks.
+        // D is in two rows that only join in the first column, and A is in
+        // two rows that never touch, but each is one block, since the rows
+        // mean nothing.
         let (a, b, c, d) = (Family(1), Family(2), Family(3), Family(4));
         let rows = vec![
             vec![a, a, a, a, a, a],
@@ -336,8 +375,8 @@ mod tests {
         ];
         let layout = Layout::of(&rows);
         check(&rows, &layout);
-        assert_eq!(layout.blocks.len(), 5);
-        assert_eq!(layout.height, 4);
+        assert_eq!(layout.blocks.len(), 4);
+        assert_eq!(layout.height, 3);
         // Blocks that fit in fewer rows than the row model has make a shorter
         // table.
         let rows = vec![
@@ -349,13 +388,21 @@ mod tests {
         let layout = Layout::of(&rows);
         check(&rows, &layout);
         assert_eq!(layout.height, 3);
-        // A single row is a table of one unit, and a column of blocks is not shorter.
+        // A family with a gap in its counts of points is two blocks.
         let row = vec![vec![a, b, a]];
-        assert_eq!(Layout::of(&row).height, 1);
+        let layout = Layout::of(&row);
+        check(&row, &layout);
+        assert_eq!((layout.blocks.len(), layout.height), (3, 1));
+        // A column of cells of two families is two blocks, not three.
         let column = vec![vec![a], vec![b], vec![a]];
         let layout = Layout::of(&column);
-        assert_eq!(layout.height, 3);
         check(&column, &layout);
+        assert_eq!((layout.blocks.len(), layout.height), (2, 2));
+        // A family that fills two rows is two units thick where it has room.
+        let rows = vec![vec![a, a], vec![b, a], vec![a, a]];
+        let layout = Layout::of(&rows);
+        check(&rows, &layout);
+        assert_eq!(layout.blocks[0].bands, vec![(0, 1), (0, 2)]);
     }
 
     /// Every system's tables, from many deals, which is too slow without

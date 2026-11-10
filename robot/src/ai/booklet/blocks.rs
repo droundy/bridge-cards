@@ -12,10 +12,11 @@
 //! Calls are lumped into families, such as the major suit bids of one level,
 //! so that "1♥ / 1♠" is one block.
 //!
-//! The row model says what each block is and which counts of points it covers,
-//! and nothing about height, which means nothing.  `layout` then packs the
-//! same blocks as tightly as they go, with no luck involved: see
-//! its docs.
+//! The row model says which call each kind of hand makes at each count of
+//! points, and nothing about height, which means nothing.  `layout` makes the
+//! blocks from it, one for each run of counts of points that a family of calls
+//! covers, whatever the rows, and packs them as tightly as they go, with no
+//! luck involved: see its docs.
 //!
 //! Planned: a flow chart for the same page, a way to decide your call by
 //! asking questions.  Each question is the one that splits what is left of the
@@ -456,60 +457,9 @@ const ROW_H: usize = 30;
 /// Room above the table for the counts of points.
 const TOP: usize = 16;
 
-/// Cells that touch and have the same call.
-struct Region {
-    family: Family,
-    cells: Vec<(usize, usize)>,
-}
-
-fn regions(rows: &[Vec<Family>]) -> (Vec<Region>, Vec<Vec<usize>>) {
-    let (height, width) = (rows.len(), rows[0].len());
-    let mut of = vec![vec![usize::MAX; width]; height];
-    let mut found: Vec<Region> = Vec::new();
-    for r in 0..height {
-        for c in 0..width {
-            if of[r][c] != usize::MAX {
-                continue;
-            }
-            let id = found.len();
-            let mut region = Region {
-                family: rows[r][c],
-                cells: Vec::new(),
-            };
-            let mut stack = vec![(r, c)];
-            of[r][c] = id;
-            while let Some((r, c)) = stack.pop() {
-                region.cells.push((r, c));
-                let mut near = Vec::new();
-                if r > 0 {
-                    near.push((r - 1, c));
-                }
-                if c > 0 {
-                    near.push((r, c - 1));
-                }
-                if r + 1 < height {
-                    near.push((r + 1, c));
-                }
-                if c + 1 < width {
-                    near.push((r, c + 1));
-                }
-                for (nr, nc) in near {
-                    if of[nr][nc] == usize::MAX && rows[nr][nc] == region.family {
-                        of[nr][nc] = id;
-                        stack.push((nr, nc));
-                    }
-                }
-            }
-            region.cells.sort();
-            found.push(region);
-        }
-    }
-    (found, of)
-}
-
 impl Blocks {
-    /// The blocks of the table packed into as few units of height as they go
-    /// in, with every block over the same counts of points as in the rows.
+    /// The blocks of the table, packed into as few units of height as they go
+    /// in.
     fn layout(&self) -> Layout {
         Layout::of(&self.rows)
     }
