@@ -35,6 +35,7 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
                dominant-baseline: central; pointer-events: none; }
 .blocks .range { font-size: 10px; }
+.blocks .small { font-size: 9px; }
 .blocks .tick { font-size: 10px; fill: var(--faint); }
 .blocks .edge { stroke: var(--background); stroke-width: 2.5; fill: none; }
 .blocks a { cursor: pointer; }
@@ -195,7 +196,7 @@ Pass: Opening pass; 12- lhcp</title><path d="M0 16h56v90h-56zM56 16h56v60h-56zM1
 <g class="k-pass"><title>Pass, 1–5 points
 Pass: Response pass; 5- hcp</title><path d="M0 16h70v120h-70z"/><text x="35" y="70">Pass</text><text class="range" x="35" y="84">1–5</text></g>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Response pass; 5- hcp</title><path d="M140 76h14v30h-14zM154 46h14v30h-14z"/></g>
+Pass: Response pass; 5- hcp</title><path d="M140 76h14v30h-14zM154 46h14v30h-14z"/><text class="small" transform="rotate(-90 147 91)" x="147" y="91">Pass</text></g>
 <g class="k-major"><title>Splinter, 1–12 points
 3♥: Splinter; 12- hcp; 4+ ♦; 10+ hcp outside♦; 1- ♥; 1- hcp in ♥; 12- hcp outside♥; 3- ♠; Game forcing</title><path d="M0 136h70v30h-70zM70 106h70v60h-70zM140 136h28v30h-28z"/><text x="84" y="145">3<tspan class="hearts">♥</tspan></text><text class="range" x="84" y="159">Splinter</text></g>
 <a href="#p5"><g class="k-major"><title>Response, 6–12 points
@@ -203,9 +204,10 @@ Pass: Response pass; 5- hcp</title><path d="M140 76h14v30h-14zM154 46h14v30h-14z
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M70 16h70v30h-70zM140 16h14v60h-14zM154 16h14v30h-14z"/><text x="119" y="25">1<tspan class="hearts">♥</tspan> / 1<tspan class="spades">♠</tspan></text><text class="range" x="119" y="39">Response</text></g></a>
 <g class="k-minor"><title>Inverted minor weak raise, 6–10 points
 3♦: Inverted minor weak raise; 6-10 hcp; 5+ ♦; 4- ♥; 4- ♠</title><path d="M70 76h70v30h-70z"/><text x="105" y="85">3<tspan class="diamonds">♦</tspan></text><text class="range" x="105" y="99">6–10</text></g>
-<g class="k-minor"><title>Natural, 12 points</title><path d="M154 106h14v30h-14z"/><text x="161" y="121"></text></g>
+<g class="k-minor"><title>Natural, 12 points
+3♣: Natural; 12-14 hcp; 5+ ♣</title><path d="M154 106h14v30h-14z"/><text class="small" transform="rotate(-90 161 121)" x="161" y="121">3<tspan class="clubs">♣</tspan></text></g>
 <g class="k-minor"><title>Inverted minor limit raise, 11–12 points
-2♦: Inverted minor limit raise; 11-12 hcp; 4+ ♦; 4- ♥; 4- ♠</title><path d="M140 106h14v30h-14zM154 76h14v30h-14z"/></g>
+2♦: Inverted minor limit raise; 11-12 hcp; 4+ ♦; 4- ♥; 4- ♠</title><path d="M140 106h14v30h-14zM154 76h14v30h-14z"/><text class="small" transform="rotate(-90 147 121)" x="147" y="121">2<tspan class="diamonds">♦</tspan></text></g>
 <a href="#p27"><g class="k-nt"><title>Weak response, 6–10 points
 1NT: Weak response; 6-10 hcp; 4- ♦; 3- ♥; 3- ♠</title><path d="M70 46h70v30h-70z"/><text x="105" y="55">1NT</text><text class="range" x="105" y="69">6–10</text></g></a>
 <path class="edge" d="M70 46h70M154 46h14M70 76h98M70 106h98M0 136h70M140 136h28M70 16v120M140 46v90M154 46v90"/>
@@ -229,14 +231,14 @@ Pass: Response pass; 5- hcp</title><path d="M140 76h14v30h-14zM154 46h14v30h-14z
 <text class="tick" x="161" y="8">20</text>
 <g class="k-major"><title>Natural game, 20–21 points
 4♥: Natural game; 20-22 hcp; 5+ ♥
-4♠: Natural game; 20-22 hcp; 4+ ♠</title><path d="M154 16h28v30h-28z"/></g>
+4♠: Natural game; 20-22 hcp; 4+ ♠</title><path d="M154 16h28v30h-28z"/><text class="small" transform="rotate(-90 168 31)" x="168" y="31">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M154 46h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M154 46h28v30h-28z"/><text class="small" x="168" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
 3♥: Natural; 18-20 hcp; 5+ ♥
-3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/></g>
+3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/><text class="small" x="140" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <a href="#p6"><g class="k-nt"><title>Forced NT, 9–19 points
 1NT: Forced NT</title><path d="M0 16h126v60h-126zM126 46h28v30h-28z"/><text x="77" y="55">1NT</text><text class="range" x="77" y="69">Forced NT</text></g></a>
 <path class="edge" d="M126 46h56M126 16v30M154 16v60"/>
@@ -265,7 +267,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v60h-154z
 <a href="#p7"><g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42zM266 16h14v60h-14z"/><text x="252" y="25">Pass</text><text class="range" x="252" y="39">16–19</text></g></a>
 <g class="k-suit"><title>Natural, 20–21 points
-6NT: Natural; 20-22 hcp</title><path d="M280 16h28v60h-28z"/></g>
+6NT: Natural; 20-22 hcp</title><path d="M280 16h28v60h-28z"/><text class="small" x="294" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
 5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 46h42v30h-42z"/><text x="245" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="245" y="69">16–18</text></g>
@@ -278,7 +280,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 3♣: Natural; 11-13 hcp; 5+ ♣
 3♦: Natural; 11-13 hcp; 5+ ♦
 3♥: Natural; 11-13 hcp; 8+ ♥
-3♠: Natural; 11-13 hcp; 8+ ♠</title><path d="M154 46h28v30h-28z"/></g>
+3♠: Natural; 11-13 hcp; 8+ ♠</title><path d="M154 46h28v30h-28z"/><text class="small" x="168" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M154 46h112M154 46v30M182 16v60M224 16v60M266 46v30M280 16v60"/>
 </svg>
 <table>
@@ -307,11 +309,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-major"><title>Natural game, 20–21 points
 4♠: Natural game; 20-22 hcp; 4+ ♠</title><path d="M154 16h28v30h-28z"/><text x="168" y="31">4<tspan class="spades">♠</tspan></text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M154 46h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M154 46h28v30h-28z"/><text class="small" x="168" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
-3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/></g>
+3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/><text class="small" x="140" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h56M126 16v30M154 16v60"/>
 </svg>
 <table>
@@ -365,7 +367,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h196v30h-196z
 <text class="tick" x="147" y="8">10</text>
 <g class="k-pass"><title>Pass, 0–16 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h238v30h-238z"/><text x="119" y="85">Pass</text><text class="range" x="119" y="99">0–16</text></g>
-<g class="k-suit"><title>Natural, 15–16 points</title><path d="M210 16h28v30h-28z"/><text x="224" y="31"></text></g>
+<g class="k-suit"><title>Natural, 15–16 points
+3♣: Natural; 15-17 hcp; 6+ ♣
+3♦: Natural; 15-17 hcp; 4+ ♦
+3♥: Natural; 15-17 hcp; 4+ ♥
+3♠: Natural; 15-17 hcp; 6+ ♠</title><path d="M210 16h28v30h-28z"/><text class="small" x="224" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-suit"><title>Takeout double response, 0–16 points
 2♥: Takeout double response; 4+ ♠</title><path d="M0 16h210v60h-210zM210 46h28v30h-28z"/><text x="119" y="55">2<tspan class="hearts">♥</tspan></text><text class="range" x="119" y="69">Takeout double response</text></g>
 <path class="edge" d="M210 46h28M0 76h238M210 16v30"/>
@@ -427,7 +433,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h42v60h-42zM4
 <text class="tick" x="63" y="8">10</text>
 <g class="k-pass"><title>Pass, 6–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM84 16h14v30h-14z"/><text x="49" y="25">Pass</text><text class="range" x="49" y="39">6–12</text></g>
-<g class="k-suit"><title>Natural, 12 points</title><path d="M84 46h14v30h-14z"/><text x="91" y="61"></text></g>
+<g class="k-suit"><title>Natural, 12 points
+3♣: Natural; 12-14 hcp; 5+ ♣
+3♦: Natural; 12-14 hcp; 5+ ♦
+3♥: Natural; 12-14 hcp; 8+ ♥
+3♠: Natural; 12-14 hcp; 8+ ♠</title><path d="M84 46h14v30h-14z"/><text class="small" transform="rotate(-90 91 61)" x="91" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M84 46h14M84 46v30"/>
 </svg>
 <table>
@@ -442,7 +452,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM8
 <text class="tick" x="63" y="8">10</text>
 <g class="k-pass"><title>Pass, 6–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM84 16h14v30h-14z"/><text x="49" y="25">Pass</text><text class="range" x="49" y="39">6–12</text></g>
-<g class="k-suit"><title>Natural, 12 points</title><path d="M84 46h14v30h-14z"/><text x="91" y="61"></text></g>
+<g class="k-suit"><title>Natural, 12 points
+3♣: Natural; 12-14 hcp; 5+ ♣
+3♦: Natural; 12-14 hcp; 5+ ♦
+3♥: Natural; 12-14 hcp; 5+ ♥
+3♠: Natural; 12-14 hcp; 5+ ♠</title><path d="M84 46h14v30h-14z"/><text class="small" transform="rotate(-90 91 61)" x="91" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M84 46h14M84 46v30"/>
 </svg>
 <table>
@@ -482,7 +496,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v30h-154z
 4♣: Law of total tricks; 7+ ♣
 4♦: Law of total tricks; 7+ ♦</title><path d="M0 106h154v30h-154zM154 46h14v90h-14z"/><text x="84" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan></text><text class="range" x="84" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 20 points
-3NT: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/><text class="small" transform="rotate(-90 161 31)" x="161" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 9–19 points
 3♣: Law of total tricks; 6+ ♣
 3♦: Law of total tricks; 6+ ♦</title><path d="M0 46h154v30h-154z"/><text x="77" y="55">3<tspan class="clubs">♣</tspan> / 3<tspan class="diamonds">♦</tspan></text><text class="range" x="77" y="69">Law of total tricks</text></g>
@@ -509,15 +523,17 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v30h-154z
 <g class="k-pass"><title>Pass, 1–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h168v30h-168z"/><text x="84" y="25">Pass</text><text class="range" x="84" y="39">1–12</text></g>
 <g class="k-pass"><title>Pass, 16 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M210 16h14v30h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M210 16h14v30h-14z"/><text class="small" transform="rotate(-90 217 31)" x="217" y="31">Pass</text></g>
 <g class="k-minor"><title>Natural game, 16 points
-5♣: Natural game; 16-18 hcp; 5+ ♣</title><path d="M210 46h14v30h-14z"/></g>
+5♣: Natural game; 16-18 hcp; 5+ ♣</title><path d="M210 46h14v30h-14z"/><text class="small" transform="rotate(-90 217 61)" x="217" y="61">5<tspan class="clubs">♣</tspan></text></g>
 <g class="k-nt"><title>Natural game, 13–15 points
 3NT: Natural game; 13-15 hcp</title><path d="M168 16h42v90h-42z"/><text x="189" y="55">3NT</text><text class="range" x="189" y="69">13–15</text></g>
 <g class="k-suit"><title>Law of total tricks, 1–12 points
 3♦: Law of total tricks; 6+ ♦</title><path d="M0 46h168v30h-168z"/><text x="84" y="55">3<tspan class="diamonds">♦</tspan></text><text class="range" x="84" y="69">Law of total tricks</text></g>
-<g class="k-major"><title>Law of total tricks, 1–12 points</title><path d="M0 76h168v30h-168z"/><text x="84" y="85"></text><text class="range" x="84" y="99">Law of total tricks</text></g>
-<g class="k-major"><title>Law of total tricks, 16 points</title><path d="M210 76h14v30h-14z"/><text x="217" y="91"></text></g>
+<g class="k-major"><title>Law of total tricks, 1–12 points
+2♠: Law of total tricks; 8+ ♠</title><path d="M0 76h168v30h-168z"/><text x="84" y="85">2<tspan class="spades">♠</tspan></text><text class="range" x="84" y="99">Law of total tricks</text></g>
+<g class="k-major"><title>Law of total tricks, 16 points
+2♠: Law of total tricks; 8+ ♠</title><path d="M210 76h14v30h-14z"/><text class="small" transform="rotate(-90 217 91)" x="217" y="91">2<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M0 46h168M210 46h14M0 76h168M210 76h14M168 16v90M210 16v90"/>
 </svg>
 <table>
@@ -541,7 +557,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♦: Law of total tricks; 8+ ♦
 4♥: Law of total tricks; 5+ ♥</title><path d="M0 106h238v30h-238zM238 46h28v90h-28z"/><text x="133" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan> / 4<tspan class="hearts">♥</tspan></text><text class="range" x="133" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17–18 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/><text class="small" x="252" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -624,7 +640,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h140v30h-140z
 4♣: Law of total tricks; 7+ ♣
 4♦: Law of total tricks; 7+ ♦</title><path d="M0 106h140v30h-140zM140 46h14v90h-14z"/><text x="77" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan></text><text class="range" x="77" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 20 points
-3NT: Natural game; 20-22 hcp</title><path d="M140 16h14v30h-14z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M140 16h14v30h-14z"/><text class="small" transform="rotate(-90 147 31)" x="147" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 10–19 points
 3♣: Law of total tricks; 6+ ♣
 3♦: Law of total tricks; 6+ ♦</title><path d="M0 76h140v30h-140z"/><text x="70" y="85">3<tspan class="clubs">♣</tspan> / 3<tspan class="diamonds">♦</tspan></text><text class="range" x="70" y="99">Law of total tricks</text></g>
@@ -656,11 +672,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h140v30h-140z
 <g class="k-major"><title>Natural game, 20–21 points
 4♥: Natural game; 20-22 hcp; 4+ ♥</title><path d="M140 76h28v30h-28z"/><text x="154" y="91">4<tspan class="hearts">♥</tspan></text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M140 46h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M140 46h28v30h-28z"/><text class="small" x="154" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
-3♥: Natural; 18-20 hcp; 4+ ♥</title><path d="M112 46h28v30h-28z"/></g>
+3♥: Natural; 18-20 hcp; 4+ ♥</title><path d="M112 46h28v30h-28z"/><text class="small" x="126" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <a href="#p6"><g class="k-nt"><title>Forced NT, 10–19 points
 1NT: Forced NT</title><path d="M0 46h112v60h-112zM112 76h28v30h-28z"/><text x="70" y="85">1NT</text><text class="range" x="70" y="99">Forced NT</text></g></a>
 <path class="edge" d="M0 46h168M112 76h56M112 46v30M140 46v60"/>
@@ -687,7 +703,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h70v60h-70zM7
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M140 16h42v30h-42zM182 16h14v60h-14z"/><text x="168" y="25">Pass</text><text class="range" x="168" y="39">16–19</text></g>
 <g class="k-suit"><title>Natural, 20–21 points
-6NT: Natural; 20-22 hcp</title><path d="M196 16h28v60h-28z"/></g>
+6NT: Natural; 20-22 hcp</title><path d="M196 16h28v60h-28z"/><text class="small" x="210" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
 5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M140 46h42v30h-42z"/><text x="161" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="161" y="69">16–18</text></g>
@@ -698,7 +714,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M140 16h42v30h-42z
 <g class="k-suit"><title>Natural, 11–12 points
 3♣: Natural; 11-13 hcp; 5+ ♣
 3♦: Natural; 11-13 hcp; 5+ ♦
-3♥: Natural; 11-13 hcp; 8+ ♥</title><path d="M70 46h28v30h-28z"/></g>
+3♥: Natural; 11-13 hcp; 8+ ♥</title><path d="M70 46h28v30h-28z"/><text class="small" x="84" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M70 46h112M70 46v30M98 16v60M140 16v60M182 46v30M196 16v60"/>
 </svg>
 <table>
@@ -721,7 +737,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M140 16h42v30h-42z
 <text class="tick" x="63" y="8">10</text>
 <g class="k-pass"><title>Pass, 6–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM84 16h14v30h-14z"/><text x="49" y="25">Pass</text><text class="range" x="49" y="39">6–12</text></g>
-<g class="k-suit"><title>Natural, 12 points</title><path d="M84 46h14v30h-14z"/><text x="91" y="61"></text></g>
+<g class="k-suit"><title>Natural, 12 points
+3♣: Natural; 12-14 hcp; 5+ ♣
+3♦: Natural; 12-14 hcp; 5+ ♦
+3♥: Natural; 12-14 hcp; 8+ ♥
+3♠: Natural; 12-14 hcp; 4+ ♠</title><path d="M84 46h14v30h-14z"/><text class="small" transform="rotate(-90 91 61)" x="91" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M84 46h14M84 46v30"/>
 </svg>
 <table>
@@ -762,7 +782,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v30h-154z
 4♣: Law of total tricks; 7+ ♣
 4♦: Law of total tricks; 7+ ♦</title><path d="M0 106h154v30h-154zM154 46h14v90h-14z"/><text x="84" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan></text><text class="range" x="84" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 20 points
-3NT: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/><text class="small" transform="rotate(-90 161 31)" x="161" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 9–19 points
 3♣: Law of total tricks; 6+ ♣
 3♦: Law of total tricks; 6+ ♦</title><path d="M0 76h154v30h-154z"/><text x="77" y="85">3<tspan class="clubs">♣</tspan> / 3<tspan class="diamonds">♦</tspan></text><text class="range" x="77" y="99">Law of total tricks</text></g>
@@ -840,10 +860,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h196v60h-196z
 <g class="k-major"><title>Natural game, 17–18 points
 4♠: Natural game; 17-19 hcp; 3+ ♠</title><path d="M224 16h28v30h-28z"/><text x="238" y="31">4<tspan class="spades">♠</tspan></text></g>
 <g class="k-nt"><title>Natural game, 17–18 points
-3NT: Natural game; 17-19 hcp</title><path d="M224 46h28v30h-28z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M224 46h28v30h-28z"/><text class="small" x="238" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 15–16 points
 3♦: Natural; 15-17 hcp; 6+ ♦
-3♠: Natural; 15-17 hcp; 3+ ♠</title><path d="M196 16h28v30h-28z"/></g>
+3♠: Natural; 15-17 hcp; 3+ ♠</title><path d="M196 16h28v30h-28z"/><text class="small" transform="rotate(-90 210 31)" x="210" y="31">3<tspan class="diamonds">♦</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M196 46h56M196 16v30M224 16v60"/>
 </svg>
 <table>
@@ -867,7 +887,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v60h-154z
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42zM266 16h14v60h-14z"/><text x="252" y="25">Pass</text><text class="range" x="252" y="39">16–19</text></g>
 <g class="k-pass"><title>Pass, 23 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M322 16h14v60h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M322 16h14v60h-14z"/><text class="small" transform="rotate(-90 329 46)" x="329" y="46">Pass</text></g>
 <g class="k-suit"><title>Natural, 20–22 points
 6NT: Natural; 20-22 hcp</title><path d="M280 16h42v60h-42z"/><text x="301" y="40">6NT</text><text class="range" x="301" y="54">20–22</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
@@ -882,7 +902,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M322 16h14v60h-14z
 3♣: Natural; 11-13 hcp; 6+ ♣
 3♦: Natural; 11-13 hcp; 6+ ♦
 3♥: Natural; 11-13 hcp; 3+ ♥
-3♠: Natural; 11-13 hcp; 6+ ♠</title><path d="M154 46h28v30h-28z"/></g>
+3♠: Natural; 11-13 hcp; 6+ ♠</title><path d="M154 46h28v30h-28z"/><text class="small" x="168" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M154 46h112M154 46v30M182 16v60M224 16v60M266 46v30M280 16v60M322 16v60"/>
 </svg>
 <table>
@@ -937,7 +957,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v60h-154z
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42zM266 16h14v60h-14z"/><text x="252" y="25">Pass</text><text class="range" x="252" y="39">16–19</text></g>
 <g class="k-suit"><title>Natural, 20–21 points
-6NT: Natural; 20-22 hcp</title><path d="M280 16h28v60h-28z"/></g>
+6NT: Natural; 20-22 hcp</title><path d="M280 16h28v60h-28z"/><text class="small" x="294" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 6+ ♣
 5♦: Natural game; 16-18 hcp; 6+ ♦</title><path d="M224 46h42v30h-42z"/><text x="245" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="245" y="69">16–18</text></g>
@@ -950,7 +970,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 3♣: Natural; 11-13 hcp; 6+ ♣
 3♦: Natural; 11-13 hcp; 6+ ♦
 3♥: Natural; 11-13 hcp; 6+ ♥
-3♠: Natural; 11-13 hcp; 3+ ♠</title><path d="M154 46h28v30h-28z"/></g>
+3♠: Natural; 11-13 hcp; 3+ ♠</title><path d="M154 46h28v30h-28z"/><text class="small" x="168" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M154 46h112M154 46v30M182 16v60M224 16v60M266 46v30M280 16v60"/>
 </svg>
 <table>
@@ -976,7 +996,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 <text class="tick" x="147" y="8">10</text>
 <g class="k-pass"><title>Pass, 0–16 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h210v60h-210zM210 46h28v30h-28z"/><text x="119" y="55">Pass</text><text class="range" x="119" y="69">0–16</text></g>
-<g class="k-major"><title>Natural game, 17–19 points</title><path d="M238 16h42v30h-42z"/><text x="259" y="25"></text><text class="range" x="259" y="39">17–19</text></g>
+<g class="k-major"><title>Natural game, 17–19 points
+4♥: Natural game; 17-19 hcp; 6+ ♥
+4♠: Natural game; 17-19 hcp; 6+ ♠</title><path d="M238 16h42v30h-42z"/><text x="259" y="25">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="259" y="39">17–19</text></g>
 <g class="k-nt"><title>Natural game, 17–19 points
 3NT: Natural game; 17-19 hcp</title><path d="M238 46h42v30h-42z"/><text x="259" y="55">3NT</text><text class="range" x="259" y="69">17–19</text></g>
 <g class="k-suit"><title>Natural, 15–16 points
@@ -1030,7 +1052,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v150h-112
 <g class="k-pass"><title>Pass, 0–5 points
 Pass: Response pass; 5- hcp</title><path d="M0 16h84v90h-84z"/><text x="42" y="55">Pass</text><text class="range" x="42" y="69">0–5</text></g>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Response pass; 5- hcp</title><path d="M154 76h28v30h-28z"/></g>
+Pass: Response pass; 5- hcp</title><path d="M154 76h28v30h-28z"/><text class="small" transform="rotate(-90 168 91)" x="168" y="91">Pass</text></g>
 <g class="k-major"><title>Splinter, 0–12 points
 3♥: Splinter; 12- hcp; 4+ ♦; 10+ hcp outside♦; 1- ♥; 1- hcp in ♥; 12- hcp outside♥; 3- ♠; Game forcing
 3♠: Splinter; 12- hcp; 4+ ♦; 10+ hcp outside♦; 3- ♥; 1- ♠; 1- hcp in ♠; 12- hcp outside♠; Game forcing</title><path d="M0 106h154v60h-154zM154 136h28v30h-28z"/><text x="91" y="145">3<tspan class="hearts">♥</tspan> / 3<tspan class="spades">♠</tspan></text><text class="range" x="91" y="159">Splinter</text></g>
@@ -1039,7 +1061,8 @@ Pass: Response pass; 5- hcp</title><path d="M154 76h28v30h-28z"/></g>
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M84 16h70v30h-70zM154 16h14v60h-14zM168 16h14v30h-14z"/><text x="133" y="25">1<tspan class="hearts">♥</tspan> / 1<tspan class="spades">♠</tspan></text><text class="range" x="133" y="39">Response</text></g></a>
 <a href="#p36"><g class="k-minor"><title>Inverted minor weak raise, 6–10 points
 3♦: Inverted minor weak raise; 6-10 hcp; 5+ ♦; 4- ♥; 4- ♠</title><path d="M84 76h70v30h-70z"/><text x="119" y="85">3<tspan class="diamonds">♦</tspan></text><text class="range" x="119" y="99">6–10</text></g></a>
-<g class="k-minor"><title>Natural, 12 points</title><path d="M168 46h14v30h-14z"/><text x="175" y="61"></text></g>
+<g class="k-minor"><title>Natural, 12 points
+3♣: Natural; 12-14 hcp; 5+ ♣</title><path d="M168 46h14v30h-14z"/><text class="small" transform="rotate(-90 175 61)" x="175" y="61">3<tspan class="clubs">♣</tspan></text></g>
 <a href="#p37"><g class="k-minor"><title>Inverted minor limit raise, 11–12 points
 2♦: Inverted minor limit raise; 11-12 hcp; 4+ ♦; 4- ♥; 4- ♠</title><path d="M154 106h28v30h-28z"/><text x="168" y="121">2<tspan class="diamonds">♦</tspan></text></g></a>
 <a href="#p27"><g class="k-nt"><title>Weak response, 6–10 points
@@ -1066,7 +1089,7 @@ Pass: Response pass; 5- hcp</title><path d="M154 76h28v30h-28z"/></g>
 <g class="k-pass"><title>Pass, 11–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v30h-126z"/><text x="63" y="25">Pass</text><text class="range" x="63" y="39">11–19</text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M126 16h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M126 16h28v30h-28z"/><text class="small" x="140" y="31">3NT</text></g>
 <path class="edge" d="M126 16v30"/>
 </svg>
 <table>
@@ -1083,15 +1106,15 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v30h-126z
 <g class="k-pass"><title>Pass, 10–14 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h42v60h-42zM42 46h28v30h-28z"/><text x="35" y="55">Pass</text><text class="range" x="35" y="69">10–14</text></g>
 <g class="k-pass"><title>Pass, 18–19 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h28v30h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h28v30h-28z"/><text class="small" transform="rotate(-90 126 61)" x="126" y="61">Pass</text></g>
 <g class="k-minor"><title>Natural game, 18–19 points
 5♣: Natural game; 18-20 hcp; 5+ ♣
-5♦: Natural game; 18-20 hcp; 4+ ♦</title><path d="M112 16h28v30h-28z"/></g>
+5♦: Natural game; 18-20 hcp; 4+ ♦</title><path d="M112 16h28v30h-28z"/><text class="small" transform="rotate(-90 126 31)" x="126" y="31">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-nt"><title>Natural game, 15–17 points
 3NT: Natural game; 15-17 hcp</title><path d="M70 16h42v60h-42z"/><text x="91" y="40">3NT</text><text class="range" x="91" y="54">15–17</text></g>
 <g class="k-suit"><title>Natural, 13–14 points
 3♣: Natural; 13-15 hcp; 5+ ♣
-3♦: Natural; 13-15 hcp; 4+ ♦</title><path d="M42 16h28v30h-28z"/></g>
+3♦: Natural; 13-15 hcp; 4+ ♦</title><path d="M42 16h28v30h-28z"/><text class="small" transform="rotate(-90 56 31)" x="56" y="31">3<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <path class="edge" d="M42 46h28M112 46h28M42 16v30M70 16v60M112 16v60"/>
 </svg>
 <table>
@@ -1252,8 +1275,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v30h-182z
 <g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v30h-182z"/><text x="91" y="25">Pass</text><text class="range" x="91" y="39">0–12</text></g>
 <g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g>
-<g class="k-nt"><title>Natural game, 13–15 points</title><path d="M182 16h42v30h-42z"/><text x="203" y="25"></text><text class="range" x="203" y="39">13–15</text></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g>
+<g class="k-nt"><title>Natural game, 13–15 points
+3NT: Natural game; 13-15 hcp</title><path d="M182 16h42v30h-42z"/><text x="203" y="25">3NT</text><text class="range" x="203" y="39">13–15</text></g>
 <path class="edge" d="M182 16v30M224 16v30"/>
 </svg>
 <table>
@@ -1346,7 +1370,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♥: Law of total tricks; 5+ ♥
 4♠: Law of total tricks; 8+ ♠</title><path d="M0 106h238v30h-238zM238 46h14v90h-14z"/><text x="126" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan> / 4<tspan class="hearts">♥</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="126" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <a href="#p51"><g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -1484,7 +1508,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h238v30h-238z
 <g class="k-suit"><title>Law of total tricks, 0–17 points
 4♦: Law of total tricks; 5+ ♦</title><path d="M0 106h238v30h-238zM238 46h14v90h-14z"/><text x="126" y="115">4<tspan class="diamonds">♦</tspan></text><text class="range" x="126" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 4+ ♦
@@ -1638,7 +1662,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h224v30h-224z
 4♥: Law of total tricks; 5+ ♥
 4♠: Law of total tricks; 8+ ♠</title><path d="M0 106h224v30h-224zM224 46h14v90h-14z"/><text x="119" y="115">4<tspan class="hearts">♥</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="119" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M224 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M224 16h14v30h-14z"/><text class="small" transform="rotate(-90 231 31)" x="231" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 1–16 points
 3♦: Law of total tricks; 7+ ♦
 3♥: Law of total tricks; 4+ ♥
@@ -1714,7 +1738,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♥: Law of total tricks; 8+ ♥
 4♠: Law of total tricks; 8+ ♠</title><path d="M0 106h238v30h-238zM238 46h14v90h-14z"/><text x="126" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan> / 4<tspan class="hearts">♥</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="126" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 4+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -1939,24 +1963,24 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h168v30h-168z
 <g class="k-pass"><title>Pass, 0–7 points
 Pass: Response pass; 5- hcp</title><path d="M0 16h112v60h-112z"/><text x="56" y="40">Pass</text><text class="range" x="56" y="54">0–7</text></g>
 <g class="k-pass"><title>Pass, 14–15 points
-Pass: Response pass; 5- hcp</title><path d="M196 16h28v30h-28z"/></g>
+Pass: Response pass; 5- hcp</title><path d="M196 16h28v30h-28z"/><text class="small" transform="rotate(-90 210 31)" x="210" y="31">Pass</text></g>
 <a href="#p76"><g class="k-suit"><title>Jacobi transfer, 0–18 points
 2♦: Jacobi transfer; 5+ ♥; Forcing
 2♥: Jacobi transfer; 5+ ♠; Forcing</title><path d="M0 106h266v30h-266z"/><text x="133" y="115">2<tspan class="diamonds">♦</tspan> / 2<tspan class="hearts">♥</tspan></text><text class="range" x="133" y="129">Jacobi transfer</text></g></a>
 <a href="#p69"><g class="k-minor"><title>Stayman, 0–18 points
 2♣: Stayman; 4+ ♥ or 4+ ♠; 4-card major?; Forcing</title><path d="M0 76h112v30h-112zM112 46h14v60h-14zM126 76h28v30h-28zM154 46h42v60h-42zM196 76h56v30h-56zM252 46h14v60h-14z"/><text x="133" y="85">2<tspan class="clubs">♣</tspan></text><text class="range" x="133" y="99">Stayman</text></g></a>
 <g class="k-suit"><title>Natural, 18 points
-6NT: Natural; 18-20 hcp</title><path d="M252 16h14v30h-14z"/></g>
+6NT: Natural; 18-20 hcp</title><path d="M252 16h14v30h-14z"/><text class="small" transform="rotate(-90 259 31)" x="259" y="31">6NT</text></g>
 <g class="k-minor"><title>Natural game, 14–16 points
 5♣: Natural game; 14-16 hcp; 6+ ♣
 5♦: Natural game; 14-16 hcp; 6+ ♦</title><path d="M196 46h42v30h-42z"/><text x="217" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="217" y="69">14–16</text></g>
 <g class="k-nt"><title>Slam invite, 16–17 points
-4NT: Slam invite; 16-17 hcp</title><path d="M224 16h14v30h-14zM238 16h14v60h-14z"/></g>
+4NT: Slam invite; 16-17 hcp</title><path d="M224 16h14v30h-14zM238 16h14v60h-14z"/><text class="small" x="238" y="31">4NT</text></g>
 <a href="#p73"><g class="k-nt"><title>Natural game, 11–13 points
 3NT: Natural game; 11-13 hcp</title><path d="M154 16h42v30h-42z"/><text x="175" y="25">3NT</text><text class="range" x="175" y="39">11–13</text></g></a>
 <g class="k-suit"><title>Natural, 9–10 points
 3♣: Natural; 9-11 hcp; 6+ ♣
-3♦: Natural; 9-11 hcp; 6+ ♦</title><path d="M126 46h28v30h-28z"/></g>
+3♦: Natural; 9-11 hcp; 6+ ♦</title><path d="M126 46h28v30h-28z"/><text class="small" transform="rotate(-90 140 61)" x="140" y="61">3<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <a href="#p78"><g class="k-nt"><title>Game invite, 8–10 points
 2NT: Game invite; 8-10 hcp</title><path d="M112 16h42v30h-42z"/><text x="133" y="25">2NT</text><text class="range" x="133" y="39">8–10</text></g></a>
 <path class="edge" d="M112 46h126M252 46h14M0 76h112M126 76h28M196 76h56M0 106h266M112 16v60M126 46v30M154 16v60M196 16v60M224 16v30M238 46v30M252 16v60"/>
@@ -1984,7 +2008,7 @@ Pass: Response pass; 5- hcp</title><path d="M196 16h28v30h-28z"/></g>
 <a href="#p70"><g class="k-suit"><title>Stayman response, 15–17 points
 2♦: Stayman response; 3- ♥; 3- ♠
 2♥: Stayman response; 4+ ♥
-2♠: Stayman response; 3- ♥; 4+ ♠; ♠&gt;♥</title><path d="M0 16h42v30h-42z"/></g></a>
+2♠: Stayman response; 3- ♥; 4+ ♠; ♠&gt;♥</title><path d="M0 16h42v30h-42z"/><text class="small" x="21" y="31">2<tspan class="diamonds">♦</tspan>/<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g></a>
 <path class="edge" d=""/>
 </svg>
 <table>
@@ -2005,7 +2029,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-pass"><title>Pass, 14–17 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42zM238 16h14v60h-14z"/><text x="224" y="25">Pass</text><text class="range" x="224" y="39">14–17</text></g>
 <g class="k-suit"><title>Natural, 18 points
-6NT: Natural; 18-20 hcp</title><path d="M252 16h14v60h-14z"/></g>
+6NT: Natural; 18-20 hcp</title><path d="M252 16h14v60h-14z"/><text class="small" transform="rotate(-90 259 46)" x="259" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 14–16 points
 5♣: Natural game; 14-16 hcp; 6+ ♣
 5♦: Natural game; 14-16 hcp; 6+ ♦</title><path d="M196 46h42v30h-42z"/><text x="217" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="217" y="69">14–16</text></g>
@@ -2016,7 +2040,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42z
 <g class="k-suit"><title>Natural, 9–10 points
 3♣: Natural; 9-11 hcp; 6+ ♣
 3♦: Natural; 9-11 hcp; 6+ ♦
-3♥: Natural; 9-11 hcp; 4+ ♥</title><path d="M126 46h28v30h-28z"/></g>
+3♥: Natural; 9-11 hcp; 4+ ♥</title><path d="M126 46h28v30h-28z"/><text class="small" x="140" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h112M126 46v30M154 16v60M196 16v60M238 46v30M252 16v60"/>
 </svg>
 <table>
@@ -2043,7 +2067,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-pass"><title>Pass, 14–17 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42zM238 16h14v60h-14z"/><text x="224" y="25">Pass</text><text class="range" x="224" y="39">14–17</text></g>
 <g class="k-suit"><title>Natural, 18 points
-6NT: Natural; 18-20 hcp</title><path d="M252 16h14v60h-14z"/></g>
+6NT: Natural; 18-20 hcp</title><path d="M252 16h14v60h-14z"/><text class="small" transform="rotate(-90 259 46)" x="259" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 14–16 points
 5♦: Natural game; 14-16 hcp; 6+ ♦</title><path d="M196 46h42v30h-42z"/><text x="217" y="55">5<tspan class="diamonds">♦</tspan></text><text class="range" x="217" y="69">14–16</text></g>
 <g class="k-major"><title>Natural game, 11–13 points
@@ -2055,7 +2079,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42z
 3♣: Natural; 9-11 hcp; 6+ ♣
 3♦: Natural; 9-11 hcp; 6+ ♦
 3♥: Natural; 9-11 hcp; 6+ ♥
-3♠: Natural; 9-11 hcp; 6+ ♠</title><path d="M126 46h28v30h-28z"/></g>
+3♠: Natural; 9-11 hcp; 6+ ♠</title><path d="M126 46h28v30h-28z"/><text class="small" x="140" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h112M126 46v30M154 16v60M196 16v60M238 46v30M252 16v60"/>
 </svg>
 <table>
@@ -2133,7 +2157,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-pass"><title>Pass, 14–17 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42zM238 16h14v60h-14z"/><text x="224" y="25">Pass</text><text class="range" x="224" y="39">14–17</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
-6NT: Natural; 18-20 hcp</title><path d="M252 16h28v60h-28z"/></g>
+6NT: Natural; 18-20 hcp</title><path d="M252 16h28v60h-28z"/><text class="small" x="266" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 14–16 points
 5♣: Natural game; 14-16 hcp; 6+ ♣
 5♦: Natural game; 14-16 hcp; 6+ ♦</title><path d="M196 46h42v30h-42z"/><text x="217" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="217" y="69">14–16</text></g>
@@ -2144,7 +2168,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M196 16h42v30h-42z
 <g class="k-suit"><title>Natural, 9–10 points
 3♣: Natural; 9-11 hcp; 6+ ♣
 3♦: Natural; 9-11 hcp; 6+ ♦
-3♠: Natural; 9-11 hcp; 4+ ♠</title><path d="M126 46h28v30h-28z"/></g>
+3♠: Natural; 9-11 hcp; 4+ ♠</title><path d="M126 46h28v30h-28z"/><text class="small" x="140" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h112M126 46v30M154 16v60M196 16v60M238 46v30M252 16v60"/>
 </svg>
 <table>
@@ -2196,7 +2220,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h14v60h-14zM1
 3♣: Natural; 16-18 hcp; 5+ ♣
 3♦: Natural; 16-18 hcp; 5+ ♦
 3♥: Natural; 16-18 hcp; 5+ ♥
-3♠: Natural; 16-18 hcp; 5+ ♠</title><path d="M14 46h28v30h-28z"/></g>
+3♠: Natural; 16-18 hcp; 5+ ♠</title><path d="M14 46h28v30h-28z"/><text class="small" x="28" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M14 46h28M14 46v30"/>
 </svg>
 <table>
@@ -2220,7 +2244,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h70v90h-70zM70 46h98v30h-98z"/>
 <a href="#p84"><g class="k-suit"><title>2&amp;#x2f;1 response, 11–12 points
 2♣: 2/1 response; 11+ hcp; 4+ ♣; Forcing
 2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing
-2♥: 2/1 response; 11+ hcp; 4+ ♥; Forcing</title><path d="M140 16h28v30h-28z"/></g></a>
+2♥: 2/1 response; 11+ hcp; 4+ ♥; Forcing</title><path d="M140 16h28v30h-28z"/><text class="small" x="154" y="31">2<tspan class="clubs">♣</tspan>…</text></g></a>
 <g class="k-major"><title>Limit raise, 11–12 points
 3♠: Limit raise; 11-12 hcp; 4- ♥; 3-4 ♠</title><path d="M140 76h28v30h-28z"/><text x="154" y="91">3<tspan class="spades">♠</tspan></text></g>
 <a href="#p81"><g class="k-major"><title>Single raise, 6–10 points
@@ -2253,11 +2277,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-major"><title>Natural game, 20–21 points
 4♥: Natural game; 20-22 hcp; 5+ ♥</title><path d="M154 46h28v30h-28z"/><text x="168" y="61">4<tspan class="hearts">♥</tspan></text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M154 16h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M154 16h28v30h-28z"/><text class="small" x="168" y="31">3NT</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
-3♥: Natural; 18-20 hcp; 5+ ♥</title><path d="M126 46h28v30h-28z"/></g>
+3♥: Natural; 18-20 hcp; 5+ ♥</title><path d="M126 46h28v30h-28z"/><text class="small" x="140" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h56M126 46v30M154 16v60"/>
 </svg>
 <table>
@@ -2321,9 +2345,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <text class="tick" x="133" y="8">10</text>
 <g class="k-pass"><title>Pass, 1–16 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h196v60h-196zM196 46h28v30h-28z"/><text x="112" y="55">Pass</text><text class="range" x="112" y="69">1–16</text></g>
-<g class="k-major"><title>Natural game, 17–18 points</title><path d="M224 16h28v30h-28z"/><text x="238" y="31"></text></g>
+<g class="k-major"><title>Natural game, 17–18 points
+4♥: Natural game; 17-19 hcp; 6+ ♥
+4♠: Natural game; 17-19 hcp; 6+ ♠</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <g class="k-nt"><title>Natural game, 17–18 points
-3NT: Natural game; 17-19 hcp</title><path d="M224 46h28v30h-28z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M224 46h28v30h-28z"/><text class="small" x="238" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 15–16 points
 3♦: Natural; 15-17 hcp; 3+ ♦</title><path d="M196 16h28v30h-28z"/><text x="210" y="31">3<tspan class="diamonds">♦</tspan></text></g>
 <path class="edge" d="M196 46h56M196 16v30M224 16v60"/>
@@ -2369,7 +2395,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h196v60h-196z
 <svg class="blocks" viewBox="0 0 168 76" width="168" height="76" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="133" y="8">20</text>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h28v60h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h28v60h-28z"/><text class="small" transform="rotate(-90 14 46)" x="14" y="46">Pass</text></g>
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M70 16h42v30h-42zM112 16h14v60h-14z"/><text x="98" y="25">Pass</text><text class="range" x="98" y="39">16–19</text></g>
 <g class="k-suit"><title>Natural, 20–22 points
@@ -2402,7 +2428,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M70 16h42v30h-42zM
 <g class="k-pass"><title>Pass, 11–17 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h42v60h-42zM42 16h42v30h-42zM84 16h14v60h-14z"/><text x="49" y="25">Pass</text><text class="range" x="49" y="39">11–17</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
-6NT: Natural; 18-20 hcp</title><path d="M98 16h28v60h-28z"/></g>
+6NT: Natural; 18-20 hcp</title><path d="M98 16h28v60h-28z"/><text class="small" x="112" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 14–16 points
 5♦: Natural game; 14-16 hcp; 6+ ♦</title><path d="M42 46h42v30h-42z"/><text x="63" y="55">5<tspan class="diamonds">♦</tspan></text><text class="range" x="63" y="69">14–16</text></g>
 <path class="edge" d="M42 46h42M42 46v30M84 46v30M98 16v60"/>
@@ -2478,7 +2504,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h84v90h-84zM84 46h98v30h-98z"/>
 <a href="#p84"><g class="k-suit"><title>2&amp;#x2f;1 response, 11–12 points
 2♣: 2/1 response; 11+ hcp; 4+ ♣; Forcing
 2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing
-2♥: 2/1 response; 11+ hcp; 4+ ♥; Forcing</title><path d="M154 16h28v30h-28z"/></g></a>
+2♥: 2/1 response; 11+ hcp; 4+ ♥; Forcing</title><path d="M154 16h28v30h-28z"/><text class="small" x="168" y="31">2<tspan class="clubs">♣</tspan>…</text></g></a>
 <g class="k-major"><title>Limit raise, 11–12 points
 3♠: Limit raise; 11-12 hcp; 4- ♥; 3-4 ♠</title><path d="M154 76h28v30h-28z"/><text x="168" y="91">3<tspan class="spades">♠</tspan></text></g>
 <a href="#p81"><g class="k-major"><title>Single raise, 6–10 points
@@ -2568,7 +2594,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 <g class="k-suit"><title>Law of total tricks, 0–17 points
 4♣: Law of total tricks; 5+ ♣</title><path d="M0 76h238v30h-238zM238 46h14v60h-14z"/><text x="126" y="85">4<tspan class="clubs">♣</tspan></text><text class="range" x="126" y="99">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 4+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -2655,7 +2681,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♦: Law of total tricks; 8+ ♦
 4♥: Law of total tricks; 5+ ♥</title><path d="M0 76h238v30h-238zM238 46h14v60h-14z"/><text x="126" y="85">4<tspan class="diamonds">♦</tspan> / 4<tspan class="hearts">♥</tspan></text><text class="range" x="126" y="99">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -2710,7 +2736,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♥: Law of total tricks; 8+ ♥
 4♠: Law of total tricks; 8+ ♠</title><path d="M0 106h238v30h-238zM238 46h14v90h-14z"/><text x="126" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan> / 4<tspan class="hearts">♥</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="126" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h14v30h-14z"/><text class="small" transform="rotate(-90 245 31)" x="245" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 4+ ♦
@@ -3027,7 +3053,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v120h-112
 <g class="k-pass"><title>Pass, 0–24 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126zM126 16h126v30h-126zM252 16h84v60h-84zM336 16h14v30h-14z"/><text x="175" y="25">Pass</text><text class="range" x="175" y="39">0–24</text></g>
 <g class="k-suit"><title>Natural, 24 points
-3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M336 46h14v30h-14z"/></g>
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M336 46h14v30h-14z"/><text class="small" transform="rotate(-90 343 61)" x="343" y="61">3<tspan class="spades">♠</tspan></text></g>
 <g class="k-suit"><title>Overcall, 9–17 points
 1♦: Overcall; 9-17 hcp; 5+ ♦
 1♥: Overcall; 9-17 hcp; 5+ ♥
@@ -3083,7 +3109,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 76h84v60h-84zM84 76h70v30h-70z"/>
 <g class="k-pass"><title>Pass, 0–4 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h70v60h-70z"/><text x="35" y="40">Pass</text><text class="range" x="35" y="54">0–4</text></g>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M154 16h14v30h-14zM168 16h14v60h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M154 16h14v30h-14zM168 16h14v60h-14z"/><text class="small" transform="rotate(-90 175 46)" x="175" y="46">Pass</text></g>
 <a href="#p114"><g class="k-suit"><title>Jacobi transfer, 0–15 points
 3♦: Jacobi transfer; 5+ ♥; Forcing
 3♥: Jacobi transfer; 5+ ♠; Forcing</title><path d="M0 106h224v30h-224z"/><text x="112" y="115">3<tspan class="diamonds">♦</tspan> / 3<tspan class="hearts">♥</tspan></text><text class="range" x="112" y="129">Jacobi transfer</text></g></a>
@@ -3118,7 +3144,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M154 16h14v30h-14z
 <a href="#p113"><g class="k-suit"><title>Stayman response, 20–22 points
 3♦: Stayman response; 3- ♥; 3- ♠
 3♥: Stayman response; 4+ ♥
-3♠: Stayman response; 3- ♥; 4+ ♠; ♠&gt;♥</title><path d="M0 16h42v30h-42z"/></g></a>
+3♠: Stayman response; 3- ♥; 4+ ♠; ♠&gt;♥</title><path d="M0 16h42v30h-42z"/><text class="small" x="21" y="31">3<tspan class="diamonds">♦</tspan>/<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g></a>
 <path class="edge" d=""/>
 </svg>
 <table>
@@ -3140,7 +3166,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84z"/
 Pass: Nothing else fits, so the robot passes.</title><path d="M126 16h42v30h-42zM168 16h14v60h-14z"/><text x="154" y="25">Pass</text><text class="range" x="154" y="39">9–12</text></g>
 <g class="k-suit"><title>Natural, 13–15 points
 6NT: Natural; 13-15 hcp</title><path d="M182 16h42v60h-42z"/><text x="203" y="40">6NT</text><text class="range" x="203" y="54">13–15</text></g>
-<g class="k-minor"><title>Natural game, 9–11 points</title><path d="M126 46h42v30h-42z"/><text x="147" y="55"></text><text class="range" x="147" y="69">9–11</text></g>
+<g class="k-minor"><title>Natural game, 9–11 points
+5♣: Natural game; 9-11 hcp; 6+ ♣
+5♦: Natural game; 9-11 hcp; 6+ ♦</title><path d="M126 46h42v30h-42z"/><text x="147" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="147" y="69">9–11</text></g>
 <g class="k-major"><title>Natural game, 6–8 points
 4♥: Natural game; 6-8 hcp; 4+ ♥</title><path d="M84 16h42v30h-42z"/><text x="105" y="25">4<tspan class="hearts">♥</tspan></text><text class="range" x="105" y="39">6–8</text></g>
 <g class="k-nt"><title>Natural game, 6–8 points
@@ -3180,8 +3208,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84z"/
 <g class="k-pass"><title>Pass, 9–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M126 16h42v30h-42zM168 16h14v60h-14z"/><text x="154" y="25">Pass</text><text class="range" x="154" y="39">9–12</text></g>
 <g class="k-suit"><title>Natural, 13–14 points
-6NT: Natural; 13-15 hcp</title><path d="M182 16h28v60h-28z"/></g>
-<g class="k-minor"><title>Natural game, 9–11 points</title><path d="M126 46h42v30h-42z"/><text x="147" y="55"></text><text class="range" x="147" y="69">9–11</text></g>
+6NT: Natural; 13-15 hcp</title><path d="M182 16h28v60h-28z"/><text class="small" x="196" y="46">6NT</text></g>
+<g class="k-minor"><title>Natural game, 9–11 points
+5♣: Natural game; 9-11 hcp; 6+ ♣
+5♦: Natural game; 9-11 hcp; 6+ ♦</title><path d="M126 46h42v30h-42z"/><text x="147" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="147" y="69">9–11</text></g>
 <g class="k-major"><title>Natural game, 6–8 points
 4♥: Natural game; 6-8 hcp; 6+ ♥
 4♠: Natural game; 6-8 hcp; 6+ ♠</title><path d="M84 16h42v30h-42z"/><text x="105" y="25">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="105" y="39">6–8</text></g>
@@ -3207,7 +3237,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M126 16h42v30h-42z
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h14v60h-14zM14 46h28v30h-28z"/><text x="21" y="55">Pass</text><text class="range" x="21" y="69">20–22</text></g>
 <g class="k-major"><title>Natural game, 21–22 points
 4♥: Natural game; 21-23 hcp; 5+ ♥
-4♠: Natural game; 21-23 hcp; 5+ ♠</title><path d="M14 16h28v30h-28z"/></g>
+4♠: Natural game; 21-23 hcp; 5+ ♠</title><path d="M14 16h28v30h-28z"/><text class="small" transform="rotate(-90 28 31)" x="28" y="31">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M14 46h28M14 16v30"/>
 </svg>
 <table>
@@ -3241,7 +3271,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h70v60h-70z"/
 <g class="k-pass"><title>Pass, 9–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M112 16h42v30h-42zM154 16h14v60h-14z"/><text x="140" y="25">Pass</text><text class="range" x="140" y="39">9–12</text></g>
 <g class="k-suit"><title>Natural, 13–14 points
-6NT: Natural; 13-15 hcp</title><path d="M168 16h28v60h-28z"/></g>
+6NT: Natural; 13-15 hcp</title><path d="M168 16h28v60h-28z"/><text class="small" x="182" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 9–11 points
 5♣: Natural game; 9-11 hcp; 6+ ♣</title><path d="M112 46h42v30h-42z"/><text x="133" y="55">5<tspan class="clubs">♣</tspan></text><text class="range" x="133" y="69">9–11</text></g>
 <g class="k-major"><title>Natural game, 6–8 points
@@ -3266,9 +3296,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M112 16h42v30h-42z
 <text class="tick" x="7" y="8">0</text>
 <text class="tick" x="147" y="8">10</text>
 <g class="k-pass"><title>Pass, 8–9 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h14v30h-14zM126 46h14v60h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h14v30h-14zM126 46h14v60h-14z"/><text class="small" transform="rotate(-90 133 76)" x="133" y="76">Pass</text></g>
 <g class="k-pass"><title>Pass, 13 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M182 46h14v30h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M182 46h14v30h-14z"/><text class="small" transform="rotate(-90 189 61)" x="189" y="61">Pass</text></g>
 <g class="k-minor"><title>Strong response, 8–14 points
 3♣: Strong response; 8+ hcp; 5+ ♣; 3+ hcp in ♣; Game forcing
 3♦: Strong response; 8+ hcp; 5+ ♦; 3+ hcp in ♦; Game forcing</title><path d="M112 106h70v30h-70zM182 76h28v60h-28z"/><text x="161" y="115">3<tspan class="clubs">♣</tspan> / 3<tspan class="diamonds">♦</tspan></text><text class="range" x="161" y="129">Strong response</text></g>
@@ -3276,7 +3306,12 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M182 46h14v30h-14z
 2♥: Strong response; 8+ hcp; 5+ ♥; 3+ hcp in ♥; Game forcing
 2♠: Strong response; 8+ hcp; 5+ ♠; 3+ hcp in ♠; Game forcing
 2NT: Strong response; 8+ hcp; 2-5 ♣; 2-5 ♦; 2-5 ♥; 2-5 ♠; Game forcing</title><path d="M112 16h28v30h-28zM140 16h42v60h-42zM182 16h28v30h-28z"/><text x="161" y="25">2<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan>/NT</text><text class="range" x="161" y="39">Strong response</text></g>
-<g class="k-suit"><title>Natural, 14 points</title><path d="M196 46h14v30h-14z"/><text x="203" y="61"></text></g>
+<g class="k-suit"><title>Natural, 14 points
+7♣: Natural; 14-16 hcp; 5+ ♣
+7♦: Natural; 14-16 hcp; 5+ ♦
+7♥: Natural; 14-16 hcp; 5+ ♥
+7♠: Natural; 14-16 hcp; 5+ ♠
+7NT: Natural; 14-16 hcp</title><path d="M196 46h14v30h-14z"/><text class="small" transform="rotate(-90 203 61)" x="203" y="61">7<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-suit"><title>Natural, 10–12 points
 6NT: Natural; 10-12 hcp</title><path d="M140 76h42v30h-42z"/><text x="161" y="85">6NT</text><text class="range" x="161" y="99">10–12</text></g>
 <g class="k-minor"><title>Natural game, 6–8 points
@@ -3289,7 +3324,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M182 46h14v30h-14z
 3NT: Natural game; 3-5 hcp</title><path d="M42 16h42v60h-42z"/><text x="63" y="40">3NT</text><text class="range" x="63" y="54">3–5</text></g>
 <g class="k-major"><title>Natural, 1–2 points
 3♥: Natural; 1-3 hcp; 5+ ♥
-3♠: Natural; 1-3 hcp; 5+ ♠</title><path d="M14 106h28v30h-28z"/></g>
+3♠: Natural; 1-3 hcp; 5+ ♠</title><path d="M14 106h28v30h-28z"/><text class="small" transform="rotate(-90 28 121)" x="28" y="121">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <g class="k-minor"><title>Weak response, 0–2 points
 2♦: Weak response; 7- lhcp</title><path d="M0 16h14v120h-14zM14 16h28v90h-28z"/><text x="21" y="55">2<tspan class="diamonds">♦</tspan></text><text class="range" x="21" y="69">0–2</text></g>
 <g class="k-minor"><title>Weak response, 6–7 points
@@ -3324,7 +3359,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M182 46h14v30h-14z
 Pass: Response pass; 5- hcp</title><path d="M0 16h42v120h-42zM42 106h98v30h-98z"/><text x="70" y="115">Pass</text><text class="range" x="70" y="129">3–12</text></g>
 <g class="k-minor"><title>2&amp;#x2f;1 response, 11–12 points
 2♣: 2/1 response; 11+ hcp; 4+ ♣; Forcing
-2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing</title><path d="M112 16h28v30h-28z"/></g>
+2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing</title><path d="M112 16h28v30h-28z"/><text class="small" transform="rotate(-90 126 31)" x="126" y="31">2<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-major"><title>Response, 6–12 points
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M42 76h98v30h-98z"/><text x="91" y="85">1<tspan class="spades">♠</tspan></text><text class="range" x="91" y="99">Response</text></g>
 <g class="k-major"><title>Limit raise, 11–12 points
@@ -3414,7 +3449,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h84v120h-84zM84 106h70v30h-70z"
 4♣: Splinter; 12- hcp; 1- ♣; 1- hcp in ♣; 10-12 hcp outside♣; 4+ ♥; Game forcing</title><path d="M0 136h154v30h-154zM154 106h28v60h-28z"/><text x="91" y="145">4<tspan class="clubs">♣</tspan></text><text class="range" x="91" y="159">Splinter</text></g>
 <a href="#p129"><g class="k-minor"><title>2&amp;#x2f;1 response, 11–12 points
 2♣: 2/1 response; 11+ hcp; 4+ ♣; Forcing
-2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing</title><path d="M154 16h28v30h-28z"/></g></a>
+2♦: 2/1 response; 11+ hcp; 4+ ♦; Forcing</title><path d="M154 16h28v30h-28z"/><text class="small" transform="rotate(-90 168 31)" x="168" y="31">2<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g></a>
 <a href="#p124"><g class="k-major"><title>Response, 6–12 points
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M84 76h98v30h-98z"/><text x="133" y="85">1<tspan class="spades">♠</tspan></text><text class="range" x="133" y="99">Response</text></g></a>
 <g class="k-major"><title>Limit raise, 11–12 points
@@ -3446,10 +3481,10 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h84v120h-84zM84 106h70v30h-70z"
 <text class="tick" x="161" y="8">20</text>
 <g class="k-major"><title>Natural game, 20–21 points
 4♥: Natural game; 20-22 hcp
-4♠: Natural game; 20-22 hcp; 4+ ♠</title><path d="M154 16h28v30h-28z"/></g>
+4♠: Natural game; 20-22 hcp; 4+ ♠</title><path d="M154 16h28v30h-28z"/><text class="small" transform="rotate(-90 168 31)" x="168" y="31">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♥: Natural; 18-20 hcp
-3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/></g>
+3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M126 16h28v30h-28z"/><text class="small" transform="rotate(-90 140 31)" x="140" y="31">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <a href="#p30"><g class="k-nt"><title>Forced NT, 9–17 points
 1NT: Forced NT</title><path d="M0 16h126v30h-126z"/><text x="63" y="25">1NT</text><text class="range" x="63" y="39">Forced NT</text></g></a>
 <path class="edge" d="M126 16v30M154 16v30"/>
@@ -3471,7 +3506,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h84v120h-84zM84 106h70v30h-70z"
 <g class="k-pass"><title>Pass, 6–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM84 16h14v30h-14z"/><text x="49" y="25">Pass</text><text class="range" x="49" y="39">6–12</text></g>
 <g class="k-suit"><title>Natural, 12 points
-3♥: Natural; 12-14 hcp; 3+ ♥</title><path d="M84 46h14v30h-14z"/></g>
+3♥: Natural; 12-14 hcp; 3+ ♥</title><path d="M84 46h14v30h-14z"/><text class="small" transform="rotate(-90 91 61)" x="91" y="61">3<tspan class="hearts">♥</tspan></text></g>
 <path class="edge" d="M84 46h14M84 46v30"/>
 </svg>
 <table>
@@ -3509,7 +3544,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 <g class="k-pass"><title>Pass, 9–17 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v30h-126z"/><text x="63" y="25">Pass</text><text class="range" x="63" y="39">9–17</text></g>
 <g class="k-major"><title>Natural game, 20 points
-4♥: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/></g>
+4♥: Natural game; 20-22 hcp</title><path d="M154 16h14v30h-14z"/><text class="small" transform="rotate(-90 161 31)" x="161" y="31">4<tspan class="hearts">♥</tspan></text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♥: Natural; 18-20 hcp</title><path d="M126 16h28v30h-28z"/><text x="140" y="31">3<tspan class="hearts">♥</tspan></text></g>
 <path class="edge" d="M126 16v30M154 16v30"/>
@@ -3529,13 +3564,15 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v30h-126z
 <text class="tick" x="175" y="8">20</text>
 <g class="k-pass"><title>Pass, 8–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h140v60h-140zM140 16h28v30h-28z"/><text x="84" y="25">Pass</text><text class="range" x="84" y="39">8–19</text></g>
-<g class="k-major"><title>Natural game, 20–21 points</title><path d="M168 46h28v30h-28z"/><text x="182" y="61"></text></g>
+<g class="k-major"><title>Natural game, 20–21 points
+4♥: Natural game; 20-22 hcp; 8+ ♥
+4♠: Natural game; 20-22 hcp; 8+ ♠</title><path d="M168 46h28v30h-28z"/><text class="small" transform="rotate(-90 182 61)" x="182" y="61">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <g class="k-nt"><title>Natural game, 20–21 points
-3NT: Natural game; 20-22 hcp</title><path d="M168 16h28v30h-28z"/></g>
+3NT: Natural game; 20-22 hcp</title><path d="M168 16h28v30h-28z"/><text class="small" x="182" y="31">3NT</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
-3♥: Natural; 18-20 hcp; 8+ ♥</title><path d="M140 46h28v30h-28z"/></g>
+3♥: Natural; 18-20 hcp; 8+ ♥</title><path d="M140 46h28v30h-28z"/><text class="small" x="154" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M140 46h56M140 46v30M168 16v60"/>
 </svg>
 <table>
@@ -3581,13 +3618,13 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h140v60h-140z
 <svg class="blocks" viewBox="0 0 196 76" width="196" height="76" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="133" y="8">20</text>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h28v30h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h28v30h-28z"/><text class="small" transform="rotate(-90 14 31)" x="14" y="31">Pass</text></g>
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M70 16h42v30h-42zM112 16h14v60h-14z"/><text x="98" y="25">Pass</text><text class="range" x="98" y="39">16–19</text></g>
 <g class="k-pass"><title>Pass, 23 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M168 16h14v60h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M168 16h14v60h-14z"/><text class="small" transform="rotate(-90 175 46)" x="175" y="46">Pass</text></g>
 <g class="k-suit"><title>Natural, 24 points
-7NT: Natural; 24-26 hcp</title><path d="M182 16h14v60h-14z"/></g>
+7NT: Natural; 24-26 hcp</title><path d="M182 16h14v60h-14z"/><text class="small" transform="rotate(-90 189 46)" x="189" y="46">7NT</text></g>
 <g class="k-suit"><title>Natural, 20–22 points
 6NT: Natural; 20-22 hcp</title><path d="M126 16h42v60h-42z"/><text x="147" y="40">6NT</text><text class="range" x="147" y="54">20–22</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
@@ -3683,7 +3720,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h238v30h-238z
 4♦: Law of total tricks; 5+ ♦
 4♠: Law of total tricks; 8+ ♠</title><path d="M0 106h238v30h-238zM238 46h28v90h-28z"/><text x="133" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="133" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17–18 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/><text class="small" x="252" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 4+ ♦
@@ -3821,7 +3858,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h238v30h-238z
 4♣: Law of total tricks; 8+ ♣
 4♠: Law of total tricks; 5+ ♠</title><path d="M0 106h238v30h-238zM238 46h28v90h-28z"/><text x="133" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="spades">♠</tspan></text><text class="range" x="133" y="129">Law of total tricks</text></g>
 <g class="k-nt"><title>Natural game, 17–18 points
-3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/></g>
+3NT: Natural game; 17-19 hcp</title><path d="M238 16h28v30h-28z"/><text class="small" x="252" y="31">3NT</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–16 points
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
@@ -3872,8 +3909,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h168v30h-168z
 <g class="k-pass"><title>Pass, 0–20 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266zM266 46h28v30h-28z"/><text x="147" y="55">Pass</text><text class="range" x="147" y="69">0–20</text></g>
 <g class="k-pass"><title>Pass, 24 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M336 16h14v30h-14z"/></g>
-<g class="k-minor"><title>Natural game, 24 points</title><path d="M336 46h14v30h-14z"/><text x="343" y="61"></text></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M336 16h14v30h-14z"/><text class="small" transform="rotate(-90 343 31)" x="343" y="31">Pass</text></g>
+<g class="k-minor"><title>Natural game, 24 points
+5♣: Natural game; 24-26 hcp; 6+ ♣
+5♦: Natural game; 24-26 hcp; 6+ ♦</title><path d="M336 46h14v30h-14z"/><text class="small" transform="rotate(-90 343 61)" x="343" y="61">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-major"><title>Natural game, 21–23 points
 4♥: Natural game; 21-23 hcp; 2+ ♥
 4♠: Natural game; 21-23 hcp; 6+ ♠</title><path d="M294 16h42v30h-42z"/><text x="315" y="25">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="315" y="39">21–23</text></g>
@@ -3882,7 +3921,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M336 16h14v30h-14z
 <g class="k-suit"><title>Natural, 19–20 points
 3♦: Natural; 19-21 hcp; 6+ ♦
 3♥: Natural; 19-21 hcp; 2+ ♥
-3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M266 16h28v30h-28z"/></g>
+3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M266 16h28v30h-28z"/><text class="small" x="280" y="31">3<tspan class="diamonds">♦</tspan>…</text></g>
 <path class="edge" d="M266 46h84M266 16v30M294 16v60M336 16v60"/>
 </svg>
 <table>
@@ -3912,7 +3951,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266z
 <g class="k-suit"><title>Natural, 19–20 points
 3♦: Natural; 19-21 hcp; 6+ ♦
 3♥: Natural; 19-21 hcp; 6+ ♥
-3♠: Natural; 19-21 hcp; 2+ ♠</title><path d="M266 16h28v30h-28z"/></g>
+3♠: Natural; 19-21 hcp; 2+ ♠</title><path d="M266 16h28v30h-28z"/><text class="small" x="280" y="31">3<tspan class="diamonds">♦</tspan>…</text></g>
 <path class="edge" d="M266 46h70M266 16v30M294 16v60"/>
 </svg>
 <table>
@@ -3943,7 +3982,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266z
 3♣: Natural; 19-21 hcp; 6+ ♣
 3♦: Natural; 19-21 hcp; 2+ ♦
 3♥: Natural; 19-21 hcp; 6+ ♥
-3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M266 16h28v30h-28z"/></g>
+3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M266 16h28v30h-28z"/><text class="small" x="280" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M266 46h70M266 16v30M294 16v60"/>
 </svg>
 <table>
@@ -3968,7 +4007,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266z
 <g class="k-pass"><title>Pass, 0–5 points
 Pass: Response pass; 5- hcp</title><path d="M0 16h84v120h-84z"/><text x="42" y="70">Pass</text><text class="range" x="42" y="84">0–5</text></g>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Response pass; 5- hcp</title><path d="M154 106h28v30h-28z"/></g>
+Pass: Response pass; 5- hcp</title><path d="M154 106h28v30h-28z"/><text class="small" transform="rotate(-90 168 121)" x="168" y="121">Pass</text></g>
 <g class="k-pass"><title>Pass, 16–19 points
 Pass: Response pass; 5- hcp</title><path d="M224 106h42v30h-42zM266 106h14v60h-14z"/><text x="252" y="115">Pass</text><text class="range" x="252" y="129">16–19</text></g>
 <g class="k-major"><title>Splinter, 0–12 points
@@ -3978,7 +4017,7 @@ Pass: Response pass; 5- hcp</title><path d="M224 106h42v30h-42zM266 106h14v60h-1
 1♥: Response; 6+ hcp; 4+ ♥; ♥≥♠; Forcing
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M84 16h98v30h-98zM182 16h42v120h-42zM224 16h56v90h-56zM280 16h28v120h-28z"/><text x="196" y="25">1<tspan class="hearts">♥</tspan> / 1<tspan class="spades">♠</tspan></text><text class="range" x="196" y="39">Response</text></g></a>
 <g class="k-suit"><title>Natural, 20–21 points
-6NT: Natural; 20-22 hcp</title><path d="M280 136h28v30h-28z"/></g>
+6NT: Natural; 20-22 hcp</title><path d="M280 136h28v30h-28z"/><text class="small" x="294" y="151">6NT</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
 5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 136h42v30h-42z"/><text x="245" y="145">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="245" y="159">16–18</text></g>
@@ -4088,11 +4127,12 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h126v60h-126z
 1♠: Up the line; 3- ♥; 4 ♠; Forcing</title><path d="M0 76h196v30h-196z"/><text x="98" y="85">1<tspan class="spades">♠</tspan></text><text class="range" x="98" y="99">Up the line</text></g>
 <g class="k-major"><title>Natural game, 20–22 points
 4♥: Natural game; 20-22 hcp; 4+ ♥</title><path d="M154 46h42v30h-42z"/><text x="175" y="55">4<tspan class="hearts">♥</tspan></text><text class="range" x="175" y="69">20–22</text></g>
-<g class="k-nt"><title>Natural game, 20–22 points</title><path d="M154 16h42v30h-42z"/><text x="175" y="25"></text><text class="range" x="175" y="39">20–22</text></g>
+<g class="k-nt"><title>Natural game, 20–22 points
+3NT: Natural game; 20-22 hcp</title><path d="M154 16h42v30h-42z"/><text x="175" y="25">3NT</text><text class="range" x="175" y="39">20–22</text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♣: Natural; 18-20 hcp; 5+ ♣
 3♦: Natural; 18-20 hcp; 5+ ♦
-3♥: Natural; 18-20 hcp; 4+ ♥</title><path d="M126 16h28v30h-28z"/></g>
+3♥: Natural; 18-20 hcp; 4+ ♥</title><path d="M126 16h28v30h-28z"/><text class="small" x="140" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M126 46h70M0 76h196M126 16v30M154 16v60"/>
 </svg>
 <table>
@@ -4139,7 +4179,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h154v30h-154z
 <g class="k-pass"><title>Pass, 10–19 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM84 16h42v30h-42zM126 16h14v60h-14z"/><text x="70" y="25">Pass</text><text class="range" x="70" y="39">10–19</text></g>
 <g class="k-suit"><title>Natural, 20–21 points
-6NT: Natural; 20-22 hcp</title><path d="M140 16h28v60h-28z"/></g>
+6NT: Natural; 20-22 hcp</title><path d="M140 16h28v60h-28z"/><text class="small" x="154" y="46">6NT</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
 5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M84 46h42v30h-42z"/><text x="105" y="55">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text><text class="range" x="105" y="69">16–18</text></g>
@@ -4163,7 +4203,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v60h-84zM8
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v90h-112zM112 16h210v60h-210zM322 46h14v30h-14z"/><text x="168" y="55">Pass</text><text class="range" x="168" y="69">1–24</text></g></a>
 <g class="k-x"><title>Takeout double, 9–24 points
 X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M112 76h224v30h-224z"/><text x="224" y="85">X</text><text class="range" x="224" y="99">Takeout double</text></g>
-<g class="k-major"><title>Natural, 24 points</title><path d="M322 16h14v30h-14z"/><text x="329" y="31"></text></g>
+<g class="k-major"><title>Natural, 24 points
+3♥: Natural; 24-26 hcp; 5+ ♥
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M322 16h14v30h-14z"/><text class="small" transform="rotate(-90 329 31)" x="329" y="31">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M322 46h14M112 76h224M112 76v30M322 16v30"/>
 </svg>
 <table>
@@ -4196,10 +4238,14 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h308v30h-308z
 <text class="tick" x="273" y="8">20</text>
 <g class="k-pass"><title>Pass, 1–20 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h252v60h-252zM252 16h28v30h-28z"/><text x="140" y="25">Pass</text><text class="range" x="140" y="39">1–20</text></g>
-<g class="k-major"><title>Natural game, 21–23 points</title><path d="M280 46h42v30h-42z"/><text x="301" y="55"></text><text class="range" x="301" y="69">21–23</text></g>
+<g class="k-major"><title>Natural game, 21–23 points
+4♥: Natural game; 21-23 hcp; 6+ ♥
+4♠: Natural game; 21-23 hcp; 6+ ♠</title><path d="M280 46h42v30h-42z"/><text x="301" y="55">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="301" y="69">21–23</text></g>
 <g class="k-nt"><title>Natural game, 21–23 points
 3NT: Natural game; 21-23 hcp</title><path d="M280 16h42v30h-42z"/><text x="301" y="25">3NT</text><text class="range" x="301" y="39">21–23</text></g>
-<g class="k-major"><title>Natural, 19–20 points</title><path d="M252 46h28v30h-28z"/><text x="266" y="61"></text></g>
+<g class="k-major"><title>Natural, 19–20 points
+3♥: Natural; 19-21 hcp; 6+ ♥
+3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M252 46h28v30h-28z"/><text class="small" transform="rotate(-90 266 61)" x="266" y="61">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M252 46h70M252 46v30M280 16v60"/>
 </svg>
 <table>
@@ -4218,7 +4264,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h252v60h-252z
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v90h-112zM112 16h210v60h-210zM322 46h14v30h-14z"/><text x="168" y="55">Pass</text><text class="range" x="168" y="69">1–24</text></g></a>
 <g class="k-x"><title>Takeout double, 9–24 points
 X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M112 76h224v30h-224z"/><text x="224" y="85">X</text><text class="range" x="224" y="99">Takeout double</text></g>
-<g class="k-suit"><title>Natural, 24 points</title><path d="M322 16h14v30h-14z"/><text x="329" y="31"></text></g>
+<g class="k-suit"><title>Natural, 24 points
+3♣: Natural; 24-26 hcp; 5+ ♣
+3♦: Natural; 24-26 hcp; 5+ ♦
+3♥: Natural; 24-26 hcp; 5+ ♥
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M322 16h14v30h-14z"/><text class="small" transform="rotate(-90 329 31)" x="329" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M322 46h14M112 76h224M112 76v30M322 16v30"/>
 </svg>
 <table>
@@ -4255,7 +4305,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h294v30h-294z
 <g class="k-pass"><title>Pass, 10–14 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h42v60h-42zM42 46h28v30h-28z"/><text x="35" y="55">Pass</text><text class="range" x="35" y="69">10–14</text></g>
 <g class="k-pass"><title>Pass, 18–19 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h28v30h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M112 46h28v30h-28z"/><text class="small" transform="rotate(-90 126 61)" x="126" y="61">Pass</text></g>
 <g class="k-minor"><title>Natural game, 18–19 points
 5♣: Natural game; 18-20 hcp; 3+ ♣</title><path d="M112 16h28v30h-28z"/><text x="126" y="31">5<tspan class="clubs">♣</tspan></text></g>
 <g class="k-nt"><title>Natural game, 15–17 points
@@ -4333,10 +4383,10 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M126
 <a href="#p39"><g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v30h-182z"/><text x="91" y="25">Pass</text><text class="range" x="91" y="39">0–12</text></g></a>
 <a href="#p39"><g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g></a>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g></a>
 <g class="k-minor"><title>Natural game, 16–17 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
-5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 76h28v30h-28z"/></g>
+5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 76h28v30h-28z"/><text class="small" transform="rotate(-90 238 91)" x="238" y="91">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-suit"><title>Law of total tricks, 0–15 points
 4♣: Law of total tricks; 7+ ♣
 4♦: Law of total tricks; 7+ ♦</title><path d="M0 106h182v30h-182zM182 46h42v90h-42z"/><text x="112" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan></text><text class="range" x="112" y="129">Law of total tricks</text></g>
@@ -4349,7 +4399,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <g class="k-suit"><title>Law of total tricks, 16–17 points
 3♣: Law of total tricks; 6+ ♣
 3♦: Law of total tricks; 6+ ♦
-3♥: Law of total tricks; 9+ ♥</title><path d="M224 106h28v30h-28z"/></g>
+3♥: Law of total tricks; 9+ ♥</title><path d="M224 106h28v30h-28z"/><text class="small" x="238" y="121">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–12 points
 2♣: Law of total tricks; 5+ ♣
 2♦: Law of total tricks; 5+ ♦
@@ -4359,7 +4409,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 2♣: Law of total tricks; 5+ ♣
 2♦: Law of total tricks; 5+ ♦
 2♥: Law of total tricks; 8+ ♥
-2♠: Law of total tricks; 8+ ♠</title><path d="M224 46h28v30h-28z"/></g>
+2♠: Law of total tricks; 8+ ♠</title><path d="M224 46h28v30h-28z"/><text class="small" x="238" y="61">2<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M0 46h252M0 76h182M224 76h28M0 106h182M224 106h28M182 16v90M224 16v120"/>
 </svg>
 <table>
@@ -4389,10 +4439,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <a href="#p61"><g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v30h-182z"/><text x="91" y="25">Pass</text><text class="range" x="91" y="39">0–12</text></g></a>
 <a href="#p61"><g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g></a>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g></a>
 <g class="k-minor"><title>Natural game, 16–17 points
 5♣: Natural game; 16-18 hcp; 5+ ♣
-5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 46h28v60h-28z"/></g>
+5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 46h28v60h-28z"/><text class="small" transform="rotate(-90 238 76)" x="238" y="76">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-suit"><title>Law of total tricks, 0–15 points
 4♣: Law of total tricks; 7+ ♣
 4♦: Law of total tricks; 7+ ♦</title><path d="M0 106h182v30h-182zM182 46h42v90h-42z"/><text x="112" y="115">4<tspan class="clubs">♣</tspan> / 4<tspan class="diamonds">♦</tspan></text><text class="range" x="112" y="129">Law of total tricks</text></g>
@@ -4408,7 +4458,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <g class="k-suit"><title>Law of total tricks, 16–17 points
 2♦: Law of total tricks; 5+ ♦
 2♥: Law of total tricks; 8+ ♥
-2♠: Law of total tricks; 8+ ♠</title><path d="M224 106h28v30h-28z"/></g>
+2♠: Law of total tricks; 8+ ♠</title><path d="M224 106h28v30h-28z"/><text class="small" x="238" y="121">2<tspan class="diamonds">♦</tspan>…</text></g>
 <path class="edge" d="M0 46h252M0 76h182M0 106h182M224 106h28M182 16v90M224 16v120"/>
 </svg>
 <table>
@@ -4435,13 +4485,15 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <g class="k-pass"><title>Pass, 0–5 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h84v120h-84z"/><text x="42" y="70">Pass</text><text class="range" x="42" y="84">0–5</text></g>
 <g class="k-pass"><title>Pass, 11–12 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M154 76h28v30h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M154 76h28v30h-28z"/><text class="small" transform="rotate(-90 168 91)" x="168" y="91">Pass</text></g>
 <g class="k-pass"><title>Pass, 16 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 46h14v30h-14z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 46h14v30h-14z"/><text class="small" transform="rotate(-90 231 61)" x="231" y="61">Pass</text></g>
 <g class="k-major"><title>Response, 6–16 points
 1♥: Response; 6+ hcp; 4+ ♥; ♥≥♠; Forcing
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M84 106h98v30h-98zM182 46h42v90h-42zM224 76h14v60h-14z"/><text x="161" y="115">1<tspan class="hearts">♥</tspan> / 1<tspan class="spades">♠</tspan></text><text class="range" x="161" y="129">Response</text></g>
-<g class="k-minor"><title>Natural game, 16 points</title><path d="M224 16h14v30h-14z"/><text x="231" y="31"></text></g>
+<g class="k-minor"><title>Natural game, 16 points
+5♣: Natural game; 16-18 hcp; 5+ ♣
+5♦: Natural game; 16-18 hcp; 5+ ♦</title><path d="M224 16h14v30h-14z"/><text class="small" transform="rotate(-90 231 31)" x="231" y="31">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-nt"><title>Natural game, 13–15 points
 3NT: Natural game; 13-15 hcp</title><path d="M182 16h42v30h-42z"/><text x="203" y="25">3NT</text><text class="range" x="203" y="39">13–15</text></g>
 <g class="k-minor"><title>Inverted minor weak raise, 6–10 points
@@ -4545,7 +4597,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♥; Forcing</title><path d="M126
 <g class="k-suit"><title>Natural, 24–25 points
 3♣: Natural; 24-26 hcp; 5+ ♣
 3♦: Natural; 24-26 hcp; 5+ ♦
-3♥: Natural; 24-26 hcp; 5+ ♥</title><path d="M336 16h28v30h-28z"/></g>
+3♥: Natural; 24-26 hcp; 5+ ♥</title><path d="M336 16h28v30h-28z"/><text class="small" x="350" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M336 46h28M126 76h238M126 76v30M336 16v30"/>
 </svg>
 <table>
@@ -4789,8 +4841,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h56v30h-56z
 <a href="#p99"><g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v60h-182z"/><text x="91" y="40">Pass</text><text class="range" x="91" y="54">0–12</text></g></a>
 <a href="#p99"><g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g></a>
-<g class="k-minor"><title>Natural game, 16–17 points</title><path d="M224 76h28v30h-28z"/><text x="238" y="91"></text></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g></a>
+<g class="k-minor"><title>Natural game, 16–17 points
+5♣: Natural game; 16-18 hcp; 6+ ♣
+5♦: Natural game; 16-18 hcp; 6+ ♦</title><path d="M224 76h28v30h-28z"/><text class="small" transform="rotate(-90 238 91)" x="238" y="91">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-suit"><title>Law of total tricks, 0–17 points
 4♣: Law of total tricks; 8+ ♣
 4♥: Law of total tricks; 8+ ♥
@@ -4804,13 +4858,13 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <g class="k-suit"><title>Law of total tricks, 16–17 points
 3♣: Law of total tricks; 7+ ♣
 3♥: Law of total tricks; 7+ ♥
-3♠: Law of total tricks; 4+ ♠</title><path d="M224 106h28v30h-28z"/></g>
+3♠: Law of total tricks; 4+ ♠</title><path d="M224 106h28v30h-28z"/><text class="small" x="238" y="121">3<tspan class="clubs">♣</tspan>…</text></g>
 <a href="#p40"><g class="k-major"><title>Law of total tricks, 0–12 points
 2♥: Law of total tricks; 6+ ♥
 2♠: Law of total tricks; 3+ ♠</title><path d="M0 76h182v30h-182z"/><text x="91" y="85">2<tspan class="hearts">♥</tspan> / 2<tspan class="spades">♠</tspan></text><text class="range" x="91" y="99">Law of total tricks</text></g></a>
 <a href="#p40"><g class="k-major"><title>Law of total tricks, 16–17 points
 2♥: Law of total tricks; 6+ ♥
-2♠: Law of total tricks; 3+ ♠</title><path d="M224 46h28v30h-28z"/></g></a>
+2♠: Law of total tricks; 3+ ♠</title><path d="M224 46h28v30h-28z"/><text class="small" transform="rotate(-90 238 61)" x="238" y="61">2<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g></a>
 <path class="edge" d="M182 46h70M0 76h182M224 76h28M0 106h182M224 106h28M0 136h182M224 136h28M182 16v120M224 16v120"/>
 </svg>
 <table>
@@ -4873,7 +4927,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 <g class="k-suit"><title>Law of total tricks, 16–18 points
 3♦: Law of total tricks; 7+ ♦
 3♥: Law of total tricks; 7+ ♥
-3♠: Law of total tricks; 4+ ♠</title><path d="M224 106h42v30h-42z"/></g>
+3♠: Law of total tricks; 4+ ♠</title><path d="M224 106h42v30h-42z"/><text class="small" x="245" y="121">3<tspan class="diamonds">♦</tspan>/<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <a href="#p40"><g class="k-suit"><title>Law of total tricks, 0–12 points
 2♦: Law of total tricks; 6+ ♦
 2♥: Law of total tricks; 6+ ♥
@@ -4881,7 +4935,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 <a href="#p40"><g class="k-suit"><title>Law of total tricks, 16–18 points
 2♦: Law of total tricks; 6+ ♦
 2♥: Law of total tricks; 6+ ♥
-2♠: Law of total tricks; 3+ ♠</title><path d="M224 46h42v30h-42z"/></g></a>
+2♠: Law of total tricks; 3+ ♠</title><path d="M224 46h42v30h-42z"/><text class="small" x="245" y="61">2<tspan class="diamonds">♦</tspan>/<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g></a>
 <path class="edge" d="M182 46h84M0 76h182M224 76h42M0 106h182M224 106h42M0 136h182M224 136h42M182 16v120M224 16v120"/>
 </svg>
 <table>
@@ -4974,7 +5028,11 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; Forcing</title><path d="M126 76h168v
 <text class="tick" x="147" y="8">10</text>
 <g class="k-pass"><title>Pass, 0–15 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h224v30h-224z"/><text x="112" y="85">Pass</text><text class="range" x="112" y="99">0–15</text></g>
-<g class="k-suit"><title>Natural, 15 points</title><path d="M210 46h14v30h-14z"/><text x="217" y="61"></text></g>
+<g class="k-suit"><title>Natural, 15 points
+3♣: Natural; 15-17 hcp; 4+ ♣
+3♦: Natural; 15-17 hcp; 4+ ♦
+3♥: Natural; 15-17 hcp; 6+ ♥
+3♠: Natural; 15-17 hcp; 6+ ♠</title><path d="M210 46h14v30h-14z"/><text class="small" transform="rotate(-90 217 61)" x="217" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-minor"><title>Takeout double response, 0–15 points
 2♦: Takeout double response; 4+ ♠</title><path d="M0 16h210v60h-210zM210 16h14v30h-14z"/><text x="112" y="25">2<tspan class="diamonds">♦</tspan></text><text class="range" x="112" y="39">Takeout double response</text></g>
 <path class="edge" d="M210 46h14M0 76h224M210 46v30"/>
@@ -4997,7 +5055,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v30h-112z
 4♥: Natural game; 20-22 hcp</title><path d="M140 16h28v30h-28z"/><text x="154" y="31">4<tspan class="hearts">♥</tspan></text></g>
 <g class="k-suit"><title>Natural, 18–19 points
 3♥: Natural; 18-20 hcp
-3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M112 16h28v30h-28z"/></g>
+3♠: Natural; 18-20 hcp; 4+ ♠</title><path d="M112 16h28v30h-28z"/><text class="small" transform="rotate(-90 126 31)" x="126" y="31">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M112 16v30M140 16v30"/>
 </svg>
 <table>
@@ -5143,7 +5201,11 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♠; Forcing</title><path d="M126 76h98v3
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h112v90h-112zM112 16h210v60h-210zM322 46h14v30h-14z"/><text x="168" y="55">Pass</text><text class="range" x="168" y="69">1–24</text></g></a>
 <g class="k-x"><title>Takeout double, 9–24 points
 X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♠; Forcing</title><path d="M112 76h224v30h-224z"/><text x="224" y="85">X</text><text class="range" x="224" y="99">Takeout double</text></g>
-<g class="k-suit"><title>Natural, 24 points</title><path d="M322 16h14v30h-14z"/><text x="329" y="31"></text></g>
+<g class="k-suit"><title>Natural, 24 points
+3♣: Natural; 24-26 hcp; 5+ ♣
+3♦: Natural; 24-26 hcp; 5+ ♦
+3♥: Natural; 24-26 hcp; 5+ ♥
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M322 16h14v30h-14z"/><text class="small" transform="rotate(-90 329 31)" x="329" y="31">3<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M322 46h14M112 76h224M112 76v30M322 16v30"/>
 </svg>
 <table>
@@ -5211,7 +5273,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♠; Forcing</title><path d="M126
 <a href="#p98"><g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v60h-182z"/><text x="91" y="40">Pass</text><text class="range" x="91" y="54">0–12</text></g></a>
 <a href="#p98"><g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g></a>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g></a>
 <g class="k-minor"><title>Natural game, 16–17 points
 5♣: Natural game; 16-18 hcp; 6+ ♣</title><path d="M224 76h28v30h-28z"/><text x="238" y="91">5<tspan class="clubs">♣</tspan></text></g>
 <g class="k-suit"><title>Law of total tricks, 0–17 points
@@ -5229,13 +5291,13 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
 3♥: Law of total tricks; 4+ ♥
-3♠: Law of total tricks; 7+ ♠</title><path d="M224 46h28v30h-28z"/></g>
+3♠: Law of total tricks; 7+ ♠</title><path d="M224 46h28v30h-28z"/><text class="small" x="238" y="61">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-major"><title>Law of total tricks, 0–12 points
 2♥: Law of total tricks; 3+ ♥
 2♠: Law of total tricks; 6+ ♠</title><path d="M0 106h182v30h-182z"/><text x="91" y="115">2<tspan class="hearts">♥</tspan> / 2<tspan class="spades">♠</tspan></text><text class="range" x="91" y="129">Law of total tricks</text></g>
 <g class="k-major"><title>Law of total tricks, 16–17 points
 2♥: Law of total tricks; 3+ ♥
-2♠: Law of total tricks; 6+ ♠</title><path d="M224 106h28v30h-28z"/></g>
+2♠: Law of total tricks; 6+ ♠</title><path d="M224 106h28v30h-28z"/><text class="small" transform="rotate(-90 238 121)" x="238" y="121">2<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M182 46h70M0 76h182M224 76h28M0 106h182M224 106h28M0 136h182M224 136h28M182 16v120M224 16v120"/>
 </svg>
 <table>
@@ -5263,10 +5325,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 <g class="k-pass"><title>Pass, 0–12 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h182v30h-182z"/><text x="91" y="25">Pass</text><text class="range" x="91" y="39">0–12</text></g>
 <g class="k-pass"><title>Pass, 16–17 points
-Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/></g>
+Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z"/><text class="small" transform="rotate(-90 238 31)" x="238" y="31">Pass</text></g>
 <g class="k-minor"><title>Natural game, 16–17 points
 5♣: Natural game; 16-18 hcp; 6+ ♣
-5♦: Natural game; 16-18 hcp; 6+ ♦</title><path d="M224 76h28v30h-28z"/></g>
+5♦: Natural game; 16-18 hcp; 6+ ♦</title><path d="M224 76h28v30h-28z"/><text class="small" transform="rotate(-90 238 91)" x="238" y="91">5<tspan class="clubs">♣</tspan>/<tspan class="diamonds">♦</tspan></text></g>
 <g class="k-suit"><title>Law of total tricks, 0–17 points
 4♣: Law of total tricks; 8+ ♣
 4♦: Law of total tricks; 8+ ♦
@@ -5282,7 +5344,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
 3♥: Law of total tricks; 4+ ♥
-3♠: Law of total tricks; 7+ ♠</title><path d="M224 106h28v30h-28z"/></g>
+3♠: Law of total tricks; 7+ ♠</title><path d="M224 106h28v30h-28z"/><text class="small" x="238" y="121">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–12 points
 2♣: Law of total tricks; 6+ ♣
 2♦: Law of total tricks; 6+ ♦
@@ -5292,7 +5354,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h28v30h-28z
 2♣: Law of total tricks; 6+ ♣
 2♦: Law of total tricks; 6+ ♦
 2♥: Law of total tricks; 3+ ♥
-2♠: Law of total tricks; 6+ ♠</title><path d="M224 46h28v30h-28z"/></g>
+2♠: Law of total tricks; 6+ ♠</title><path d="M224 46h28v30h-28z"/><text class="small" x="238" y="61">2<tspan class="clubs">♣</tspan>…</text></g>
 <path class="edge" d="M0 46h252M224 76h28M0 106h182M224 106h28M0 136h182M224 136h28M182 16v120M224 16v120"/>
 </svg>
 <table>
@@ -5342,7 +5404,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 3♣: Law of total tricks; 7+ ♣
 3♦: Law of total tricks; 7+ ♦
 3♥: Law of total tricks; 4+ ♥
-3♠: Law of total tricks; 7+ ♠</title><path d="M224 106h42v30h-42z"/></g>
+3♠: Law of total tricks; 7+ ♠</title><path d="M224 106h42v30h-42z"/><text class="small" x="245" y="121">3<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-suit"><title>Law of total tricks, 0–12 points
 2♦: Law of total tricks; 6+ ♦
 2♥: Law of total tricks; 3+ ♥
@@ -5350,7 +5412,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M224 16h42v30h-42z
 <g class="k-suit"><title>Law of total tricks, 16–18 points
 2♦: Law of total tricks; 6+ ♦
 2♥: Law of total tricks; 3+ ♥
-2♠: Law of total tricks; 6+ ♠</title><path d="M224 46h42v30h-42z"/></g>
+2♠: Law of total tricks; 6+ ♠</title><path d="M224 46h42v30h-42z"/><text class="small" x="245" y="61">2<tspan class="diamonds">♦</tspan>/<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M182 46h84M0 76h182M224 76h42M0 106h182M224 106h42M0 136h182M224 136h42M182 16v120M224 16v120"/>
 </svg>
 <table>
@@ -5412,7 +5474,12 @@ Pass: Response pass; 5- hcp</title><path d="M224 76h42v30h-42zM266 76h14v60h-14z
 1♦: Response; 6+ hcp; 4+ ♦; 3- ♥; 3- ♠; ♦&gt;♣; Forcing
 1♥: Response; 6+ hcp; 4+ ♥; ♥≥♠; Forcing
 1♠: Response; 6+ hcp; 4+ ♠; ♠&gt;♥; Forcing</title><path d="M84 16h98v30h-98zM182 16h42v90h-42zM224 16h56v60h-56zM280 16h28v90h-28z"/><text x="196" y="25">1<tspan class="diamonds">♦</tspan> / 1<tspan class="hearts">♥</tspan> / 1<tspan class="spades">♠</tspan></text><text class="range" x="196" y="39">Response</text></g></a>
-<g class="k-suit"><title>Natural, 20–21 points</title><path d="M280 106h28v30h-28z"/><text x="294" y="121"></text></g>
+<g class="k-suit"><title>Natural, 20–21 points
+6♣: Natural; 20-22 hcp; 5+ ♣
+6♦: Natural; 20-22 hcp; 5+ ♦
+6♥: Natural; 20-22 hcp; 8+ ♥
+6♠: Natural; 20-22 hcp; 8+ ♠
+6NT: Natural; 20-22 hcp</title><path d="M280 106h28v30h-28z"/><text class="small" x="294" y="121">6<tspan class="clubs">♣</tspan>…</text></g>
 <g class="k-minor"><title>Natural game, 16–18 points
 5♣: Natural game; 16-18 hcp; 5+ ♣</title><path d="M224 106h42v30h-42z"/><text x="245" y="115">5<tspan class="clubs">♣</tspan></text><text class="range" x="245" y="129">16–18</text></g>
 <g class="k-nt"><title>Natural game, 13–15 points
@@ -5529,7 +5596,8 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266z
 <g class="k-major"><title>Natural game, 21–23 points
 4♥: Natural game; 21-23 hcp; 6+ ♥
 4♠: Natural game; 21-23 hcp; 1+ ♠</title><path d="M266 16h42v30h-42z"/><text x="287" y="25">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="287" y="39">21–23</text></g>
-<g class="k-nt"><title>Natural game, 21–23 points</title><path d="M266 46h42v30h-42z"/><text x="287" y="55"></text><text class="range" x="287" y="69">21–23</text></g>
+<g class="k-nt"><title>Natural game, 21–23 points
+3NT: Natural game; 21-23 hcp</title><path d="M266 46h42v30h-42z"/><text x="287" y="55">3NT</text><text class="range" x="287" y="69">21–23</text></g>
 <path class="edge" d="M266 46h42M266 16v60"/>
 </svg>
 <table>
@@ -5587,7 +5655,9 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266z
 Pass: Nothing else fits, so the robot passes.</title><path d="M336 46h42v30h-42z"/><text x="357" y="55">Pass</text><text class="range" x="357" y="69">24–26</text></g>
 <g class="k-minor"><title>Natural game, 24–26 points
 5♣: Natural game; 24-26 hcp; 1+ ♣</title><path d="M336 16h42v30h-42z"/><text x="357" y="25">5<tspan class="clubs">♣</tspan></text><text class="range" x="357" y="39">24–26</text></g>
-<g class="k-major"><title>Natural game, 21–23 points</title><path d="M294 46h42v30h-42z"/><text x="315" y="55"></text><text class="range" x="315" y="69">21–23</text></g>
+<g class="k-major"><title>Natural game, 21–23 points
+4♥: Natural game; 21-23 hcp; 6+ ♥
+4♠: Natural game; 21-23 hcp; 6+ ♠</title><path d="M294 46h42v30h-42z"/><text x="315" y="55">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="315" y="69">21–23</text></g>
 <g class="k-nt"><title>Natural game, 21–23 points
 3NT: Natural game; 21-23 hcp</title><path d="M294 16h42v30h-42z"/><text x="315" y="25">3NT</text><text class="range" x="315" y="39">21–23</text></g>
 <g class="k-suit"><title>Natural, 19–20 points
@@ -5612,8 +5682,11 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M336 46h42v30h-42z
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h98v90h-98zM98 16h210v60h-210zM308 46h28v30h-28z"/><text x="168" y="55">Pass</text><text class="range" x="168" y="69">2–25</text></g></a>
 <g class="k-x"><title>Takeout double, 9–26 points
 X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♥; 4+ ♠; Forcing</title><path d="M98 76h252v30h-252z"/><text x="224" y="85">X</text><text class="range" x="224" y="99">Takeout double</text></g>
-<g class="k-major"><title>Natural game, 26 points</title><path d="M336 16h14v30h-14z"/><text x="343" y="31"></text></g>
-<g class="k-nt"><title>Natural game, 26 points</title><path d="M336 46h14v30h-14z"/><text x="343" y="61"></text></g>
+<g class="k-major"><title>Natural game, 26 points
+4♥: Natural game; 26-28 hcp; 5+ ♥
+4♠: Natural game; 26-28 hcp; 5+ ♠</title><path d="M336 16h14v30h-14z"/><text class="small" transform="rotate(-90 343 31)" x="343" y="31">4<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text></g>
+<g class="k-nt"><title>Natural game, 26 points
+3NT: Natural game; 26-28 hcp</title><path d="M336 46h14v30h-14z"/><text class="small" transform="rotate(-90 343 61)" x="343" y="61">3NT</text></g>
 <g class="k-suit"><title>Natural, 24–25 points
 3♦: Natural; 24-26 hcp; 5+ ♦</title><path d="M308 16h28v30h-28z"/><text x="322" y="31">3<tspan class="diamonds">♦</tspan></text></g>
 <path class="edge" d="M308 46h42M98 76h252M98 76v30M308 16v30M336 16v60"/>
@@ -5653,8 +5726,10 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h322v30h-322z
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h266v60h-266zM266 46h28v30h-28z"/><text x="147" y="55">Pass</text><text class="range" x="147" y="69">0–20</text></g>
 <g class="k-major"><title>Natural game, 21–23 points
 4♥: Natural game; 21-23 hcp; 1+ ♥</title><path d="M294 16h42v30h-42z"/><text x="315" y="25">4<tspan class="hearts">♥</tspan></text><text class="range" x="315" y="39">21–23</text></g>
-<g class="k-nt"><title>Natural game, 21–23 points</title><path d="M294 46h42v30h-42z"/><text x="315" y="55"></text><text class="range" x="315" y="69">21–23</text></g>
-<g class="k-major"><title>Natural, 19–20 points</title><path d="M266 16h28v30h-28z"/><text x="280" y="31"></text></g>
+<g class="k-nt"><title>Natural game, 21–23 points
+3NT: Natural game; 21-23 hcp</title><path d="M294 46h42v30h-42z"/><text x="315" y="55">3NT</text><text class="range" x="315" y="69">21–23</text></g>
+<g class="k-major"><title>Natural, 19–20 points
+3♠: Natural; 19-21 hcp; 6+ ♠</title><path d="M266 16h28v30h-28z"/><text x="280" y="31">3<tspan class="spades">♠</tspan></text></g>
 <path class="edge" d="M266 46h70M266 16v30M294 16v60"/>
 </svg>
 <table>

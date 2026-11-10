@@ -1105,3 +1105,18 @@ fn the_block_table_fills_its_space() {
     assert!(svg.contains("1NT"));
     assert!(svg.ends_with("</svg>\n"));
 }
+
+#[test]
+fn every_block_has_a_label() {
+    let booklet = small_booklet();
+    for page in booklet.pages.iter() {
+        for block in booklet.block_table(page).split("<g class=").skip(1) {
+            let block = block.split("</g>").next().unwrap();
+            assert!(
+                block.contains("<text") && !block.contains("\"></text>"),
+                "a block has no label: {}",
+                block
+            );
+        }
+    }
+}

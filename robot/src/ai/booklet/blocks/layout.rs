@@ -57,6 +57,17 @@ impl Block {
     /// tallest, then the leftmost: its first column, its width in columns,
     /// and its top and bottom.  The block may be thinner at either side of it.
     pub(super) fn label_room(&self) -> (usize, usize, usize, usize) {
+        self.room(|length, thickness| (length, thickness))
+    }
+    /// The tallest rectangle inside the block, then the widest, then the
+    /// leftmost, in the same form: where a label goes that is turned to run
+    /// up the block, when no label fits along it.
+    pub(super) fn tall_room(&self) -> (usize, usize, usize, usize) {
+        self.room(|length, thickness| (thickness, length))
+    }
+    /// The rectangle inside the block that is best by `key`, which is given
+    /// its width in columns and its thickness in units.
+    fn room(&self, key: impl Fn(usize, usize) -> (usize, usize)) -> (usize, usize, usize, usize) {
         let mut best = (0, 0, 0, 0);
         for i in 0..self.bands.len() {
             let (mut top, mut bottom) = self.bands[i];
@@ -67,7 +78,7 @@ impl Block {
                     break;
                 }
                 let (length, thickness) = (j - i + 1, bottom - top);
-                if (length, thickness) > (best.1, best.3 - best.2) {
+                if key(length, thickness) > key(best.1, best.3 - best.2) {
                     best = (self.first + i, length, top, bottom);
                 }
             }

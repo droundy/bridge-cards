@@ -224,8 +224,11 @@ fn names(calls: &[&super::Line]) -> (String, String) {
 /// The same label shortened, when it must fit in a narrow block, by naming the
 /// level once: "1♥/♠".
 fn short_names(calls: &[&super::Line]) -> (String, String) {
+    if calls.len() < 2 {
+        return names(calls);
+    }
     let level = calls[0].call.level();
-    if calls.len() < 2 || calls.iter().any(|l| l.call.level() != level) {
+    if calls.iter().any(|l| l.call.level() != level) {
         return names(calls);
     }
     let strains = |f: &dyn Fn(Bid) -> String| {
@@ -456,6 +459,9 @@ const CELL_W: usize = 14;
 const ROW_H: usize = 30;
 /// Room above the table for the counts of points.
 const TOP: usize = 16;
+/// The font size of a label set small, and how wide one of its characters is.
+const SMALL_PX: f64 = 9.0;
+const SMALL_EM: f64 = 5.6;
 
 impl Blocks {
     /// The blocks of the table, packed into as few units of height as they go
@@ -500,7 +506,7 @@ impl Booklet {
             }
         }
         for block in layout.blocks.iter() {
-            let calls: Vec<&super::Line> = {
+            let mut calls: Vec<&super::Line> = {
                 let mut calls: Vec<&super::Line> = lines
                     .iter()
                     .filter(|l| l.made > 0 && families.of(l.call) == block.family)
@@ -508,7 +514,21 @@ impl Booklet {
                 calls.sort_by_key(|l| label_order(l.call));
                 calls
             };
+            // A block of the table can be one the robot never made in the
+            // sample, so name it by the calls the system has in its family,
+            // and failing those by the family.
+            if calls.is_empty() {
+                calls = lines
+                    .iter()
+                    .filter(|l| families.of(l.call) == block.family)
+                    .collect();
+                calls.sort_by_key(|l| label_order(l.call));
+            }
             let (mut name, mut plain_name) = names(&calls);
+            if calls.is_empty() {
+                name = escape(&families.names[block.family.0]);
+                plain_name = families.names[block.family.0].clone();
+            }
             let (lo, hi) = (block.first, block.last());
             let range = if lo == hi {
                 format!("{}", blocks.first + lo)
@@ -554,48 +574,103 @@ impl Booklet {
                 ));
                 c += length;
             }
+            // The label goes in the widest rectangle of the block.  Where the
+            // name does not fit along it, it is set smaller, and where it
+            // still does not, it is turned to run up the tallest rectangle.
             let (c, length, top, bottom) = block.label_room();
             let x = (c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0;
             let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
             let room = (length * CELL_W) as f64;
-            let fits = |chars: usize, em: f64| room >= chars as f64 * em + 6.0;
-            if !fits(plain_name.chars().count(), 7.5) {
+            let fits = |room: f64, chars: usize, em: f64| room >= chars as f64 * em + 6.0;
+            if !calls.is_empty() && !fits(room, plain_name.chars().count(), 7.5) {
                 (name, plain_name) = short_names(&calls);
             }
-            let name_fits = fits(plain_name.chars().count(), 7.5);
+            let chars = plain_name.chars().count();
             // The second line says what the calls are, if there is room, and
             // otherwise at which points.
             let kind = families.names[block.family.0].as_str();
-            let second = if kind != plain_name && fits(kind.chars().count(), 5.8) {
+            let second = if kind != plain_name && fits(room, kind.chars().count(), 5.8) {
                 Some(escape(kind))
-            } else if fits(range.chars().count(), 5.8) {
+            } else if fits(room, range.chars().count(), 5.8) {
                 Some(range.clone())
             } else {
                 None
             };
+            let label = if fits(room, chars, 7.5) {
+                match second {
+                    Some(second) => format!(
+                        "<text x=\"{x}\" y=\"{}\">{}</text><text class=\"range\" x=\"{x}\" y=\"{}\">{}</text>",
+                        y - 6.0,
+                        name,
+                        y + 8.0,
+                        second
+                    ),
+                    None => format!("<text x=\"{}\" y=\"{}\">{}</text>", x, y, name),
+                }
+            } else if fits(room, chars, SMALL_EM) {
+                format!("<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>", x, y, name)
+            } else {
+                let (c, length, top, bottom) = block.tall_room();
+                let x = (c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0;
+                let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
+                let across = (length * CELL_W) as f64;
+                let along = ((bottom - top) * ROW_H) as f64;
+                if across >= SMALL_PX + 3.0 && fits(along, chars, SMALL_EM) {
+                    format!(
+                        "<text class=\"small\" transform=\"rotate(-90 {x} {y})\" x=\"{x}\" y=\"{y}\">{}</text>",
+                        name
+                    )
+                } else {
+                    // The calls one above another, each as short as it goes.
+                    let widest = calls
+                        .iter()
+                        .map(|l| super::call(l.call).chars().count())
+                        .max()
+                        .unwrap_or(0);
+                    let line = SMALL_PX + 1.0;
+                    if !calls.is_empty() && fits(across, widest, SMALL_EM) && along >= calls.len() as f64 * line + 2.0 {
+                        let first = y - (calls.len() as f64 - 1.0) * line / 2.0;
+                        calls
+                            .iter()
+                            .enumerate()
+                            .map(|(i, l)| {
+                                format!(
+                                    "<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>",
+                                    x,
+                                    first + i as f64 * line,
+                                    call_svg(l.call)
+                                )
+                            })
+                            .collect()
+                    } else {
+                        // Only the first call, and dots for the others.
+                        let short = format!("{}…", call_svg(calls[0].call));
+                        let chars = super::call(calls[0].call).chars().count() + 1;
+                        if calls.is_empty() {
+                            String::new()
+                        } else if fits(across, chars, SMALL_EM) {
+                            format!("<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>", x, y, short)
+                        } else if across >= SMALL_PX + 3.0 && fits(along, chars, SMALL_EM) {
+                            format!(
+                                "<text class=\"small\" transform=\"rotate(-90 {x} {y})\" x=\"{x}\" y=\"{y}\">{}</text>",
+                                short
+                            )
+                        } else {
+                            String::new()
+                        }
+                    }
+                }
+            };
 
             let link = reply.map(|p| format!("<a href=\"#p{}\">", p + 1));
             out.push_str(&format!(
-                "{}<g class=\"{}\"><title>{}</title><path d=\"{}\"/>",
+                "{}<g class=\"{}\"><title>{}</title><path d=\"{}\"/>{}",
                 link.as_deref().unwrap_or(""),
                 families.classes[block.family.0],
                 escape(&title),
-                path
+                path,
+                label
             ));
-            match (name_fits, second) {
-                (true, Some(second)) => out.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{}\">{}</text><text class=\"range\" x=\"{x}\" y=\"{}\">{}</text>",
-                    y - 6.0,
-                    name,
-                    y + 8.0,
-                    second
-                )),
-                (true, None) => out.push_str(&format!(
-                    "<text x=\"{}\" y=\"{}\">{}</text>",
-                    x, y, name
-                )),
-                _ => {}
-            }
             out.push_str("</g>");
             if link.is_some() {
                 out.push_str("</a>");

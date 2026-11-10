@@ -42,6 +42,7 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
                dominant-baseline: central; pointer-events: none; }
 .blocks .range { font-size: 10px; }
+.blocks .small { font-size: 9px; }
 .blocks .tick { font-size: 10px; fill: var(--faint); }
 .blocks .edge { stroke: var(--background); stroke-width: 2.5; fill: none; }
 .blocks a { cursor: pointer; }
