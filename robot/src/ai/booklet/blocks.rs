@@ -454,8 +454,12 @@ impl Blocks {
     }
 }
 
-/// How wide a count of points is, and how tall a row.
-const CELL_W: usize = 14;
+/// How wide the drawing is and how tall a row, in its own units.  The page
+/// scales the drawing to the width of the window, so each count of points is as
+/// wide as the table's counts share `WIDTH` between them, and the drawing is
+/// never narrower than `MIN_WIDTH_PX` pixels.
+const WIDTH: usize = 1200;
+const MIN_WIDTH_PX: usize = 640;
 const ROW_H: usize = 30;
 /// Room above the table for the counts of points.
 const TOP: usize = 16;
@@ -489,17 +493,29 @@ impl Booklet {
 
         let mut out = String::new();
         out.push_str(&format!(
-            "<svg class=\"blocks\" viewBox=\"0 0 {w} {h}\" width=\"{w}\" height=\"{h}\" \
+            "<svg class=\"blocks\" viewBox=\"0 0 {w} {h}\" \
+             style=\"width: 100%; min-width: {min}px\" \
              role=\"img\" aria-label=\"Which call the robot makes, by points and kind of hand\">\n",
-            w = width * CELL_W,
+            w = WIDTH,
             h = TOP + height * ROW_H,
+            min = MIN_WIDTH_PX,
         ));
+        let cw = WIDTH as f64 / width as f64;
+        // A length in the drawing, to a tenth and without a trailing zero.
+        let n = |x: f64| {
+            format!("{:.1}", x)
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string()
+        };
+        // Every count of points is numbered where it is wide enough.
+        let tick_every = if cw >= 48.0 { 1 } else if cw >= 24.0 { 5 } else { 10 };
         for c in 0..width {
             let points = blocks.first + c;
-            if points % 10 == 0 {
+            if points % tick_every == 0 {
                 out.push_str(&format!(
                     "<text class=\"tick\" x=\"{}\" y=\"{}\">{}</text>\n",
-                    c * CELL_W + CELL_W / 2,
+                    n((c as f64 + 0.5) * cw),
                     TOP / 2,
                     points
                 ));
@@ -566,11 +582,11 @@ impl Booklet {
                 }
                 path.push_str(&format!(
                     "M{} {}h{}v{}h-{}z",
-                    (block.first + c) * CELL_W,
+                    n((block.first + c) as f64 * cw),
                     TOP + top * ROW_H,
-                    length * CELL_W,
+                    n(length as f64 * cw),
                     (bottom - top) * ROW_H,
-                    length * CELL_W
+                    n(length as f64 * cw)
                 ));
                 c += length;
             }
@@ -578,9 +594,9 @@ impl Booklet {
             // name does not fit along it, it is set smaller, and where it
             // still does not, it is turned to run up the tallest rectangle.
             let (c, length, top, bottom) = block.label_room();
-            let x = (c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0;
+            let x = (c as f64 + length as f64 / 2.0) * cw;
             let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
-            let room = (length * CELL_W) as f64;
+            let room = length as f64 * cw;
             let fits = |room: f64, chars: usize, em: f64| room >= chars as f64 * em + 6.0;
             if !calls.is_empty() && !fits(room, plain_name.chars().count(), 7.5) {
                 (name, plain_name) = short_names(&calls);
@@ -611,9 +627,9 @@ impl Booklet {
                 format!("<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>", x, y, name)
             } else {
                 let (c, length, top, bottom) = block.tall_room();
-                let x = (c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0;
+                let x = (c as f64 + length as f64 / 2.0) * cw;
                 let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
-                let across = (length * CELL_W) as f64;
+                let across = length as f64 * cw;
                 let along = ((bottom - top) * ROW_H) as f64;
                 if across >= SMALL_PX + 3.0 && fits(along, chars, SMALL_EM) {
                     format!(
@@ -690,9 +706,9 @@ impl Booklet {
                     }
                     edges.push_str(&format!(
                         "M{} {}h{}",
-                        start * CELL_W,
+                        n(start as f64 * cw),
                         TOP + r * ROW_H,
-                        (c - start) * CELL_W
+                        n((c - start) as f64 * cw)
                     ));
                 } else {
                     c += 1;
@@ -709,7 +725,7 @@ impl Booklet {
                     }
                     edges.push_str(&format!(
                         "M{} {}v{}",
-                        c * CELL_W,
+                        n(c as f64 * cw),
                         TOP + start * ROW_H,
                         (r - start) * ROW_H
                     ));
