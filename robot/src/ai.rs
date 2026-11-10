@@ -380,7 +380,7 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 pub(crate) mod rules;
 mod sayc;
-use rules::{contracted_fits, Choice, Reason};
+use rules::{contracted_fits, explored_fits, Choice, Exploration, Reason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
@@ -560,6 +560,14 @@ pub enum Convention {
         reason: Reason,
         /// What the rules weigh to choose the bid for a hand.
         choice: Choice,
+    },
+    /// What the contract rules make of a bid that explores in a game force:
+    /// the cheapest natural bid that is true of the hand.
+    Explored {
+        the_name: &'static str,
+        min: HandValuation,
+        max: HandValuation,
+        exploration: Exploration,
     },
     Ordered {
         conventions: Vec<Convention>,
@@ -803,7 +811,9 @@ impl Convention {
             Convention::Contracted { reason, .. } if reason.shows_nothing() => {
                 (HandValuation::MIN, HandValuation::MAX)
             }
-            Convention::Contracted { min, max, .. } => (*min, *max),
+            Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
+                (*min, *max)
+            }
             Convention::Ordered { .. } | Convention::Contract { .. } => {
                 (HandValuation::MIN, HandValuation::MAX)
             }
@@ -821,6 +831,12 @@ impl Convention {
                 choice,
                 ..
             } => contracted_fits(min, max, reason, choice, hand, true),
+            Convention::Explored {
+                min,
+                max,
+                exploration,
+                ..
+            } => explored_fits(min, max, exploration, hand),
             _ => {
                 let (min, max) = self.bounds();
                 !hand.exceeds(max) && !min.exceeds(*hand)
@@ -833,7 +849,9 @@ impl Convention {
     #[cfg(test)]
     fn describes(&self, hand: &HandValuation) -> bool {
         match self {
-            Convention::Contracted { min, max, .. } => !hand.exceeds(*max) && !min.exceeds(*hand),
+            Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
+                !hand.exceeds(*max) && !min.exceeds(*hand)
+            }
             Convention::Either(options) => options.iter().any(|c| c.describes(hand)),
             c => c.fits(hand),
         }
@@ -1155,6 +1173,18 @@ impl Convention {
                     reason.text()
                 )
             }
+            Convention::Explored {
+                the_name,
+                min,
+                max,
+                exploration,
+            } => {
+                format_as!(HTML,
+                    "<strong>" the_name "</strong><br/>"
+                    suit_ranges(min, max) ""
+                    exploration.text()
+                )
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -1176,6 +1206,7 @@ impl Convention {
             | Convention::Forced { the_name, .. }
             | Convention::Contract { the_name, .. }
             | Convention::Contracted { the_name, .. }
+            | Convention::Explored { the_name, .. }
             | Convention::Ordered { the_name, .. } => the_name,
             Convention::Either(options) => options[0].the_name(),
         }
@@ -1187,9 +1218,9 @@ impl Convention {
             Convention::Rule { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
-            Convention::Contract { the_name, .. } | Convention::Contracted { the_name, .. } => {
-                format_as!(HTML, the_name)
-            }
+            Convention::Contract { the_name, .. }
+            | Convention::Contracted { the_name, .. }
+            | Convention::Explored { the_name, .. } => format_as!(HTML, the_name),
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
             Convention::Either(options) => options[0].name(),
         }
@@ -1208,6 +1239,7 @@ impl Convention {
             | Convention::Contract { .. }
             | Convention::Contracted { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
+            Convention::Explored { .. } => Forcing::GameForcing,
             Convention::Ordered { .. } => Forcing::Passable,
             Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
         }
@@ -3806,5 +3838,91 @@ fn sayc_stayman_asks_and_shows_nothing() {
                 "{system:?} {stayman:?}"
             );
         }
+    }
+}
+
+#[test]
+fn sayc_jump_shifts_and_explores_in_a_game_force() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let jump = [Suit(1, Hearts), Pass, Suit(3, Clubs), Pass];
+    let then = |rebid: Bid| [Suit(1, Hearts), Pass, Suit(3, Clubs), Pass, rebid, Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // A jump shift takes 18 points and a five card suit, the longest,
+            // without four card support for a major, which bids Jacoby 2NT.
+            (
+                &[Suit(1, Hearts), Pass][..],
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(3, Clubs),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S A2 H AKQ32 D K32 C K32",
+                Suit(3, Hearts),
+            ),
+            (
+                &[Suit(1, Clubs), Pass],
+                "S AKJ32 H A2 D K32 C K32",
+                Suit(2, Spades),
+            ),
+            (&[Suit(1, Spades), Pass], "S KQ32 H AKQ32 D K2 C 32", NT(2)),
+            // Opener explores with the cheapest true bid: a sixth heart, a
+            // new suit, or a raise past 3NT, since a slam is possible
+            // opposite 18 and two more.  With none of them, 3NT.
+            (&jump, "S K2 H AQJ1032 D A32 C 32", Suit(3, Hearts)),
+            (&jump, "S 32 H AKJ32 D KQ32 C 32", Suit(3, Diamonds)),
+            (&jump, "S KJ32 H AQ1032 D A2 C 32", Suit(3, Spades)),
+            (&jump, "S K32 H AQ1032 D A2 C 432", Suit(4, Clubs)),
+            (&jump, "S KQ3 H AQ1032 D QJ2 C 32", NT(3)),
+            // Responder then places the game, or a slam when it is sure.
+            (
+                &then(Suit(3, Hearts)),
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(4, Hearts),
+            ),
+            (
+                &then(Suit(3, Hearts)),
+                "S A2 H K2 D A32 C AKJ432",
+                Suit(6, Hearts),
+            ),
+            (&then(Suit(3, Spades)), "S A2 H 32 D K32 C AKQJ32", NT(3)),
+            (
+                &then(Suit(4, Clubs)),
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(5, Clubs),
+            ),
+            (
+                &then(Suit(4, Clubs)),
+                "S A2 H K2 D A32 C AKJ432",
+                Suit(6, Clubs),
+            ),
+            (&then(NT(3)), "S A2 H 32 D K32 C AKQJ32", Pass),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+        // Skipping a cheaper bid denies it: 3S denies six hearts and four
+        // diamonds, and the raise to 4C denies all three.
+        let convention = system.convention();
+        let max = |rebid| convention.refine(&then(rebid)[..5]).unwrap().bounds().1;
+        let three_spades = max(Suit(3, Spades));
+        assert_eq!(
+            (3, 5),
+            (three_spades.length[Diamonds], three_spades.length[Hearts])
+        );
+        let four_clubs = max(Suit(4, Clubs));
+        assert_eq!(
+            (3, 5, 3),
+            (
+                four_clubs.length[Diamonds],
+                four_clubs.length[Hearts],
+                four_clubs.length[Spades]
+            )
+        );
     }
 }
