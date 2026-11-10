@@ -1129,7 +1129,7 @@ fn advice_after_one_notrump() {
             ♠ 2♥ Jacoby transfer (5+ spades): needs 5+ spades (you have 4).
             ♥ 2♦ Jacoby transfer (5+ hearts): needs 5+ hearts (you have 4).
             NT 2NT Game invite (invites 3NT): needs 8–9 high card points (you have 6).
-            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6).
+            Other 2♣ Stayman (Asks for a 4 card major): needs 8+ high card points (you have 6).
             Other 2♠ Minor relay (Weak, with a 6+ card minor): needs 6+ clubs (you have 3)."#]],
     );
 }
