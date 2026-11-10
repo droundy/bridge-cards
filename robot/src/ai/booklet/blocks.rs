@@ -12,6 +12,11 @@
 //! Calls are lumped into families, such as the major suit bids of one level,
 //! so that "1♥ / 1♠" is one block.
 //!
+//! The row model says what each block is and which counts of points it covers,
+//! and nothing about height, which means nothing.  `layout` then packs the
+//! same blocks as tightly as they go, with no luck involved: see
+//! its docs.
+//!
 //! Planned: a flow chart for the same page, a way to decide your call by
 //! asking questions.  Each question is the one that splits what is left of the
 //! hands closest to half and half, so that the most common outcomes are not
@@ -24,6 +29,9 @@ use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use std::cmp::Reverse;
 use std::collections::HashMap;
+
+mod layout;
+use layout::Layout;
 
 /// A number a hand has, other than its points.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -499,6 +507,14 @@ fn regions(rows: &[Vec<Family>]) -> (Vec<Region>, Vec<Vec<usize>>) {
     (found, of)
 }
 
+impl Blocks {
+    /// The blocks of the table packed into as few units of height as they go
+    /// in, with every block over the same counts of points as in the rows.
+    fn layout(&self) -> Layout {
+        Layout::of(&self.rows)
+    }
+}
+
 impl Booklet {
     /// The table of blocks of `page` as an SVG picture, or nothing if no hands
     /// reached the page.  Each block links to the page of partner's reply to
@@ -509,8 +525,9 @@ impl Booklet {
             Some(blocks) => blocks,
             None => return String::new(),
         };
-        let (found, of) = regions(&blocks.rows);
-        let (height, width) = (blocks.rows.len(), blocks.rows[0].len());
+        let layout = blocks.layout();
+        let (height, width) = (layout.height, layout.width);
+        let of = layout.grid();
         let lines = self.lines(page);
         let families = Families::new(page);
 
@@ -532,18 +549,17 @@ impl Booklet {
                 ));
             }
         }
-        for region in found.iter() {
+        for block in layout.blocks.iter() {
             let calls: Vec<&super::Line> = {
                 let mut calls: Vec<&super::Line> = lines
                     .iter()
-                    .filter(|l| l.made > 0 && families.of(l.call) == region.family)
+                    .filter(|l| l.made > 0 && families.of(l.call) == block.family)
                     .collect();
                 calls.sort_by_key(|l| label_order(l.call));
                 calls
             };
             let (mut name, mut plain_name) = names(&calls);
-            let lo = region.cells.iter().map(|&(_, c)| c).min().unwrap();
-            let hi = region.cells.iter().map(|&(_, c)| c).max().unwrap();
+            let (lo, hi) = (block.first, block.last());
             let range = if lo == hi {
                 format!("{}", blocks.first + lo)
             } else {
@@ -551,7 +567,7 @@ impl Booklet {
             };
             let title = std::iter::once(format!(
                 "{}, {} points",
-                families.names[region.family.0], range
+                families.names[block.family.0], range
             ))
             .chain(calls.iter()
                 .map(|l| {
@@ -568,31 +584,29 @@ impl Booklet {
                 .max_by_key(|l| (l.made, Reverse(label_order(l.call))))
                 .and_then(|l| l.reply.first().copied());
 
-            // The block as one path: a rectangle for each run of cells in a row.
+            // The block as one path: a rectangle for each run of columns in
+            // which it has the same top and bottom.
             let mut path = String::new();
-            let mut widest = (0, 0, 0);
-            let mut cells = region.cells.iter().peekable();
-            while let Some(&(r, c)) = cells.next() {
+            let mut c = 0;
+            while c < block.bands.len() {
+                let (top, bottom) = block.bands[c];
                 let mut length = 1;
-                while cells.peek() == Some(&&(r, c + length)) {
-                    cells.next();
+                while block.bands.get(c + length) == Some(&(top, bottom)) {
                     length += 1;
                 }
                 path.push_str(&format!(
                     "M{} {}h{}v{}h-{}z",
-                    c * CELL_W,
-                    TOP + r * ROW_H,
+                    (block.first + c) * CELL_W,
+                    TOP + top * ROW_H,
                     length * CELL_W,
-                    ROW_H,
+                    (bottom - top) * ROW_H,
                     length * CELL_W
                 ));
-                if length > widest.2 {
-                    widest = (r, c, length);
-                }
+                c += length;
             }
-            let (r, c, length) = widest;
-            let (x, y) = ((c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0, r);
-            let y = (TOP + y * ROW_H) as f64 + ROW_H as f64 / 2.0;
+            let (c, length, top, bottom) = block.label_room();
+            let x = (c * CELL_W) as f64 + (length * CELL_W) as f64 / 2.0;
+            let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
             let room = (length * CELL_W) as f64;
             let fits = |chars: usize, em: f64| room >= chars as f64 * em + 6.0;
             if !fits(plain_name.chars().count(), 7.5) {
@@ -601,7 +615,7 @@ impl Booklet {
             let name_fits = fits(plain_name.chars().count(), 7.5);
             // The second line says what the calls are, if there is room, and
             // otherwise at which points.
-            let kind = families.names[region.family.0].as_str();
+            let kind = families.names[block.family.0].as_str();
             let second = if kind != plain_name && fits(kind.chars().count(), 5.8) {
                 Some(escape(kind))
             } else if fits(range.chars().count(), 5.8) {
@@ -614,7 +628,7 @@ impl Booklet {
             out.push_str(&format!(
                 "{}<g class=\"{}\"><title>{}</title><path d=\"{}\"/>",
                 link.as_deref().unwrap_or(""),
-                families.classes[region.family.0],
+                families.classes[block.family.0],
                 escape(&title),
                 path
             ));
