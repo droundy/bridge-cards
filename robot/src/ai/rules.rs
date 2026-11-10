@@ -289,7 +289,14 @@ pub struct Rival {
 impl Rival {
     /// How the hand rates bidding in this strain, best highest.
     fn rating(&self, hand: &HandValuation, partner: u8) -> (i16, bool, u8) {
-        let spare = self.points.of(hand) as i16 + partner as i16 - self.needs as i16;
+        // A fit in a suit partner has not shown, with three cards or fewer
+        // here, would be partner's long suit, where this hand's long suits
+        // make no tricks, so it counts only its high cards.
+        let points = match self.trumps {
+            Some((suit, ..)) if self.points == Points::Lhcp && hand.length[suit] < 4 => Points::Hcp,
+            _ => self.points,
+        };
+        let spare = points.of(hand) as i16 + partner as i16 - self.needs as i16;
         (spare, self.proper, self.order)
     }
     /// Is there a fit in this strain, as far as partner has promised, and

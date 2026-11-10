@@ -1474,8 +1474,9 @@ impl Convention {
     }
 
     /// The strong artificial 2C opening, which shows `base` or more points,
-    /// and its responses.
-    fn add_strong_two_clubs(&mut self, base: u8) {
+    /// and its responses, with opener's 2NT rebid unless the system gives
+    /// its own (`two_notrump_rebid` false).
+    fn add_strong_two_clubs(&mut self, base: u8, two_notrump_rebid: bool) {
         let sheets = self;
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
@@ -1546,14 +1547,16 @@ impl Convention {
             the_name: "Strong two rebid",
             forcing: Forcing::GameForcing,
         });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
-            max: max.with_lhcp(base + 1),
-            min: min.with_lhcp(base),
-            the_description: format_as!(HTML, ""),
-            the_name: "Game invite",
-            forcing: Forcing::Passable,
-        });
+        if two_notrump_rebid {
+            sheets.add(Convention::Simple {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
+                max: max.with_lhcp(base + 1),
+                min: min.with_lhcp(base),
+                the_description: format_as!(HTML, ""),
+                the_name: "Game invite",
+                forcing: Forcing::Passable,
+            });
+        }
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3N$"]).unwrap(),
             max: max.with_lhcp(base + 4),
@@ -2444,7 +2447,7 @@ impl Convention {
 
         sheets.add_notrump((22, 23, 23), 0);
 
-        sheets.add_strong_two_clubs(23);
+        sheets.add_strong_two_clubs(23, true);
 
         sheets.add_preempts();
 
@@ -3637,6 +3640,40 @@ fn sayc_jumps_to_three_and_four_of_a_major_as_the_booklet_says() {
                 "{:?} {}",
                 auction,
                 hand
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_answers_2nt_after_2c_and_a_weak_two_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let two_clubs = [Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass];
+    let two_notrump = [Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass, NT(2), Pass];
+    let weak_two = [Suit(2, Diamonds), Pass, NT(2), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 2NT after 2C-2D is 22-24 balanced, and a 21 opens 2NT.
+            (&[][..], "S AKQ2 H AK3 D AJ2 C 432", NT(2)),
+            (&two_clubs, "S AKQ2 H AK3 D AQ2 C Q32", NT(2)),
+            (&two_clubs, "S AKQ2 H AK3 D AQ2 C 432", NT(2)),
+            // Responder answers as over a 2NT opening: game with the 3
+            // points that make 25, Stayman with a four card major, and a
+            // transfer with five.
+            (&two_notrump, "S Q52 H 932 D Q10 C 98732", NT(3)),
+            (&two_notrump, "S Q532 H 932 D Q10 C 9873", Suit(3, Clubs)),
+            (&two_notrump, "S Q5432 H 932 D Q10 C 987", Suit(3, Hearts)),
+            (&two_notrump, "S 5432 H 932 D 1092 C 987", Pass),
+            // Over a weak two's 2NT, which forces, opener rebids the suit
+            // with a minimum.
+            (&weak_two, "S 7 H 1076 D AJ9762 C J97", Suit(3, Diamonds)),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
             );
         }
     }

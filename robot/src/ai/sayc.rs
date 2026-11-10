@@ -37,12 +37,15 @@
 //! `responder_rebids`): a sign-off, which opener passes, an invitation,
 //! which opener accepts with enough for 25 points, game, or a new suit,
 //! which forces.  The notrump structure is SAYC's own (see `notrump`),
-//! with Stayman only for a four card major.  The strong 2C, the weak twos and threes, and the
-//! natural fallbacks are shared with Sheets.
+//! with Stayman only for a four card major, and answers 2NT after 2C-2D as
+//! it does a 2NT opening.  The strong 2C, the weak twos and threes, and the
+//! natural fallbacks are shared with Sheets, though over a weak two's 2NT
+//! response opener rebids the suit with a minimum.
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
 //! Gerber), negative doubles, responder's strong jump shifts, a 3NT opening,
-//! and Michaels over a major.  (Splinters are not part of
+//! the feature that opener shows over a weak two's 2NT with a maximum, and
+//! Michaels over a major.  (Splinters are not part of
 //! SAYC.)  Auctions the tables do not mention fall back on the natural bids
 //! shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
@@ -197,9 +200,12 @@ fn longest(mut fit: Fit, suit: Suit, others: impl Iterator<Item = Suit>) -> Fit 
 
 fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let mut s = Sheet(Convention::new(name), Convention::new(""));
-    s.add_block(|t| t.add_strong_two_clubs(22));
+    // The notrump structure comes first, so that opener rebids 2NT over
+    // 2C-2D with a balanced 22-24 rather than 3NT.
     notrump(&mut s);
+    s.add_block(|t| t.add_strong_two_clubs(22, false));
     s.add_block(|t| t.add_preempts());
+    weak_two_rebids(&mut s);
     openings(&mut s);
     responses(&mut s, two_over_one);
     opener_rebids(&mut s, two_over_one);
@@ -232,15 +238,17 @@ fn notrump(s: &mut Sheet) {
     // Each opening, with responder's points to invite (if 1NT) and for
     // game, as the contract rules give them: over 2NT there is no room to
     // invite, so game takes 25 opposite 21.  The natural notrump bids
-    // themselves come from the rules.
+    // themselves come from the rules.  The booklet answers 2NT after 2C-2D,
+    // which shows 22-24, as it answers a 2NT opening.
     for (nt, (lo, hi), invite, game) in [
         ("2N", (20, 21), None, 4),
+        ("2C [PX] 2D [PX] 2N", (22, 24), None, 3),
         ("1N", (15, 17), Some((8, 9)), 10),
     ] {
-        let name = if nt == "1N" {
-            "Opening 1NT"
-        } else {
-            "Opening 2NT"
+        let name = match nt {
+            "1N" => "Opening 1NT",
+            "2N" => "Opening 2NT",
+            _ => "Strong two rebid",
         };
         s.add(
             name,
@@ -572,6 +580,22 @@ fn notrump(s: &mut Sheet) {
                 );
             }
         }
+    }
+}
+
+/// Opener's rebid of a weak two's suit over 2NT, which the booklet makes
+/// forcing, with a minimum of 5-8 points.  With more, the contract rules
+/// answer 2NT as the invitation they make it.
+fn weak_two_rebids(s: &mut Sheet) {
+    for suit in [Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+        let two = format!("2{}", suit.latin());
+        s.add(
+            "Weak two rebid",
+            &auction(&[&two, "2N", &format!("3{}", suit.latin())]),
+            "A minimum",
+            Forcing::Passable,
+            [fit(MIN, MAX.with_hcp(8))],
+        );
     }
 }
 
