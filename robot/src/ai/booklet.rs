@@ -8,14 +8,13 @@
 //! reached in several ways.  Which auctions come up, and how often each call is
 //! made, come from letting the robot bid seeded random deals.
 
-#[cfg(test)]
-use super::ShapeRule;
-use super::{choose, fitting_calls, seeded_hands, Convention, Described, Fit, Forcing};
+use super::{choose, fitting_calls, seeded_hands, Convention, Described, Fit, Forcing, ShapeRule};
 use crate::utils::plain;
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 #[cfg(test)]
 use display_as::{format_as, HTML};
+mod blocks;
 mod html;
 
 use std::collections::HashMap;
@@ -62,7 +61,6 @@ struct Decision {
 
 impl Decision {
     /// Does `hand` fit in any of the ways?
-    #[cfg(test)]
     fn holds(&self, hand: &HandValuation) -> bool {
         self.fits.iter().any(|f| f.holds(hand))
     }
@@ -189,6 +187,18 @@ impl Points {
         };
         (points as usize).min(POINTS - 1)
     }
+    /// `hand` with `points` of this kind, and all its other points moved by
+    /// the same amount.
+    fn with(self, hand: &HandValuation, points: usize) -> HandValuation {
+        let shift = points as i16 - self.of(hand) as i16;
+        let moved = |p: u8| (p as i16 + shift).clamp(0, POINTS as i16 - 1) as u8;
+        HandValuation {
+            hcp: moved(hand.hcp),
+            lhcp: moved(hand.lhcp),
+            shcp: moved(hand.shcp),
+            ..*hand
+        }
+    }
     fn name(self) -> &'static str {
         match self {
             Points::Hcp => "high card points",
@@ -252,11 +262,17 @@ struct Page {
     visits: [u32; POINTS],
     /// How often each call was made with each count.
     made: HashMap<Bid, [u32; POINTS]>,
+    /// The tests that tell the kinds of hand of the table of blocks apart.
+    features: Vec<blocks::Feature>,
+    /// How often each call was made by each kind of hand (which tests it
+    /// passed) with each count of points.
+    samples: HashMap<(blocks::Kind, u8, Bid), u32>,
+    /// A hand of each kind, the first to reach the page.
+    representatives: HashMap<blocks::Kind, HandValuation>,
 }
 
 impl Page {
     /// The call the robot makes with `hand`, going only by this page.
-    #[cfg(test)]
     fn choose(&self, hand: &HandValuation) -> Bid {
         self.decisions
             .iter()
@@ -350,6 +366,9 @@ impl Booklet {
                 points,
                 visits: [0; POINTS],
                 made: HashMap::new(),
+                features: blocks::features(&decisions),
+                samples: HashMap::new(),
+                representatives: HashMap::new(),
                 decisions,
             });
         }
@@ -372,6 +391,9 @@ impl Booklet {
                     let place = page.points.of(&hand);
                     page.visits[place] += 1;
                     page.made.entry(call).or_insert([0; POINTS])[place] += 1;
+                    let kind = blocks::kind(&page.features, &hand);
+                    *page.samples.entry((kind, place as u8, call)).or_default() += 1;
+                    page.representatives.entry(kind).or_insert(hand);
                 }
             }
         }
@@ -974,6 +996,7 @@ fn the_html_booklet_has_every_page_and_links_to_them() {
     // Every element that is opened is closed.
     for tag in [
         "section", "table", "tr", "th", "td", "span", "p", "i", "a", "h1", "h2", "strong", "style",
+        "svg", "g", "text", "tspan", "title",
     ] {
         let opened = html.matches(&format!("<{} ", tag)).count()
             + html.matches(&format!("<{}>", tag)).count();
@@ -1048,4 +1071,46 @@ fn the_booklets_match_the_tables() {
             system.name()
         );
     }
+}
+
+#[test]
+fn the_block_table_agrees_with_the_robot() {
+    // The table gives each cell one call, so it cannot be exact where the
+    // robot's choice depends on more than the table tells apart, but it must
+    // be nearly always the call the robot makes.
+    let booklet = small_booklet();
+    let (mut agree, mut all) = (0.0, 0.0);
+    for page in booklet.pages.iter() {
+        let Some(table) = blocks::Blocks::of(page) else {
+            continue;
+        };
+        let visits = booklet.reached(page) as f64;
+        assert!(
+            table.agreement(page) > 0.8,
+            "{}",
+            auction(&page.auctions[0])
+        );
+        agree += visits * table.agreement(page);
+        all += visits;
+    }
+    assert!(agree / all > 0.95, "{}", agree / all);
+}
+
+#[test]
+fn the_block_table_fills_its_space() {
+    let booklet = small_booklet();
+    let first = &booklet.pages[0];
+    let table = blocks::Blocks::of(first).unwrap();
+    assert!(table.rows_are_complete());
+    for page in booklet.pages.iter() {
+        if let Some(table) = blocks::Blocks::of(page) {
+            assert!(table.rows_are_complete());
+        }
+    }
+    // The opening page has blocks for the opening bids and for 1NT.
+    let svg = booklet.block_table(first);
+    assert!(svg.starts_with("<svg"));
+    assert!(svg.contains("Opening bid"));
+    assert!(svg.contains("1NT"));
+    assert!(svg.ends_with("</svg>\n"));
 }

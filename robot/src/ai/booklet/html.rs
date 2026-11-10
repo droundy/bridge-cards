@@ -11,10 +11,14 @@ use display_as::{format_as, HTML};
 /// What the page looks like, in light and dark.
 const STYLE: &str = r#"
 :root { --text: #222; --background: #fff; --faint: #aaa; --bar: #2a7; --link: #05c;
-        --clubs: #181; --diamonds: #c60; --hearts: #c00; --spades: #222; }
+        --clubs: #181; --diamonds: #c60; --hearts: #c00; --spades: #222;
+        --k-pass: #e4e2dc; --k-nt: #a9cdf0; --k-major: #cbc5f5; --k-minor: #9fdcc4;
+        --k-suit: #c9e4a5; --k-x: #f6cf82; --k-xx: #f5b9a2; }
 @media (prefers-color-scheme: dark) {
   :root { --text: #eee; --background: #1e1a18; --faint: #777; --bar: #5c9; --link: #8bf;
-          --clubs: #7d7; --diamonds: #fa5; --hearts: #f66; --spades: #eee; }
+          --clubs: #7d7; --diamonds: #fa5; --hearts: #f66; --spades: #eee;
+          --k-pass: #3a3633; --k-nt: #2c4a6b; --k-major: #403a6e; --k-minor: #1f5a47;
+          --k-suit: #3f5a24; --k-x: #6b5320; --k-xx: #6e3a2a; }
 }
 body { font-family: sans-serif; color: var(--text); background: var(--background);
        margin: 0 auto; max-width: 60em; padding: 0 0.5em; }
@@ -34,6 +38,18 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .axis { display: grid; grid-template-columns: repeat(41, 0.6em); font-size: 0.7em;
         color: var(--faint); }
 .axis span { grid-row: 1; }
+.blocks { display: block; max-width: 100%; height: auto; margin: 0.4em 0; }
+.blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
+               dominant-baseline: central; pointer-events: none; }
+.blocks .range { font-size: 10px; }
+.blocks .tick { font-size: 10px; fill: var(--faint); }
+.blocks .edge { stroke: var(--background); stroke-width: 2.5; fill: none; }
+.blocks a { cursor: pointer; }
+.blocks .clubs { fill: var(--clubs); } .blocks .diamonds { fill: var(--diamonds); }
+.blocks .hearts { fill: var(--hearts); } .blocks .spades { fill: var(--spades); }
+.k-pass path { fill: var(--k-pass); } .k-nt path { fill: var(--k-nt); }
+.k-major path { fill: var(--k-major); } .k-minor path { fill: var(--k-minor); }
+.k-suit path { fill: var(--k-suit); } .k-x path { fill: var(--k-x); } .k-xx path { fill: var(--k-xx); }
 .hastooltip { position: relative; display: inline-block; cursor: help; }
 .tooltip { visibility: hidden; position: absolute; z-index: 1; left: 2.5em; top: 1.2em;
            width: 18em; padding: 0.3em 0.5em; border-radius: 6px; font-weight: normal;
@@ -45,7 +61,7 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 "#;
 
 /// `text` as it goes in HTML.
-fn escape(text: &str) -> String {
+pub(super) fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -90,10 +106,13 @@ impl Booklet {
         out.push_str(&format!(
             "<h1>{} booklet</h1>\n<p>{} pages for the {} auctions that came up at least {} times \
              in {} deals the robot bid against itself.  Each page is the choice after the \
-             auctions it lists.  The calls are in order of how often they were made, and a bar \
-             shows at which count of points: the darker the block, the larger the share of \
-             hands with that many points that make the call.  Point the mouse at a call for \
-             what the system says it means.</p>\n",
+             auctions it lists.  A page opens with a table of blocks: the points run along \
+             it, each row is a kind of hand, and each block is the call the robot makes with \
+             such a hand and that many points.  Click a block for partner's reply, or point \
+             the mouse at it for what the system says it means.  Under the table the calls \
+             are in order of how often they were made, and a bar shows at which count of \
+             points: the darker the block, the larger the share of hands with that many \
+             points that make the call.</p>\n",
             title,
             self.pages.len(),
             self.auctions.len(),
@@ -126,7 +145,9 @@ impl Booklet {
             shown.push(format!("and {} more", page.auctions.len() - SHOWN));
         }
         out.push_str(&shown.join(" · "));
-        out.push_str("</p>\n<table>\n");
+        out.push_str("</p>\n");
+        out.push_str(&self.block_table(page));
+        out.push_str("<table>\n");
         out.push_str(&format!(
             "<tr><th></th><th></th><td class=\"axis\">{}</td><th></th></tr>\n",
             (0..POINTS)
