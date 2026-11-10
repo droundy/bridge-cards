@@ -38,6 +38,7 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .axis { display: grid; grid-template-columns: repeat(41, 0.6em); font-size: 0.7em;
         color: var(--faint); }
 .axis span { grid-row: 1; }
+.scroll { overflow-x: auto; }
 .blocks { display: block; height: auto; margin: 0.4em 0; }
 .blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
                dominant-baseline: central; pointer-events: none; }
@@ -147,7 +148,9 @@ impl Booklet {
         }
         out.push_str(&shown.join(" · "));
         out.push_str("</p>\n");
+        out.push_str("<div class=\"scroll\">");
         out.push_str(&self.block_table(page));
+        out.push_str("</div>\n");
         out.push_str("<table>\n");
         out.push_str(&format!(
             "<tr><th></th><th></th><td class=\"axis\">{}</td><th></th></tr>\n",
