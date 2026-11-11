@@ -12,12 +12,14 @@
 //! one, as in "1X – 1Y – 2Y".
 
 use super::advice::{describe, Feature};
+use super::rules::{contract_points, Kind, Points, Rule};
 use super::{
     bids_string, final_bid, legal_bids, BiddingSystem, Convention, Fit, Forcing, ShapeRule,
 };
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML};
+use regex::RegexSet;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use wording::{and, at_least, or, Text, Word};
 
@@ -49,22 +51,77 @@ fn from_opening(history: &[Bid]) -> &[Bid] {
     &history[passes..]
 }
 
-/// The entries of `table` that say outright what a call after `history`
-/// shows, each with its call, in the order of the table.  That leaves out the
-/// `Natural` and `Forced` entries, which are defaults for any auction.
-fn described(table: &Convention, history: &[Bid]) -> Vec<(usize, Bid)> {
+/// An invitation that the contract rules make of a bid, written as an entry
+/// of a table would be, or nothing for any other `meaning`.  It says of
+/// itself what it invites and what that needs.
+fn as_an_entry(meaning: &Convention) -> Option<Convention> {
+    let Convention::Contracted {
+        the_name,
+        min,
+        max,
+        reason,
+        ..
+    } = meaning
+    else {
+        return None;
+    };
+    if reason.rule != Rule::Invite {
+        return None;
+    }
+    let points = match reason.points {
+        Points::Hcp => "high card points",
+        Points::Lhcp => "long high card points",
+        Points::Shcp => "short high card points",
+    };
+    let kind = Kind::of(reason.contract).name();
+    let said = format!(
+        "Invites a {kind}, which needs {} {points} between you",
+        reason.needs
+    );
+    Some(Convention::Simple {
+        regex: RegexSet::empty(),
+        the_description: FormattedString::from_formatted(said),
+        the_name,
+        min: *min,
+        max: *max,
+        forcing: Forcing::Passable,
+    })
+}
+
+/// What says outright what a call after `history` shows, each with its
+/// call: the entries of `table` by their place in it, in its order, and then
+/// each invitation that its contract rules make of a response to an opening
+/// bid that no entry describes, which goes on the end of `ruled` and is
+/// numbered from the end of the table.  That leaves out the `Natural` and
+/// `Forced` entries, which are defaults for any auction, the contracts that
+/// the rules place, and their invitations later in the auction, which would
+/// fill the later pages with what the rules say once.
+fn described(
+    table: &Convention,
+    history: &[Bid],
+    ruled: &mut Vec<Convention>,
+) -> Vec<(usize, Bid)> {
+    let entries = table.entries();
     let mut bids = followed_by(history, Bid::Pass);
     let mut found = Vec::new();
     for bid in legal_bids(history) {
         *bids.last_mut().unwrap() = bid;
         let auction = bids_string(&bids);
+        let before = found.len();
         for i in table.candidates(&auction) {
-            let entry = &table.entries()[i];
+            let entry = &entries[i];
             if matches!(entry, Convention::Simple { .. } | Convention::Rule { .. })
                 && entry.matches(&auction, &bids)
             {
                 found.push((i, bid));
             }
+        }
+        if found.len() > before || from_opening(history).len() != 2 {
+            continue;
+        }
+        if let Some(entry) = table.refine(&bids).as_ref().and_then(as_an_entry) {
+            found.push((entries.len() + ruled.len(), bid));
+            ruled.push(entry);
         }
     }
     found.sort_by_key(|&(i, _)| i);
@@ -75,13 +132,15 @@ fn described(table: &Convention, history: &[Bid]) -> Vec<(usize, Bid)> {
 /// describes, where a player the table has nothing for passes once.
 struct Node {
     history: Vec<Bid>,
-    /// The entries for the next call, each with its call, in table order.
+    /// What describes the next call, each with its call: see [`described`].
     described: Vec<(usize, Bid)>,
 }
 
-/// Every such auction.
-fn walk(table: &Convention) -> Vec<Node> {
+/// Every such auction, and the invitations in them that the contract rules
+/// make of bids no entry describes.
+fn walk(table: &Convention) -> (Vec<Node>, Vec<Convention>) {
     let mut nodes = Vec::new();
+    let mut ruled = Vec::new();
     let mut seen = HashSet::new();
     // Each auction to look at, and whether its last call is a pass that no
     // entry describes.
@@ -90,8 +149,15 @@ fn walk(table: &Convention) -> Vec<Node> {
         if is_over(&history) || !seen.insert(bids_string(&history)) {
             continue;
         }
-        let described = described(table, &history);
-        let mut calls: Vec<Bid> = described.iter().map(|&(_, bid)| bid).collect();
+        let described = described(table, &history, &mut ruled);
+        // An invitation is answered by the contract rules, like any natural
+        // bid, so the auctions after one are not followed.
+        let in_table = |&&(i, _): &&(usize, Bid)| i < table.entries().len();
+        let mut calls: Vec<Bid> = described
+            .iter()
+            .filter(in_table)
+            .map(|&(_, bid)| bid)
+            .collect();
         calls.sort_by_key(|&bid| rank(bid));
         calls.dedup();
         if !assumed && !calls.contains(&Bid::Pass) {
@@ -102,7 +168,7 @@ fn walk(table: &Convention) -> Vec<Node> {
         }
         nodes.push(Node { history, described });
     }
-    nodes
+    (nodes, ruled)
 }
 
 /// The opening bids, in groups that share their pages: the bids of one level
@@ -110,7 +176,7 @@ fn walk(table: &Convention) -> Vec<Node> {
 struct Openings(Vec<Vec<Bid>>);
 
 impl Openings {
-    fn new(table: &Convention, nodes: &[Node]) -> Self {
+    fn new(meanings: &Meanings, nodes: &[Node]) -> Self {
         let mut openers: Vec<&Node> = nodes
             .iter()
             .filter(|node| from_opening(&node.history).is_empty())
@@ -125,7 +191,7 @@ impl Openings {
             if groups.iter().any(|(_, bids)| bids.contains(&bid)) {
                 continue;
             }
-            let key = (level, table.entries()[i].the_name());
+            let key = (level, meanings.entry(i).the_name());
             match groups.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, bids)) => bids.push(bid),
                 None => groups.push((key, vec![bid])),
@@ -171,7 +237,7 @@ impl Stage {
             return Stage::Opening;
         }
         let group = openings.group(calls[0]);
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             return Stage::Ours(group, (n / 2).min(Stage::LATER));
         }
         // The next player's side made every second call after the opening.
@@ -254,39 +320,49 @@ fn pattern(calls: &[Bid]) -> (Vec<Slot>, Vec<Suit>) {
     (slots, suits)
 }
 
-/// What the earlier calls of an auction mean: for each call that the table
-/// describes, the first entry that does.
+/// What the calls of a table's auctions mean: for each call that something
+/// describes, the first entry that does.  The entries are the table's own,
+/// and after them the invitations of its contract rules (see [`described`]).
 struct Meanings<'a> {
     table: &'a Convention,
+    ruled: Vec<Convention>,
     /// The entry for the last call of each auction, by `bids_string`.
-    entry: HashMap<String, usize>,
+    first: HashMap<String, usize>,
     /// For each entry, the first entry with the same name that says the
     /// same of itself.
     alike: Vec<usize>,
 }
 
 impl<'a> Meanings<'a> {
-    fn new(table: &'a Convention, nodes: &[Node]) -> Self {
-        let mut entry = HashMap::new();
+    fn new(table: &'a Convention, ruled: Vec<Convention>, nodes: &[Node]) -> Self {
+        let mut first = HashMap::new();
         for node in nodes {
             for &(i, bid) in &node.described {
                 let auction = bids_string(&followed_by(&node.history, bid));
-                entry.entry(auction).or_insert(i);
+                first.entry(auction).or_insert(i);
             }
         }
-        let mut first: HashMap<(&str, &str), usize> = HashMap::new();
-        let entries = table.entries().iter().enumerate();
+        let mut named: HashMap<(&str, &str), usize> = HashMap::new();
+        let entries = table.entries().iter().chain(&ruled).enumerate();
         let alike = entries
             .map(|(i, entry)| {
                 let said = description(entry).map_or("", |said| said.as_str());
-                *first.entry((entry.the_name(), said)).or_insert(i)
+                *named.entry((entry.the_name(), said)).or_insert(i)
             })
             .collect();
         Meanings {
             table,
-            entry,
+            ruled,
+            first,
             alike,
         }
+    }
+    /// The entry with this number.
+    fn entry(&self, i: usize) -> &Convention {
+        let entries = self.table.entries();
+        entries
+            .get(i)
+            .unwrap_or_else(|| &self.ruled[i - entries.len()])
     }
     /// A number for what each call of `history` from the opening bid on
     /// means.  Two calls have the same number when their entries have one
@@ -296,8 +372,8 @@ impl<'a> Meanings<'a> {
     fn of(&self, history: &[Bid]) -> Vec<usize> {
         let n = history.len();
         let passes = n - from_opening(history).len();
-        let meaning = |i: usize| match self.entry.get(&bids_string(&history[..=i])) {
-            Some(&entry) if (n - i) % 2 == 0 => self.alike[entry] + 1,
+        let meaning = |i: usize| match self.first.get(&bids_string(&history[..=i])) {
+            Some(&entry) if (n - i).is_multiple_of(2) => self.alike[entry] + 1,
             _ => 0,
         };
         (passes..n).map(meaning).collect()
@@ -305,12 +381,12 @@ impl<'a> Meanings<'a> {
     /// The name of one of those `meanings`, with what its entry says of
     /// itself when another of them has the same name.
     fn name(&self, meaning: usize, meanings: &BTreeSet<usize>) -> String {
-        let Some(entry) = meaning.checked_sub(1).map(|i| &self.table.entries()[i]) else {
+        let Some(entry) = meaning.checked_sub(1).map(|i| self.entry(i)) else {
             return "no agreement".to_string();
         };
         let name = entry.the_name();
         let shared = meanings.iter().any(|&other| {
-            other != meaning && other > 0 && self.table.entries()[other - 1].the_name() == name
+            other != meaning && other > 0 && self.entry(other - 1).the_name() == name
         });
         let mut written = format_as!(HTML, name).into_string();
         match description(entry) {
@@ -404,7 +480,8 @@ impl Line {
             for choice in choices.iter().filter(|choice| choice.note.is_some()) {
                 if !written.contains(&choice.call.as_str()) {
                     let same = choices.iter().filter(|other| other.call == choice.call);
-                    let meanings: Vec<&str> = same.flat_map(|other| other.note.as_deref()).collect();
+                    let meanings: Vec<&str> =
+                        same.flat_map(|other| other.note.as_deref()).collect();
                     notes.push(format!("{}: {}", choice.call, meanings.join(" or ")));
                 }
                 written.push(&choice.call);
@@ -513,7 +590,9 @@ fn write(
             Slot::Double => ("Dbl".to_string(), false),
             Slot::Redouble => ("Rdbl".to_string(), false),
             Slot::Bid(level, NOTRUMP) => (format!("{level}NT"), false),
-            Slot::Bid(level, number) => (format!("{level}{}", strains[number].0), strains[number].1),
+            Slot::Bid(level, number) => {
+                (format!("{level}{}", strains[number].0), strains[number].1)
+            }
         };
         let mut note = None;
         if i < last && !open[i + 1] {
@@ -562,7 +641,8 @@ fn written(slots: &[Slot], mine: &[Filling], all: &[Filling], meanings: &Meaning
     // How many of all the auctions are like mine in every way that is not
     // `open`.
     let like = |open: &[bool]| {
-        let like = |filling: &&Filling| (0..dims).all(|d| open[d] || values[d].contains(&filling[d]));
+        let like =
+            |filling: &&Filling| (0..dims).all(|d| open[d] || values[d].contains(&filling[d]));
         all.iter().filter(like).count()
     };
     let mut best: Option<Line> = None;
@@ -575,12 +655,15 @@ fn written(slots: &[Slot], mine: &[Filling], all: &[Filling], meanings: &Meaning
         for order in [meanings_first.collect::<Vec<_>>(), suits_first.collect()] {
             let mut open = vec![false; dims];
             // A single suit is as short as a letter, and says more.
-            for d in order.into_iter().filter(|&d| d <= last || values[d].len() > 1) {
+            for d in order
+                .into_iter()
+                .filter(|&d| d <= last || values[d].len() > 1)
+            {
                 open[d] = true;
                 open[d] = like(&open) == mine.len();
             }
             if let Some(line) = write(slots, &values, &open, all, meanings) {
-                if best.as_ref().map_or(true, |best| line.notes() < best.notes()) {
+                if best.as_ref().is_none_or(|best| line.notes() < best.notes()) {
                     best = Some(line);
                 }
             }
@@ -650,10 +733,7 @@ fn roles(calls: &[Bid]) -> HashMap<Suit, &'static str> {
 /// What one way of fitting a bid asks of a hand.
 fn fit_features(fit: &Fit) -> Vec<Feature> {
     let mut features = describe(&fit.min, &fit.max);
-    let balanced = matches!(
-        features.first(),
-        Some(Feature::Shape(ShapeRule::Balanced))
-    );
+    let balanced = matches!(features.first(), Some(Feature::Shape(ShapeRule::Balanced)));
     features.extend(
         fit.shape
             .iter()
@@ -663,12 +743,17 @@ fn fit_features(fit: &Fit) -> Vec<Feature> {
     features
 }
 
-/// What an entry asks of a hand, for each way of fitting it, or nothing
-/// when any hand fits.
-fn features(entry: &Convention) -> Vec<Vec<Feature>> {
+/// What an entry of `table` asks of a hand that makes the last of `calls`,
+/// for each way of fitting it, or nothing when any hand fits.  A limit bid
+/// has at most the points that the rest of the table leaves it.
+fn features(table: &Convention, entry: &Convention, calls: &[Bid]) -> Vec<Vec<Feature>> {
+    let limited = |fit: &Fit| match fit.limit {
+        true => fit_features(&table.limit(calls, fit)),
+        false => fit_features(fit),
+    };
     let fits = match entry {
         Convention::Simple { min, max, .. } => vec![describe(min, max)],
-        Convention::Rule { fits, .. } => fits.iter().map(fit_features).collect(),
+        Convention::Rule { fits, .. } => fits.iter().map(limited).collect(),
         _ => Vec::new(),
     };
     match fits.iter().any(|features| features.is_empty()) {
@@ -753,13 +838,8 @@ struct Row {
 impl Row {
     /// The line for `calls`, which mean the same, where `all` are the
     /// auctions of each pattern that a player might look up on this page.
-    fn new(
-        meanings: &Meanings,
-        calls: &[&Call],
-        all: &HashMap<Vec<Slot>, Vec<Filling>>,
-    ) -> Self {
-        let entries = meanings.table.entries();
-        let entry = &entries[calls[0].entry];
+    fn new(meanings: &Meanings, calls: &[&Call], all: &HashMap<Vec<Slot>, Vec<Filling>>) -> Self {
+        let entry = meanings.entry(calls[0].entry);
         // A suit goes by its part in the auction only when that makes this
         // line say more than one auction can.
         let mut suits: HashMap<&str, HashSet<Suit>> = HashMap::new();
@@ -791,7 +871,9 @@ impl Row {
             };
             let seats: BTreeSet<usize> = all[slots].iter().map(|filling| filling[0]).collect();
             let seated = |fillings: &[Filling]| -> Vec<Filling> {
-                let seated = fillings.iter().filter(|filling| seats.contains(&filling[0]));
+                let seated = fillings
+                    .iter()
+                    .filter(|filling| seats.contains(&filling[0]));
                 seated.cloned().collect()
             };
             slots != quiet && seated(theirs) == *mine && seated(&all[quiet]) == all[slots]
@@ -823,7 +905,9 @@ impl Row {
             if is_twin(slots, &undoubled(slots)) {
                 continue;
             }
-            let also = doubled.get(slots).map_or(String::new(), |also| also.join(" "));
+            let also = doubled
+                .get(slots)
+                .map_or(String::new(), |also| also.join(" "));
             for mut line in written(slots, mine, &all[slots], meanings) {
                 line.also = also.clone();
                 lines.push(line);
@@ -835,7 +919,7 @@ impl Row {
                 && said.as_str() != entry.the_name()
                 && calls
                     .iter()
-                    .all(|call| description(&entries[call.entry]) == Some(*said))
+                    .all(|call| description(meanings.entry(call.entry)) == Some(*said))
         });
         Row {
             auctions,
@@ -844,7 +928,7 @@ impl Row {
             forcing: entry.is_forcing(),
             hands: match is_never_bid(entry) {
                 true => vec![Text::from("no hand: this is never bid")],
-                false => hands(&features(entry), &called),
+                false => hands(&features(meanings.table, entry, &calls[0].calls), &called),
             },
         }
     }
@@ -855,7 +939,9 @@ impl Row {
     fn says_the_same_as(&self, other: &Row) -> bool {
         let hands = |row: &Row| -> Vec<String> {
             let hands = row.hands.iter();
-            hands.map(|hand| format_as!(HTML, hand).into_string()).collect()
+            hands
+                .map(|hand| format_as!(HTML, hand).into_string())
+                .collect()
         };
         self.name == other.name
             && self.description == other.description
@@ -874,7 +960,6 @@ struct Page {
 impl Page {
     /// The page for `stage`, whose auctions are `nodes`.
     fn new(meanings: &Meanings, stage: Stage, id: String, nodes: &[&Node]) -> Self {
-        let entries = meanings.table.entries();
         // Every call a player might look up here, described or not.
         let mut all: HashMap<Vec<Slot>, Vec<Filling>> = HashMap::new();
         let mut calls = Vec::new();
@@ -910,9 +995,10 @@ impl Page {
         // the same hand, once each suit goes by its part in the auction.
         let mut alike: HashMap<String, Vec<&Call>> = HashMap::new();
         for call in &calls {
-            let entry = &entries[call.entry];
+            let entry = meanings.entry(call.entry);
             let roles = roles(&call.calls);
-            let hands = hands(&features(entry), &|suit| roles.get(&suit).copied());
+            let features = features(meanings.table, entry, &call.calls);
+            let hands = hands(&features, &|suit| roles.get(&suit).copied());
             let hands: Vec<String> = hands
                 .iter()
                 .map(|hand| format_as!(HTML, hand).into_string())
@@ -971,10 +1057,42 @@ struct Natural {
     needs: Text,
 }
 
+/// A kind of contract, and the points the contract rules need between the
+/// two hands to bid it.
+struct Needed {
+    kind: &'static str,
+    points: u8,
+}
+
+/// What the contract rules need for each kind of contract, or nothing when
+/// `table` does not bid by them.
+fn contracts(table: &Convention) -> Vec<Needed> {
+    let entries = table.entries().iter();
+    let kinds = [
+        ("Game in notrump or a major", Bid::NT(3)),
+        ("Game in a minor", Bid::Suit(5, Suit::Clubs)),
+        ("Small slam", Bid::NT(6)),
+        ("Grand slam", Bid::NT(7)),
+    ];
+    let needed = |(kind, bid)| Needed {
+        kind,
+        points: contract_points(bid).expect("a game or a slam"),
+    };
+    match entries
+        .into_iter()
+        .any(|entry| matches!(entry, Convention::Contract { .. }))
+    {
+        true => kinds.into_iter().map(needed).collect(),
+        false => Vec::new(),
+    }
+}
+
 /// A booklet on a bidding system.
 pub struct Booklet {
     system: BiddingSystem,
     parts: Vec<Part>,
+    /// What the contract rules need, if the system bids by them.
+    contracts: Vec<Needed>,
     natural: Vec<Natural>,
 }
 
@@ -985,9 +1103,9 @@ impl Booklet {
     /// The booklet on `system`.
     pub fn new(system: BiddingSystem) -> Self {
         let table = system.convention();
-        let nodes = walk(&table);
-        let openings = Openings::new(&table, &nodes);
-        let meanings = Meanings::new(&table, &nodes);
+        let (nodes, ruled) = walk(&table);
+        let meanings = Meanings::new(&table, ruled, &nodes);
+        let openings = Openings::new(&meanings, &nodes);
         let mut stages: BTreeMap<Stage, Vec<&Node>> = BTreeMap::new();
         for node in &nodes {
             let stage = Stage::of(&node.history, &openings);
@@ -999,7 +1117,7 @@ impl Booklet {
                 continue;
             }
             let (title, id) = stage.chapter(&openings);
-            if parts.last().map_or(true, |part| part.id != id) {
+            if parts.last().is_none_or(|part| part.id != id) {
                 parts.push(Part {
                     id,
                     title,
@@ -1013,6 +1131,7 @@ impl Booklet {
         Booklet {
             system,
             parts,
+            contracts: contracts(&table),
             natural: naturals(&table),
         }
     }
@@ -1193,7 +1312,20 @@ mod tests {
         let html = html(BiddingSystem::Sayc);
         let responses = words(page(&html, "opened-1c-responses"));
         assert!(responses.contains("\n1X – Pass\n"), "{responses}");
-        assert!(responses.contains("\n1M – 3M "), "{responses}");
+        assert!(responses.contains("\n1M – 2M\n"), "{responses}");
+    }
+
+    /// Only the systems that bid by the contract rules explain them.
+    #[test]
+    fn the_contract_rules_are_explained() {
+        let rules = "<h3 id=\"contracts\">";
+        assert!(!html(BiddingSystem::Sheets).contains(rules));
+        let html = html(BiddingSystem::Sayc);
+        let rules = words(&html[html.find(rules).expect("no contract rules")..]);
+        assert!(
+            rules.contains("Game in notrump or a major\n25\n"),
+            "{rules}"
+        );
     }
 
     #[test]

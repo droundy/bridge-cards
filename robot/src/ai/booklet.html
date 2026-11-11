@@ -135,7 +135,38 @@ has. Fewer losers is a stronger hand.</dd>
 </section>
 [% } } %]
 <h2 id="natural">Natural bids</h2>
-<p>A bid that no page above describes is natural: it says that your side has what the
+[% if !self.contracts.is_empty() { %]<h3 id="contracts">When the opponents have only passed</h3>
+<p>A bid that no page above describes is about the contract your side can make. Each game
+and slam needs points between the two hands, and a suit contract needs eight trumps as
+well:</p>
+<table>
+<thead><tr><th>Contract</th><th>Points between you</th></tr></thead>
+<tbody>[% for needed in self.contracts.iter() { %]
+<tr><th>[% needed.kind %]</th>
+<td>[% needed.points %]</td></tr>[% } %]
+</tbody>
+</table>
+<p>Count high card points for notrump, short high card points for a suit that partner has
+shown, and long high card points for a suit of your own. Partner has shown a range of
+points, and what you bid goes by the fewest of them:</p>
+<ol>
+<li><strong>Bid the contract</strong> when your side has the points even if partner has the
+fewest they have shown.</li>
+<li><strong>Invite it</strong> when your side has them if partner has two more than that.
+The invitation is the lowest bid in the same strain, below the contract, that no entry of
+the pages above describes. Games in notrump and the majors are invited, and a slam only
+in notrump, with 4NT. The pages of responses show these invitations, and later in the
+auction they are left to this rule.</li>
+<li>With no bid left to invite with, as when partner has just invited,
+<strong>bid the contract</strong> when your side has the points if partner has one more
+than the fewest.</li>
+</ol>
+<p>A slam in a suit is bid only when it is sure, and nothing is bid for a part-score: that
+is a call from the pages above, or a pass. When partner's last bid was a limit bid, one that
+is not forcing and shows a range of at most four points, you are the captain: placing the
+contract shows nothing more about your hand.</p>
+<h3>When the opponents have bid or doubled</h3>
+[% } %]<p>A bid that nothing above describes is natural: it says that your side has what the
 contract needs. Count what your hand has together with the least that partner has
 shown.</p>
 <table>
