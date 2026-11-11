@@ -632,7 +632,7 @@ fn ours(history: &[Bid]) -> Option<Bid> {
     history
         .iter()
         .rposition(|b| b.is_contract())
-        .and_then(|i| ((history.len() - i) % 2 == 0).then(|| history[i]))
+        .and_then(|i| (history.len() - i).is_multiple_of(2).then(|| history[i]))
 }
 
 /// Where the rules stand in one strain after `history`.
