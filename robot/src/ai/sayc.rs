@@ -59,7 +59,7 @@
 //! that opener shows over a weak two's 2NT with a maximum, and Michaels over
 //! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
 //! mention fall back on the natural bids shared with the other conventions.
-use super::{Convention, Fit, Forcing, ShapeRule};
+use super::{Convention, Fit, Forcing, ShapeRule, StrongTwo};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
 use regex::RegexSet;
@@ -216,7 +216,13 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     // than 3NT.
     notrump(&mut s);
     three_notrump(&mut s);
-    s.add_block(|t| t.add_strong_two_clubs(22, false, true));
+    s.add_block(|t| {
+        t.add_strong_two_clubs(StrongTwo {
+            base: 22,
+            two_notrump_rebid: false,
+            natural_after_double: true,
+        })
+    });
     s.add_block(|t| t.add_preempts());
     weak_two_rebids(&mut s);
     openings(&mut s);

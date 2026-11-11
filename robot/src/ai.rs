@@ -382,6 +382,19 @@ pub(crate) mod rules;
 mod sayc;
 use rules::{asking_fits, contracted_fits, explored_fits, Asking, Choice, Exploration, Reason};
 
+/// How a system plays the strong artificial 2C opening, for
+/// `Convention::add_strong_two_clubs`.
+#[derive(Clone, Copy, Debug)]
+struct StrongTwo {
+    /// The points that 2C shows.
+    base: u8,
+    /// Whether this adds opener's 2NT rebid, or the system gives its own.
+    two_notrump_rebid: bool,
+    /// Whether a double of 2C makes 2D the natural positive response,
+    /// instead of 3D, and a pass the waiting one, as the SAYC booklet has it.
+    natural_after_double: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
     Forced,
@@ -1537,17 +1550,14 @@ impl Convention {
         });
     }
 
-    /// The strong artificial 2C opening, which shows `base` or more points,
-    /// and its responses, with opener's 2NT rebid unless the system gives
-    /// its own (`two_notrump_rebid` false).  With `natural_after_double`, a
-    /// double of 2C makes 2D the natural positive response, instead of 3D,
-    /// and a pass the waiting one.
-    fn add_strong_two_clubs(
-        &mut self,
-        base: u8,
-        two_notrump_rebid: bool,
-        natural_after_double: bool,
-    ) {
+    /// The strong artificial 2C opening and its responses, as `strong` sets
+    /// them out.
+    fn add_strong_two_clubs(&mut self, strong: StrongTwo) {
+        let StrongTwo {
+            base,
+            two_notrump_rebid,
+            natural_after_double,
+        } = strong;
         let sheets = self;
         // The waiting response, 2D.  With `natural_after_double`, as the
         // SAYC booklet has it, a double cancels it: 2D is then natural and
@@ -2543,7 +2553,11 @@ impl Convention {
 
         sheets.add_notrump((22, 23, 23), 0);
 
-        sheets.add_strong_two_clubs(23, true, false);
+        sheets.add_strong_two_clubs(StrongTwo {
+            base: 23,
+            two_notrump_rebid: true,
+            natural_after_double: false,
+        });
 
         sheets.add_preempts();
 
