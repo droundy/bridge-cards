@@ -19,7 +19,10 @@ cargo test -p bridge-deck -p bridge-solver -p robot -p wording   # all real test
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
+prek run --all-files                                   # quick checks, including clippy with warnings as errors
 ```
+
+CI (`.github/workflows/warnings.yml`) runs clippy over everything with `RUSTFLAGS=-D warnings`, so a rustc or clippy warning fails the PR. `.pre-commit-config.yaml` runs the same check quickly under [prek](https://github.com/j178/prek) (`prek install` to run it on every commit); it uses `target/prek` so that its flags don't invalidate your normal build.
 
 Benchmarks are written in each crate's `src/benches.rs` and only compiled with the crate's `benchmarks` feature. They are run by `benchmarks/`, a separate crate with its own `[workspace]`, which has to be run from inside that directory so that its `.cargo/config.toml` (function alignment) applies. `cargo bench` at the top of the repository does that for you (`benches/benchmarks.rs` runs `cargo bench` in `benchmarks/` and passes on its arguments):
 
@@ -48,6 +51,7 @@ Inputs must have the same type in both versions, so they are plain integers. `Ca
 
 ## Conventions worth knowing
 
+- Silence a lint with `#[expect(lint, reason = "...")]`, never `#[allow]`, so that the attribute is reported once it stops being needed.
 - `Card` encoding is `offset = rank + 16 * suit`, with rank 2–14 (ace = 14) and suits ordered Clubs < Diamonds < Hearts < Spades. `Cards` is a `u64` bitset over those offsets, so set operations (`+`, `-`, `&`, `in_suit`) are single bit operations.
 - `Seat` is `South=0, West=1, North=2, East=3`. `Seat + n` wraps modulo 4 and `next()` moves clockwise. Index per-seat data with `Seated<T>`, not raw arrays.
 - `bridge_solver::Starting.hands` are ordered relative to the **leader of the current trick**, not by `Seat`. `GameState::starting()` does the rotation.
