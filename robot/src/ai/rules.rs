@@ -263,6 +263,20 @@ pub struct Reason {
 }
 
 impl Reason {
+    /// What the bid is for, in words that are the same in every auction, as
+    /// in "Invites a game, which needs 25 dummy points between you".
+    pub(crate) fn aim(&self) -> Text {
+        let does = match self.rule {
+            Rule::Invite => "Invites a",
+            Rule::Sure | Rule::LastChance => "To play: a",
+        };
+        let kind = Kind::of(self.contract).name();
+        let points = self.points.name();
+        Text::from(format!(
+            "{does} {kind}, which needs {} {points} between you",
+            self.needs
+        ))
+    }
     /// Does the bid show partner nothing about the hand?
     pub(crate) fn shows_nothing(&self) -> bool {
         self.captain && self.rule != Rule::Invite
