@@ -222,6 +222,7 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
         the_name: "Natural",
         regex: RegexSet::new(["[1-7][CDHSN]$"]).unwrap(),
     });
+    s.0.explain(super::rules::explanation());
     let explore = std::mem::replace(&mut s.1, Convention::new(""));
     s.0.append(explore);
     s.add_block(|t| t.add_natural_bids());
