@@ -12,14 +12,14 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::CookieJar;
-use display_as::{display, DisplayAs, HTML};
+use display_as::{display, format_as, DisplayAs, HTML};
 use futures::StreamExt;
 use robot::{PlayerName, Seat};
 use rustls_acme::caches::DirCache;
 use rustls_acme::AcmeConfig;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast::Sender;
 
 /// The configuration for running the server
@@ -122,6 +122,7 @@ fn router(app: AppState) -> Router {
         .route("/your-play.mp3", get(audio))
         .route("/robot.js", get(robot_js))
         .route("/robot_bg.wasm", get(robot_bg_wasm))
+        .route("/booklet/{system}", get(booklet))
         .route("/random", get(random_seat))
         .route("/{table}/random", get(table_random_seat))
         .route("/{table}/{seat}", get(table_seat))
@@ -138,6 +139,26 @@ async fn style_css() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "text/css")],
         include_str!("style.css"),
     )
+}
+
+/// The booklet on the bidding system that `system` names.  It is written from
+/// the system's table the first time someone asks for it, and kept.  Writing
+/// it takes about a second, so that is done off the threads that serve pages.
+async fn booklet(Path(system): Path<String>) -> Result<Html<&'static str>, NotFound> {
+    const SYSTEMS: [robot::BiddingSystem; robot::BiddingSystem::ALL.len()] =
+        robot::BiddingSystem::ALL;
+    static PAGES: [OnceLock<String>; SYSTEMS.len()] = [const { OnceLock::new() }; SYSTEMS.len()];
+    let which = SYSTEMS
+        .iter()
+        .position(|s| s.slug() == system)
+        .ok_or(NotFound)?;
+    let write = move || {
+        PAGES[which]
+            .get_or_init(|| format_as!(HTML, robot::Booklet::new(SYSTEMS[which])).into_string())
+            .as_str()
+    };
+    let page = tokio::task::spawn_blocking(write).await;
+    Ok(Html(page.expect("the booklet could not be written")))
 }
 
 async fn audio() -> impl IntoResponse {
