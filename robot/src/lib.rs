@@ -85,7 +85,10 @@ pub fn bid_follows(history: &[Bid], bid: Bid) -> bool {
 #[test]
 fn bid_comparisons() {
     assert!(Bid::NT(1) == Bid::NT(1));
-    assert!(!(Bid::NT(1) > Bid::NT(1)));
+    assert_ne!(
+        Bid::NT(1).partial_cmp(&Bid::NT(1)),
+        Some(std::cmp::Ordering::Greater)
+    );
     assert!(Bid::NT(1).is_contract());
     assert_eq!(Some(1), Bid::NT(1).level());
     assert_eq!(Some(3), Bid::NT(3).level());
@@ -508,9 +511,9 @@ impl<C> GameState<C> {
             for c in self.played.iter().cloned() {
                 cards += Cards::singleton(c);
             }
-            let mut winner = cards.in_suit(led).rev().next().unwrap();
+            let mut winner = cards.in_suit(led).next_back().unwrap();
             if let Some(Bid::Suit(_, trump)) = self.highest_contract_bid() {
-                if let Some(trump_winner) = cards.in_suit(trump).rev().next() {
+                if let Some(trump_winner) = cards.in_suit(trump).next_back() {
                     winner = trump_winner;
                 }
             }

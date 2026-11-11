@@ -14,6 +14,7 @@
 //! the closest bids about it.  The sentences are built with `wording`, so
 //! counts, lists and verbs agree wherever a phrase ends up, and the advice
 //! reads the same as HTML or plain text.
+use super::rules::Rule;
 use super::{bids_string, legal_bids, Convention, Fit, Forcing, ShapeRule};
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
@@ -192,10 +193,13 @@ impl Convention {
             .collect();
         // The robot bids the fitting bid whose table entry comes first, and
         // the highest of those when one entry describes several.
+        // With nothing else, it bids the contract the rules know.
+        let known = self.contract_known(history, &hand).map(|(bid, _)| bid);
         let chosen = candidates
             .iter()
             .filter(|c| c.fits())
-            .min_by_key(|c| c.rank);
+            .min_by_key(|c| c.rank)
+            .or_else(|| candidates.iter().find(|c| Some(c.bid) == known));
 
         // Partner's bid forces us only if the opponent after them passed.
         let partner_forcing = if n >= 2 && history[n - 1] == Bid::Pass {
@@ -221,8 +225,9 @@ impl Convention {
         let others = candidates.iter().filter(|c| Some(c.bid) != chosen_bid);
         let mut closest: Vec<&Candidate> = others
             .clone()
-            // Natural bids are said as contracts, and why not to pass above.
-            .filter(|c| c.needs.is_none() && (c.bid != Bid::Pass || c.fits()))
+            // Natural bids, and the contracts the rules place, are said as
+            // contracts, and why not to pass above.
+            .filter(|c| c.needs.is_none() && !c.places() && (c.bid != Bid::Pass || c.fits()))
             .collect();
         closest.sort_by_key(|c| (!c.fits(), c.distance));
         closest.truncate(OTHERS);
@@ -289,11 +294,19 @@ impl Convention {
     /// `refine` adjusts it for earlier bids.
     fn entry(&self, bids: &[Bid]) -> Option<&Convention> {
         match self {
-            Convention::Ordered { conventions, .. } => self
-                .candidates(&bids_string(bids))
-                .into_iter()
-                .map(|i| &conventions[i])
-                .find(|c| c.applies(bids)),
+            Convention::Ordered { conventions, .. } => {
+                let auction = bids_string(bids);
+                self.candidates(&auction)
+                    .into_iter()
+                    .find(|&i| match &conventions[i] {
+                        Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
+                            regex.is_match(&auction)
+                        }
+                        _ => false,
+                    })
+                    .or_else(|| self.default_for(&auction, bids))
+                    .map(|i| &conventions[i])
+            }
             c => Some(c),
         }
     }
@@ -331,7 +344,7 @@ impl Convention {
             .iter()
             .enumerate()
             // A pass after a real bid says little.
-            .filter(|&(j, &(_, b))| b != Bid::Pass || first_bid.map_or(true, |f| j < f))
+            .filter(|&(j, &(_, b))| b != Bid::Pass || first_bid.is_none_or(|f| j < f))
             .map(|(_, &(i, bid))| match bid {
                 Bid::Pass => Text::from("passed"),
                 Bid::Double => Text::from("doubled"),
@@ -369,13 +382,13 @@ struct Shown {
 }
 
 impl Shown {
-    /// The range partner has shown on `m`.  Points count long points too, as
-    /// `adjust_for_earlier_bids` does.
+    /// The range partner has shown on `m`.  Points count whichever kind they
+    /// promised, long or dummy points too, as the contract rules do.
     fn range(&self, m: Measure) -> (u8, u8) {
         match m {
             Measure::Hcp => (
-                self.min.hcp.max(self.min.lhcp),
-                self.max.hcp.min(self.max.lhcp),
+                self.min.hcp.max(self.min.lhcp).max(self.min.shcp),
+                self.max.hcp.min(self.max.lhcp).min(self.max.shcp),
             ),
             _ => (m.of(&self.min), m.of(&self.max)),
         }
@@ -448,6 +461,12 @@ impl Candidate {
         }
     }
 
+    /// Does the contract rules' meaning of this bid place a contract, which
+    /// the advice says as a contract rather than as a bid?
+    fn places(&self) -> bool {
+        matches!(&self.meaning, Convention::Contracted { reason, .. } if reason.rule != Rule::Invite)
+    }
+
     /// Does the hand fit this bid?
     fn fits(&self) -> bool {
         self.rank.is_some()
@@ -474,6 +493,11 @@ impl Candidate {
                     name + " (" + Raw(the_description.clone()) + ")"
                 }
             }
+            Convention::Contracted {
+                the_name, reason, ..
+            } if reason.rule == Rule::Invite => {
+                Text::from(*the_name) + " (invites" + reason.contract + ")"
+            }
             c => Text::from(c.the_name()),
         }
     }
@@ -482,6 +506,9 @@ impl Candidate {
     fn reason(&self, hand: &HandValuation) -> Text {
         if let Some(needs) = &self.needs {
             return needs.clone().capitalized() + ", and you have that.";
+        }
+        if let Convention::Contracted { reason, .. } = &self.meaning {
+            return reason.text();
         }
         let (min, max) = self.meaning.bounds();
         let mut features = describe(&min, &max);
@@ -900,6 +927,8 @@ fn closest_misses(meaning: &Convention, hand: &HandValuation) -> (Vec<Miss>, u32
             .map(|c| closest_misses(c, hand))
             .min_by_key(|&(_, distance)| distance)
             .unwrap_or_default(),
+        // What the robot bids it with, even when it shows nothing.
+        Convention::Contracted { min, max, .. } => misses(min, max, hand),
         c => {
             let (min, max) = c.bounds();
             misses(&min, &max, hand)
@@ -944,7 +973,7 @@ enum Reach {
     /// Enough if partner has these.
     IfPartnerHas(Vec<Need>),
     /// More than partner can have, given the most they have shown.
-    OutOfReach(Vec<Bound>),
+    Beyond(Vec<Bound>),
 }
 
 impl Reach {
@@ -967,7 +996,7 @@ impl Reach {
             }
         }
         if !out_of_reach.is_empty() {
-            Reach::OutOfReach(out_of_reach)
+            Reach::Beyond(out_of_reach)
         } else if !partner_needs.is_empty() {
             Reach::IfPartnerHas(partner_needs)
         } else {
@@ -984,7 +1013,7 @@ impl Reach {
                 });
                 Text::from("that works if") + (partner_text() + Word::HAS + and(needs))
             }
-            Reach::OutOfReach(bounds) => {
+            Reach::Beyond(bounds) => {
                 partner_text()
                     + Word::HAS
                     + "shown"
@@ -1085,13 +1114,13 @@ fn advice_after_a_one_spade_opening() {
             Your hand: 7 HCP, 7 LHCP and 7 SHCP, with 3♠ 3♥ 4♦ 3♣.
             Together you have 20–28 high card points and 8+ spades.
             You should bid, since a pass would show at most 5 high card points (you have 7).
-            Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 high card points. Your 7 high card points are near the bottom of that range.
+            Suggested: 2♠ Single raise (3+ card support). It shows 3+ spades and 6–9 short high card points. Your 7 short high card points are near the bottom of that range.
             ♠ 3♠ part-score: needs 8+ spades and 24+ high card points between you; that works if partner has 17+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 18+ high card points.
-            ♠ 4♠ game: needs 8+ spades and 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 20+ high card points.
-            ♠ 2NT Jacoby 2NT (4+ card support): needs 4+ spades (you have 3) and 13+ high card points (you have 7).
-            ♠ 3♠ Limit raise (3+ card support): needs 10–11 high card points (you have 7).
+            ♠ 4♠ game: needs 8+ spades and 25+ high card points between you; that works if partner has 18+ high card points (they have shown 13–21). After 2♠, partner knows you have 3+ spades and 6+ high card points, so they can bid it with 19+ high card points.
+            ♠ 2NT Jacoby 2NT (4+ card support): needs 4+ spades (you have 3) and 13+ short high card points (you have 7).
+            ♠ 3♠ Limit raise (invites 4♠): needs 10–11 short high card points (you have 7).
             ♦ 2♦ Two-level response (New suit): needs 10+ high card points (you have 7).
-            NT 3NT game: needs 26+ high card points between you; that works if partner has 19+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 20+ high card points.
+            NT 3NT game: needs 25+ high card points between you; that works if partner has 18+ high card points (they have shown 13–21). After 2♠, partner knows you have 6+ high card points, so they can bid it with 19+ high card points.
             NT 1NT Response (No fit and no suit to bid): also fits, but the system prefers 2♠.
             Other 2♣ Two-level response: needs 10+ high card points (you have 7)."#]],
     );
@@ -1103,8 +1132,8 @@ fn advice_after_a_one_spade_opening() {
             Your hand: 0 HCP, 0 LHCP and 1 SHCP, with 2♠ 4♥ 3♦ 4♣.
             Together you have 13–21 high card points.
             Suggested: Pass Response pass. It shows at most 5 high card points.
-            ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 high card points (you have 0).
-            ♠ 3♠ Limit raise (3+ card support): needs 3+ spades (you have 2) and 10–11 high card points (you have 0).
+            ♠ 2♠ Single raise (3+ card support): needs 3+ spades (you have 2) and 6–9 short high card points (you have 1).
+            ♠ 3♠ Limit raise (invites 4♠): needs 3+ spades (you have 2) and 10–11 short high card points (you have 1).
             ♥ 2♥ Two-level response (New suit): needs 5+ hearts (you have 4) and 10+ high card points (you have 0).
             NT 1NT Response (No fit and no suit to bid): needs 6–9 high card points (you have 0).
             Other 2♣ Two-level response: needs 10+ high card points (you have 0)."#]],
@@ -1125,9 +1154,9 @@ fn advice_after_one_notrump() {
             Suggested: Pass Response pass (Too weak to invite). It shows at most 7 high card points.
             ♠ 2♥ Jacoby transfer (5+ spades): needs 5+ spades (you have 4).
             ♥ 2♦ Jacoby transfer (5+ hearts): needs 5+ hearts (you have 4).
-            NT 2NT Game invite: needs 8–9 high card points (you have 6).
-            NT 3NT Game (To play): needs 10–15 high card points (you have 6).
-            Other 2♣ Stayman (A 4 card major): needs 8+ high card points (you have 6)."#]],
+            NT 2NT Game invite (invites 3NT): needs 8–9 high card points (you have 6).
+            Other 2♣ Stayman (Asks for a 4 card major): needs 8+ high card points (you have 6).
+            Other 2♠ Minor relay (Weak, with a 6+ card minor): needs 6+ clubs (you have 3)."#]],
     );
 }
 
@@ -1164,19 +1193,19 @@ fn advice_on_a_rebid_after_one_notrump() {
         &[Suit(1, Hearts), Pass, NT(1), Pass],
         "S A2 H KQ976 D AJ3 C KQ2",
         expect![[r#"
-            Partner bid 1NT, showing 6–9 high card points.
+            Partner bid 1NT, showing at most 3 spades and 6–9 high card points.
             You opened 1♥, showing 5+ hearts and 13–21 long high card points.
             Your hand: 19 HCP, 20 LHCP and 20 SHCP, with 2♠ 5♥ 3♦ 3♣.
             Together you have 25–28 high card points.
             Suggested: 2NT Rebid (Balanced, 18-19 hcp). It shows a balanced hand and 18–19 high card points. Your 19 high card points are near the top of that range.
             ♠ 2♠ New suit (Reverse): needs 4+ spades (you have 2).
             ♥ 3♥ part-score: needs 8+ hearts and 24+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts.
-            ♥ 4♥ game: needs 8+ hearts and 26+ high card points between you; that works if partner has 3+ hearts and 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 8+ high card points.
-            ♥ 2♥ Rebid (6+ card suit): needs 6+ hearts (you have 5) and 13–15 long high card points (you have 20).
+            ♥ 4♥ game: needs 8+ hearts and 25+ high card points between you; that works if partner has 3+ hearts. Bidding 2NT shows more than you have so far: partner then knows you have 5+ hearts and 18+ high card points, so they can bid it with 3+ hearts and 7+ high card points.
             ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 16–18 long high card points (you have 20).
             ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
             ♣ 2♣ New suit: needs 4+ clubs (you have 3).
-            NT 3NT game: needs 26+ high card points between you; that works if partner has 7+ high card points (they have shown 6–9). Bidding 2NT shows more than you have so far: partner then knows you have 18+ high card points, so they can bid it with 8+ high card points."#]],
+            NT 5NT game: needs 25+ high card points between you; you have that between you.
+            NT 4NT Slam invite (invites 6NT): needs 25–26 high card points (you have 19)."#]],
     );
 }
 

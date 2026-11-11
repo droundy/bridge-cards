@@ -194,7 +194,7 @@ async fn room(tables: &TableMap) -> Room {
 }
 
 async fn index(State(app): State<AppState>, RawQuery(query): RawQuery) -> Response {
-    if query.as_deref().map_or(true, str::is_empty) {
+    if query.as_deref().is_none_or(str::is_empty) {
         Page(Index {
             room: room(&app.tables).await,
         })
