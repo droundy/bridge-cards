@@ -50,7 +50,10 @@
 //! more, if they have no most).  When a slam is out of reach, the hand bids
 //! the game it knows instead, and explores only for a fit.  A game force
 //! needs no points for game and invites none, and leaves rule 3 to
-//! answering partner's invitations.
+//! answering partner's invitations.  It must reach some game, so a suit of
+//! six cards, or as many as the hand has shown, may be played as the game
+//! with no eight-card fit known; but that is a last resort, bid only when
+//! no other bid fits, so that the hand explores for a fit first.
 //!
 //! A bid opposite a limit bid places the contract: its bidder is captain,
 //! so it shows nothing more.  A limit bid is one that does not force and
@@ -68,6 +71,9 @@ const A_SUIT: u8 = 4;
 
 /// The trumps a suit contract needs between the two hands.
 const TRUMPS: u8 = 8;
+/// The cards in a suit of its own that a hand may play as the game in a game
+/// force, when no fit is known (or as many as it has shown).
+const OWN_SUIT: u8 = 6;
 /// How many points more than the fewest partner promised an invitation
 /// counts partner for.
 const INVITING: u8 = 2;
@@ -129,7 +135,9 @@ pub(crate) fn explanation() -> Explanation {
                 "When your side has forced to game, nothing is invited, and the cheapest bid \
                  that is true explores, with a raise of partner's suit that makes {TRUMPS} \
                  trumps, a suit of your own one longer than shown, or a new suit of {A_SUIT} \
-                 cards, so that skipping a bid denies it."
+                 cards, so that skipping a bid denies it. A suit of {OWN_SUIT} cards, or as \
+                 many as you have shown, is played as the game without a fit only when no \
+                 other bid fits: you explore first."
             ),
             format!(
                 "Nothing is bid for a \
@@ -401,6 +409,12 @@ pub struct Choice {
     /// hand with none knows that partner has all four, so only a hand in
     /// between lacks the aces for the slam.
     aces_or_none: Option<u8>,
+    /// For a game in a game force that is allowed with fewer trumps than
+    /// make eight, because it must reach some game: the suit and the trumps
+    /// that would make a fit.  A hand with fewer is a last resort, which does
+    /// not stop another bid from exploring, and bids the game only when
+    /// nothing else fits.
+    unsupported: Option<(Suit, u8)>,
 }
 
 /// The ask that comes before a slam, and what a hand without the cards to ask
@@ -474,8 +488,9 @@ impl Rival {
 /// Does a hand fit what the contract rules make of a bid?  It must lie
 /// within the bounds, and no other strain where the rules can bid may rate
 /// better.  If `unsure_explores`, the rules must also know the contract: no
-/// strain where a fit might yet be found rates as well, and no slam that
-/// the rules cannot invite is within `reach`.  Otherwise the hand explores,
+/// strain where a fit might yet be found rates as well, no slam that
+/// the rules cannot invite is within `reach`, and a game with no fit in this
+/// hand is not a last resort.  Otherwise the hand explores,
 /// with the rules' own bids in a game force or the table entries that come
 /// after the rules, and only when none of them fits does it bid what it
 /// knows.
@@ -508,7 +523,13 @@ pub(crate) fn contracted_fits(
     let short_of_aces = choice
         .aces_or_none
         .is_some_and(|aces| hand.aces != 0 && hand.aces < aces);
-    if waits || short_of_aces || hand.exceeds(*max) || min.exceeds(*hand) {
+    // A game with no fit known, and none in this hand, is bid only when
+    // nothing else fits, not instead of exploring.
+    let last_resort = unsure_explores
+        && choice
+            .unsupported
+            .is_some_and(|(suit, trumps)| hand.length[suit] < trumps);
+    if waits || short_of_aces || last_resort || hand.exceeds(*max) || min.exceeds(*hand) {
         return false;
     }
     let (lo, hi) = reason.promised;
@@ -1057,6 +1078,7 @@ impl Convention {
         };
         let points = points_for(strain.strain);
         let (mut min, mut max) = (HandValuation::MIN, HandValuation::MAX);
+        let mut unsupported = None;
         points.set(&mut min, least);
         points.set(&mut max, most.min(points.of(&HandValuation::MAX)));
         if let Some(suit) = strain.strain {
@@ -1065,8 +1087,11 @@ impl Convention {
             // played in a suit of this hand's own with six cards, or as many
             // as it has shown.
             if rule == Rule::Forced {
-                let own = mine.min.length[suit].max(6);
-                min.length[suit] = min.length[suit].min(own);
+                let own = mine.min.length[suit].max(OWN_SUIT);
+                if own < min.length[suit] {
+                    unsupported = Some((suit, min.length[suit]));
+                    min.length[suit] = own;
+                }
             }
         }
 
@@ -1225,6 +1250,7 @@ impl Convention {
                 ask_first,
                 asks,
                 aces_or_none,
+                unsupported,
             },
         })
     }

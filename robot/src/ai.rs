@@ -4281,6 +4281,51 @@ fn sayc_jump_shifts_and_explores_in_a_game_force() {
 }
 
 #[test]
+fn sayc_game_force_explores_before_an_unsupported_game() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Six hearts opposite a void would be game in hearts with no fit
+            // known (it used to be bid, and the auction ended there), so the
+            // hand explores with its cheapest true bid instead.
+            (
+                &[Suit(2, Clubs), Pass, Suit(3, Clubs), Pass][..],
+                "S A3 H AKQ975 D AK10 C 97",
+                Suit(3, Hearts),
+            ),
+            (
+                &[
+                    Pass,
+                    Suit(2, Clubs),
+                    Pass,
+                    Suit(2, Diamonds),
+                    Pass,
+                    Suit(3, Clubs),
+                    Pass,
+                ],
+                "S 1073 H QJ8642 D 932 C Q",
+                Suit(3, Hearts),
+            ),
+            // With nothing else that fits, as with a hand that suits neither
+            // the waiting nor the positive response to 2C, the game is bid.
+            (
+                &[Pass, Suit(2, Clubs), Pass],
+                "S AK9865 H 73 D 865 C 42",
+                Suit(4, Spades),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
 fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
     use bridge_deck::Suit::*;
     use Bid::*;
