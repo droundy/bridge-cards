@@ -55,7 +55,8 @@
 //! answering partner's invitations.  It must reach some game, so a suit of
 //! six cards, or as many as the hand has shown, may be played as the game
 //! with no eight-card fit known; but that is a last resort, bid only when
-//! no other bid fits, so that the hand explores for a fit first.
+//! no other bid fits, so that the hand explores for a fit first, and
+//! when it bids what it knows, any other game, such as 3NT, comes before it.
 //!
 //! A bid opposite a limit bid places the contract: its bidder is captain,
 //! so it shows nothing more.  A limit bid is one that does not force and
@@ -142,7 +143,8 @@ pub(crate) fn explanation() -> Explanation {
                  trumps, a suit of your own one longer than shown, or a new suit of {A_SUIT} \
                  cards, so that skipping a bid denies it. A suit of {OWN_SUIT} cards, or as \
                  many as you have shown, is played as the game without a fit only when no \
-                 other bid fits: you explore first."
+                 other bid fits: you explore first, and prefer any other game, such as \
+                 3NT."
             ),
             format!(
                 "Nothing is bid for a \
@@ -530,11 +532,8 @@ pub(crate) fn contracted_fits(
         .is_some_and(|aces| hand.aces != 0 && hand.aces < aces);
     // A game with no fit known, and none in this hand, is bid only when
     // nothing else fits, not instead of exploring.
-    let last_resort = unsure_explores
-        && choice
-            .unsupported
-            .is_some_and(|(suit, trumps)| hand.length[suit] < trumps);
-    if waits || short_of_aces || last_resort || hand.exceeds(*max) || min.exceeds(*hand) {
+    let explores_first = unsure_explores && last_resort(choice, hand);
+    if waits || short_of_aces || explores_first || hand.exceeds(*max) || min.exceeds(*hand) {
         return false;
     }
     let (lo, hi) = reason.promised;
@@ -559,6 +558,16 @@ pub(crate) fn contracted_fits(
         (false, true) if looking => r.rating(hand, lo) < rating,
         _ => true,
     })
+}
+
+/// Is the bid a last resort for `hand`: a game in a game force that has no
+/// eight-card fit known, played in a suit that the hand has only the cards
+/// for that the force allows?  Nothing else is bid with it, if anything else
+/// fits.
+pub(crate) fn last_resort(choice: &Choice, hand: &HandValuation) -> bool {
+    choice
+        .unsupported
+        .is_some_and(|(suit, trumps)| hand.length[suit] < trumps)
 }
 
 /// The most points partner might have, for a slam: the most they promised,
