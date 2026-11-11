@@ -22,7 +22,9 @@
 //! slams.  They invite games in notrump and the majors, and slams only in
 //! notrump (the quantitative 4NT), so slams in a suit are bid only when
 //! they are sure, and then after asking for aces with Blackwood or Gerber
-//! (see `slam`).
+//! (see `slam`).  Notrump is a game only at 3NT: 4NT is the quantitative
+//! invitation to a slam when no table entry describes it, and no higher bid in
+//! notrump places or invites anything, however far exploring has gone.
 //! Part-scores come from the table, or a pass.
 //!
 //! Each hand counts the points that suit its part: high card points in
@@ -79,6 +81,8 @@ const OWN_SUIT: u8 = 6;
 const INVITING: u8 = 2;
 /// The same for a contract bid when no bid is left to invite it with.
 const LAST_CHANCE: u8 = 1;
+/// The highest bid in notrump that invites a slam, the quantitative 4NT.
+const QUANTITATIVE: Bid = Bid::NT(4);
 /// The most values that the points of a limit bid span.
 const LIMIT_SPAN: u8 = 4;
 
@@ -111,7 +115,8 @@ pub(crate) fn explanation() -> Explanation {
                  that. The invitation is the lowest bid in the same strain, below the \
                  contract, that no entry describes. Games in notrump and the majors are \
                  invited, a major only when one of you has shown {A_SUIT} cards in it, \
-                 and a slam only in notrump, with 4NT."
+                 and a slam only in notrump, with 4NT, if no entry describes it. Notrump is a \
+                 game only at 3NT: no higher bid in notrump places or invites anything."
             ),
             format!(
                 "With no bid left to invite with, as when partner has just invited, bid the \
@@ -751,7 +756,7 @@ impl Strain<'_> {
     /// the booklet, a game is invited only in notrump or a major, and a slam
     /// only in notrump once this side has bid notrump (as with the
     /// quantitative 4NT, also after Stayman or a transfer), since 4NT is
-    /// otherwise Blackwood.  Partner's own invitation is answered, not
+    /// otherwise Blackwood, and then only with 4NT itself.  Partner's own invitation is answered, not
     /// invited again, and in a game force no game is invited.
     fn invitation(&self, contract: Bid) -> Option<Bid> {
         let kind = Kind::of(contract);
@@ -782,6 +787,10 @@ impl Strain<'_> {
             .take_while(|&b| b != contract)
             .filter(|&b| Kind::of(b) == below && Some(b) != placed)
             .find(|&b| !self.conventional(b))
+            // A bid in notrump past 4NT is no game, and invites nothing: with
+            // 4NT taken, as when exploring went past 3NT, a slam is not
+            // invited.
+            .filter(|&b| kind != Kind::SmallSlam || b <= QUANTITATIVE)
     }
 }
 

@@ -4326,6 +4326,47 @@ fn sayc_game_force_explores_before_an_unsupported_game() {
 }
 
 #[test]
+fn sayc_invites_a_notrump_slam_only_with_4nt() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        // Over 1NT the quantitative 4NT invites a slam.
+        assert_eq!(
+            NT(4),
+            system_bid(system, &[NT(1), Pass], "S KQ2 H KQ4 D AJ32 C Q32"),
+            "{system:?}"
+        );
+        // After exploring went past 3NT and 4NT is taken, 5NT was bid as an
+        // invitation to 6NT that partner then passed, needing eleven tricks
+        // for 3NT's score.  Nothing in notrump above 4NT is bid now.
+        let auction = [
+            Pass,
+            Pass,
+            Suit(2, Clubs),
+            Pass,
+            NT(2),
+            Pass,
+            Suit(3, Clubs),
+            Pass,
+            Suit(3, Diamonds),
+            Pass,
+            Suit(3, Spades),
+            Pass,
+            Suit(4, Clubs),
+            Pass,
+            Suit(5, Clubs),
+            Pass,
+        ];
+        assert_eq!(
+            Pass,
+            system_bid(system, &auction, "S K8 H K73 D QJ85 C 7543"),
+            "{system:?}"
+        );
+    }
+}
+
+#[test]
 fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
     use bridge_deck::Suit::*;
     use Bid::*;
