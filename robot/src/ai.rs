@@ -1497,6 +1497,7 @@ impl Convention {
     /// its own (`two_notrump_rebid` false).
     fn add_strong_two_clubs(&mut self, base: u8, two_notrump_rebid: bool) {
         let sheets = self;
+        use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
         let min = HandValuation::MIN;
         sheets.add(Convention::Simple {
@@ -1522,7 +1523,7 @@ impl Convention {
                 length: [0, 0, 0, 5].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "5+ spades"),
+            the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Strong two rebid",
             forcing: Forcing::Passable,
         });
@@ -1561,7 +1562,7 @@ impl Convention {
                 length: [0, 5, 0, 0].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "5+ diamonds, no 5 card major"),
+            the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Strong two rebid",
             forcing: Forcing::GameForcing,
         });
@@ -2134,7 +2135,7 @@ impl Convention {
                 length: [0, 0, 5, 0].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "5+ hearts"),
+            the_description: format_as!(HTML, Hearts "≥" Spades),
             the_name: "Rule of 20 opening",
             forcing: Forcing::Passable,
         });
@@ -2146,7 +2147,7 @@ impl Convention {
                 length: [0, 0, 0, 5].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "5+ spades"),
+            the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Rule of 20 opening",
             forcing: Forcing::Passable,
         });
@@ -2159,7 +2160,7 @@ impl Convention {
                 length: [3, 0, 0, 0].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "3+ clubs, no 5 card major"),
+            the_description: format_as!(HTML, Clubs "≥" Diamonds),
             the_name: "Rule of 20 opening",
             forcing: Forcing::Passable,
         });
@@ -2171,7 +2172,7 @@ impl Convention {
                 length: [0, 3, 0, 0].into(),
                 ..min
             },
-            the_description: format_as!(HTML, "3+ diamonds, no 5 card major"),
+            the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Rule of 20 opening",
             forcing: Forcing::Passable,
         });
@@ -2179,7 +2180,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Opening bid",
             regex: RegexSet::new([r"^(P )?1H$"]).unwrap(),
-            the_description: format_as!(HTML, "5+ hearts"),
+            the_description: format_as!(HTML, Hearts "≥" Spades),
             max,
             min: HandValuation {
                 lhcp: 13,
@@ -2190,7 +2191,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )?1S$"]).unwrap(),
-            the_description: format_as!(HTML, "5+ spades"),
+            the_description: format_as!(HTML, Spades ">" Hearts),
             the_name: "Opening bid",
             max,
             min: HandValuation {
@@ -2202,7 +2203,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )?1C$"]).unwrap(),
-            the_description: format_as!(HTML, "3+ clubs, no 5 card major"),
+            the_description: format_as!(HTML, Clubs "≥" Diamonds),
             the_name: "Opening bid",
             max: max_no_5_major,
             min: HandValuation {
@@ -2214,7 +2215,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )?1D$"]).unwrap(),
-            the_description: format_as!(HTML, "3+ diamonds, no 5 card major"),
+            the_description: format_as!(HTML, Diamonds ">" Clubs),
             the_name: "Opening bid",
             max: max_no_5_major,
             min: HandValuation {
@@ -2228,7 +2229,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Response",
             regex: RegexSet::new([r"^(P )*1. [PX] 1S$"]).unwrap(),
-            the_description: format_as!(HTML, "4+ spades"),
+            the_description: format_as!(HTML, Spades ">" Hearts),
             max,
             min: HandValuation {
                 hcp: 6,
@@ -2240,7 +2241,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Response",
             regex: RegexSet::new([r"^(P )*1. [PX] 1H$"]).unwrap(),
-            the_description: format_as!(HTML, "4+ hearts"),
+            the_description: format_as!(HTML, Hearts "≥" Spades),
             max,
             min: HandValuation {
                 hcp: 6,
@@ -2252,7 +2253,7 @@ impl Convention {
         sheets.add(Convention::Simple {
             the_name: "Response",
             regex: RegexSet::new([r"^(P )*1. [PX] 1D$"]).unwrap(),
-            the_description: format_as!(HTML, "4+ diamonds, no 4 card major"),
+            the_description: format_as!(HTML, Diamonds ">" Clubs),
             max: HandValuation {
                 length: [13, 13, 3, 3].into(),
                 ..max
