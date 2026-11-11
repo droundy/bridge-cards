@@ -21,7 +21,7 @@ const STYLE: &str = r#"
           --k-suit: #3f5a24; --k-x: #6b5320; --k-xx: #6e3a2a; }
 }
 body { font-family: sans-serif; color: var(--text); background: var(--background);
-       margin: 0 auto; padding: 0 1.5em; }
+       margin: 0 auto; max-width: 75em; padding: 0 1.5em; }
 .clubs { color: var(--clubs); } .diamonds { color: var(--diamonds); }
 .hearts { color: var(--hearts); } .spades { color: var(--spades); }
 section { margin: 1.5em 0; padding-top: 0.5em; border-top: 1px solid var(--faint); }
@@ -42,9 +42,9 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .blocks { display: block; height: auto; margin: 0.4em 0; }
 .blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
                dominant-baseline: central; pointer-events: none; }
-.blocks .range { font-size: 10px; }
-.blocks .small { font-size: 9px; }
-.blocks .tick { font-size: 10px; fill: var(--faint); }
+.blocks .range { font-size: 11px; }
+.blocks .small { font-size: 10px; }
+.blocks .tick { font-size: 11px; fill: var(--faint); }
 .blocks .edge { stroke: var(--background); stroke-width: 2.5; fill: none; }
 .blocks a { cursor: pointer; }
 .blocks .clubs { fill: var(--clubs); } .blocks .diamonds { fill: var(--diamonds); }

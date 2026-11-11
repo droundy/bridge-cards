@@ -14,7 +14,7 @@
           --k-suit: #3f5a24; --k-x: #6b5320; --k-xx: #6e3a2a; }
 }
 body { font-family: sans-serif; color: var(--text); background: var(--background);
-       margin: 0 auto; padding: 0 1.5em; }
+       margin: 0 auto; max-width: 75em; padding: 0 1.5em; }
 .clubs { color: var(--clubs); } .diamonds { color: var(--diamonds); }
 .hearts { color: var(--hearts); } .spades { color: var(--spades); }
 section { margin: 1.5em 0; padding-top: 0.5em; border-top: 1px solid var(--faint); }
@@ -35,9 +35,9 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 .blocks { display: block; height: auto; margin: 0.4em 0; }
 .blocks text { font: 12px sans-serif; fill: var(--text); text-anchor: middle;
                dominant-baseline: central; pointer-events: none; }
-.blocks .range { font-size: 10px; }
-.blocks .small { font-size: 9px; }
-.blocks .tick { font-size: 10px; fill: var(--faint); }
+.blocks .range { font-size: 11px; }
+.blocks .small { font-size: 10px; }
+.blocks .tick { font-size: 11px; fill: var(--faint); }
 .blocks .edge { stroke: var(--background); stroke-width: 2.5; fill: none; }
 .blocks a { cursor: pointer; }
 .blocks .clubs { fill: var(--clubs); } .blocks .diamonds { fill: var(--diamonds); }
@@ -60,7 +60,7 @@ td.chance { text-align: right; font-variant-numeric: tabular-nums; }
 <p>205 pages for the 794 auctions that came up at least 100 times in 100000 deals the robot bid against itself.  Each page is the choice after the auctions it lists.  A page opens with a table of blocks: the points run along it, each row is a kind of hand, and each block is the call the robot makes with such a hand and that many points.  Click a block for partner's reply, or point the mouse at it for what the system says it means.  Under the table the calls are in order of how often they were made, and a bar shows at which count of points: the darker the block, the larger the share of hands with that many points that make the call.</p>
 <section id="p1"><h2>Page 1</h2>
 <p class="after">Reached 160885 times, after: (no calls yet) · P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="24" y="8">0</text>
 <text class="tick" x="72" y="8">1</text>
 <text class="tick" x="120" y="8">2</text>
@@ -133,7 +133,7 @@ Pass: Opening pass; 12- lhcp</title><path d="M0 16h240v90h-240zM240 16h240v30h-2
 </section>
 <section id="p2"><h2>Page 2</h2>
 <p class="after">Reached 33148 times, after: P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">2</text>
 <text class="tick" x="75" y="8">3</text>
 <text class="tick" x="125" y="8">4</text>
@@ -205,7 +205,7 @@ Pass: Opening pass; 12- lhcp</title><path d="M0 16h150v90h-150zM150 16h250v30h-2
 </section>
 <section id="p3"><h2>Page 3</h2>
 <p class="after">Reached 11808 times, after: P P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">7</text>
 <text class="tick" x="90" y="8">8</text>
 <text class="tick" x="150" y="8">9</text>
@@ -257,7 +257,7 @@ Pass: Opening pass; 12- lhcp</title><path d="M0 16h240v90h-240zM240 16h240v60h-2
 </section>
 <section id="p4"><h2>Page 4</h2>
 <p class="after">Reached 1820 times, after: P P P 1♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -304,7 +304,7 @@ Pass: Response pass; 5- hcp</title><path d="M1000 76h100v30h-100zM1100 46h100v30
 </section>
 <section id="p5"><h2>Page 5</h2>
 <p class="after">Reached 8516 times, after: 1♦ P 1♠ P · P 1♦ P 1♠ P · P P 1♦ P 1♠ P · P P P 1♦ P 1♠ P · 1♣ P 1♠ P · P 1♣ P 1♠ P · and 2 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -348,7 +348,7 @@ Pass: Response pass; 5- hcp</title><path d="M1000 76h100v30h-100zM1100 46h100v30
 </section>
 <section id="p6"><h2>Page 6</h2>
 <p class="after">Reached 9019 times, after: 1♦ P 1♠ P 1NT P · P 1♦ P 1♠ P 1NT P · 1♦ P 1♥ P 1NT P · P 1♦ P 1♥ P 1NT P · 1♣ P 1♠ P 1NT P · P 1♣ P 1♠ P 1NT P · and 12 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -411,7 +411,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M872.7 16h163.6v30
 </section>
 <section id="p7"><h2>Page 7</h2>
 <p class="after">Reached 950 times, after: 1♦ P 1♠ X · P 1♦ P 1♠ X · 1♦ P 1♠ X P 2♥ P P · 1♣ P 1♠ X</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -451,7 +451,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p8"><h2>Page 8</h2>
 <p class="after">Reached 610 times, after: 1♦ P 1♠ X P · P 1♦ P 1♠ X P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="40" y="8">0</text>
 <text class="tick" x="120" y="8">1</text>
 <text class="tick" x="200" y="8">2</text>
@@ -483,7 +483,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p9"><h2>Page 9</h2>
 <p class="after">Reached 153 times, after: 1♦ P 1♠ X P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">7</text>
 <text class="tick" x="128.6" y="8">8</text>
 <text class="tick" x="214.3" y="8">9</text>
@@ -511,7 +511,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p10"><h2>Page 10</h2>
 <p class="after">Reached 127 times, after: 1♣ P 1♠ X P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">0</text>
 <text class="tick" x="105.9" y="8">1</text>
 <text class="tick" x="176.5" y="8">2</text>
@@ -550,7 +550,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h1200v30h-120
 </section>
 <section id="p11"><h2>Page 11</h2>
 <p class="after">Reached 1048 times, after: 1♦ P 1♠ P 1NT P 3NT P · P 1♦ P 1♠ P 1NT P 3NT P · 1♣ P 1♠ P 1NT P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">9</text>
 <text class="tick" x="163.6" y="8">10</text>
 <text class="tick" x="272.7" y="8">11</text>
@@ -583,7 +583,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h436.4v60h-43
 </section>
 <section id="p12"><h2>Page 12</h2>
 <p class="after">Reached 385 times, after: 1♦ P 1♥ P 1NT P 3NT P · P 1♦ P 1♥ P 1NT P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">10</text>
 <text class="tick" x="180" y="8">11</text>
 <text class="tick" x="300" y="8">12</text>
@@ -615,7 +615,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h360v60h-360z
 </section>
 <section id="p13"><h2>Page 13</h2>
 <p class="after">Reached 2545 times, after: P P 1♦ P 1♠ P 1NT P · P P 1♦ P 1♥ P 1NT P · P P 1♣ P 1♠ P 1NT P · P P 1♣ P 1♦ P 1NT P · P P 1♣ P 1♥ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="85.7" y="8">6</text>
 <text class="tick" x="257.1" y="8">7</text>
 <text class="tick" x="428.6" y="8">8</text>
@@ -641,7 +641,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1028.6v60h-1
 </section>
 <section id="p14"><h2>Page 14</h2>
 <p class="after">Reached 992 times, after: P P P 1♦ P 1♠ P 1NT P · P P P 1♦ P 1♥ P 1NT P · P P P 1♣ P 1♠ P 1NT P · P P P 1♣ P 1♦ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="85.7" y="8">6</text>
 <text class="tick" x="257.1" y="8">7</text>
 <text class="tick" x="428.6" y="8">8</text>
@@ -667,7 +667,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1028.6v60h-1
 </section>
 <section id="p15"><h2>Page 15</h2>
 <p class="after">Reached 2595 times, after: P P 1♦ P 1♠ · P P P 1♦ P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -699,7 +699,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p16"><h2>Page 16</h2>
 <p class="after">Reached 646 times, after: 1♦ P 1♠ 2♥ · P P 1♦ P 1♠ 2♥ · P 1♦ P 1♠ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -741,7 +741,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1100v30h-110
 </section>
 <section id="p17"><h2>Page 17</h2>
 <p class="after">Reached 248 times, after: 1♦ P 1♠ 2♥ P P · 1♦ 1♥ P 2♥ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">1</text>
 <text class="tick" x="112.5" y="8">2</text>
 <text class="tick" x="187.5" y="8">3</text>
@@ -786,7 +786,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1125 16h75v30h-75
 </section>
 <section id="p18"><h2>Page 18</h2>
 <p class="after">Reached 872 times, after: 1♠ 2♥ P · P P 1♠ 2♥ P · P 1♠ 2♥ P · 1♦ P 1♠ 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -841,7 +841,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1073.7v30h-1
 </section>
 <section id="p19"><h2>Page 19</h2>
 <p class="after">Reached 511 times, after: 1♠ 2♥ P P · P P 1♠ 2♥ P P · P 1♠ 2♥ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -879,7 +879,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1073.7v30h-1
 </section>
 <section id="p20"><h2>Page 20</h2>
 <p class="after">Reached 102 times, after: 1♠ 2♥ P P 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">9</text>
 <text class="tick" x="200" y="8">10</text>
 <text class="tick" x="333.3" y="8">11</text>
@@ -908,7 +908,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p21"><h2>Page 21</h2>
 <p class="after">Reached 525 times, after: 1♦ P 1♠ 2♣ · P P 1♦ P 1♠ 2♣ · P 1♦ P 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -951,7 +951,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1090.9v30h-1
 </section>
 <section id="p22"><h2>Page 22</h2>
 <p class="after">Reached 5447 times, after: 1♦ P 1♥ P · P 1♦ P 1♥ P · P P 1♦ P 1♥ P · P P P 1♦ P 1♥ P · 1♣ P 1♥ P · P 1♣ P 1♥ P · and 2 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -993,7 +993,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1090.9v30h-1
 </section>
 <section id="p23"><h2>Page 23</h2>
 <p class="after">Reached 1164 times, after: 1♦ P 1♥ P 1♠ P · P 1♦ P 1♥ P 1♠ P · 1♣ P 1♥ P 1♠ P · P 1♣ P 1♥ P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">6</text>
 <text class="tick" x="112.5" y="8">7</text>
 <text class="tick" x="187.5" y="8">8</text>
@@ -1046,7 +1046,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M750 16h225v30h-22
 </section>
 <section id="p24"><h2>Page 24</h2>
 <p class="after">Reached 551 times, after: P P 1♦ P 1♥ P 1♠ P · P P P 1♦ P 1♥ P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="85.7" y="8">6</text>
 <text class="tick" x="257.1" y="8">7</text>
 <text class="tick" x="428.6" y="8">8</text>
@@ -1072,7 +1072,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1028.6v60h-1
 </section>
 <section id="p25"><h2>Page 25</h2>
 <p class="after">Reached 1742 times, after: P P 1♦ P 1♥ · P P P 1♦ P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -1105,7 +1105,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v90h-83
 </section>
 <section id="p26"><h2>Page 26</h2>
 <p class="after">Reached 560 times, after: 1♦ P 1♥ 1♠ · P 1♦ P 1♥ 1♠ · P P 1♦ P 1♥ 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -1151,7 +1151,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1100v30h-110
 </section>
 <section id="p27"><h2>Page 27</h2>
 <p class="after">Reached 1734 times, after: 1♦ P 1NT P · P P 1♦ P 1NT P · P 1♦ P 1NT P · P P P 1♦ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">10</text>
 <text class="tick" x="138.5" y="8">11</text>
 <text class="tick" x="230.8" y="8">12</text>
@@ -1184,7 +1184,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h738.5v60h-73
 </section>
 <section id="p28"><h2>Page 28</h2>
 <p class="after">Reached 3533 times, after: 1♦ P P · P P 1♦ P P · P 1♦ P P · P P P 1♦ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -1228,7 +1228,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h490.9v90h-49
 </section>
 <section id="p29"><h2>Page 29</h2>
 <p class="after">Reached 356 times, after: 1♦ P P 1♠ P · 1♥ P P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">1</text>
 <text class="tick" x="100" y="8">2</text>
 <text class="tick" x="166.7" y="8">3</text>
@@ -1271,7 +1271,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h933.3v60h-93
 </section>
 <section id="p30"><h2>Page 30</h2>
 <p class="after">Reached 1913 times, after: 1♥ P 1♠ P 1NT P · P 1♥ P 1♠ P 1NT P · P 1♥ P 2♦ P 2NT P · 1♥ P 2♦ P 2NT P · P 1♥ P 2♣ P 2NT P · 1♥ P 2♣ P 2NT P · and 2 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">0</text>
 <text class="tick" x="75" y="8">1</text>
 <text class="tick" x="125" y="8">2</text>
@@ -1339,7 +1339,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1150 16h50v60h-50
 </section>
 <section id="p31"><h2>Page 31</h2>
 <p class="after">Reached 337 times, after: 1♦ P P 1♥ P · 1♠ P P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -1382,7 +1382,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h900v60h-900z
 </section>
 <section id="p32"><h2>Page 32</h2>
 <p class="after">Reached 1148 times, after: 1♠ P 2♥ P 2NT P · P 1♠ P 2♥ P 2NT P · 1♠ P P 2♦ P P · 1♠ P 2♦ P 2NT P · 1♠ P P 2♣ P P · 1♠ P P 2♥ P P · and 1 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -1445,7 +1445,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M872.7 16h163.6v30
 </section>
 <section id="p33"><h2>Page 33</h2>
 <p class="after">Reached 414 times, after: 1♦ P P 2♣ P · 1♠ P P 2♣ P · 1♥ P P 2♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -1488,7 +1488,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h900v60h-900z
 </section>
 <section id="p34"><h2>Page 34</h2>
 <p class="after">Reached 10013 times, after: P P 1♦ · P P P 1♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="28.6" y="8">1</text>
 <text class="tick" x="85.7" y="8">2</text>
 <text class="tick" x="142.9" y="8">3</text>
@@ -1539,7 +1539,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h457.1v150h-4
 </section>
 <section id="p35"><h2>Page 35</h2>
 <p class="after">Reached 4677 times, after: P P 1♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -1589,7 +1589,7 @@ Pass: Response pass; 5- hcp</title><path d="M1015.4 76h184.6v30h-184.6z"/><text 
 </section>
 <section id="p36"><h2>Page 36</h2>
 <p class="after">Reached 418 times, after: 1♦ P 3♦ P · P 1♦ P 3♦ P · P P 1♦ P 3♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">11</text>
 <text class="tick" x="163.6" y="8">12</text>
 <text class="tick" x="272.7" y="8">13</text>
@@ -1617,7 +1617,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h981.8v30h-98
 </section>
 <section id="p37"><h2>Page 37</h2>
 <p class="after">Reached 248 times, after: 1♦ P 2♦ P · P P 1♦ P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">10</text>
 <text class="tick" x="180" y="8">11</text>
 <text class="tick" x="300" y="8">12</text>
@@ -1656,7 +1656,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M960 46h240v30h-24
 </section>
 <section id="p38"><h2>Page 38</h2>
 <p class="after">Reached 2964 times, after: 1♦ 1♠ P · P P 1♦ 1♠ P · P 1♦ 1♠ P · 1♣ 1♠ P · 1♥ 1♠ P · P P 1♥ 1♠ P · and 3 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">0</text>
 <text class="tick" x="105.9" y="8">1</text>
 <text class="tick" x="176.5" y="8">2</text>
@@ -1715,7 +1715,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p39"><h2>Page 39</h2>
 <p class="after">Reached 1496 times, after: P P 1♦ 1♠ P P · 1♦ 1♠ P P · 1♦ 1♥ P P · P 1♦ 1♠ P P · P P 1♦ 1♥ P P · P 1♦ 1♥ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -1757,7 +1757,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p40"><h2>Page 40</h2>
 <p class="after">Reached 1108 times, after: P P 1♦ 1♠ P 2♠ P · P 1♦ 1♠ P 2♠ P · 1♦ 1♠ P 2♠ P · 1♠ 2♣ 2♠ P · 1♠ 2♦ 2♠ P · P P 1♠ 2♦ 2♠ P · and 3 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">9</text>
 <text class="tick" x="163.6" y="8">10</text>
 <text class="tick" x="272.7" y="8">11</text>
@@ -1794,7 +1794,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p41"><h2>Page 41</h2>
 <p class="after">Reached 625 times, after: P P 1♦ 1♠ P 2♠ · 1♦ 1♠ P 2♠ · P 1♦ 1♠ P 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -1830,7 +1830,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p42"><h2>Page 42</h2>
 <p class="after">Reached 131 times, after: P P 1♦ 1♠ P 2♠ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -1857,7 +1857,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p43"><h2>Page 43</h2>
 <p class="after">Reached 114 times, after: P 1♦ 1♠ P 2♠ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -1893,7 +1893,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p44"><h2>Page 44</h2>
 <p class="after">Reached 220 times, after: P 1♦ 1♠ P 3♠ P · 1♦ 1♠ P 3♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">9</text>
 <text class="tick" x="200" y="8">10</text>
 <text class="tick" x="333.3" y="8">11</text>
@@ -1919,7 +1919,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p45"><h2>Page 45</h2>
 <p class="after">Reached 345 times, after: P 1♦ 1♠ P 3♠ · 1♦ 1♠ P 3♠ · P P 1♦ 1♠ P 3♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -1950,7 +1950,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p46"><h2>Page 46</h2>
 <p class="after">Reached 2863 times, after: P P 1♦ 1♠ · P P 1♦ 1♥ · P P 1♣ 1♦ · P P 1♣ 1♠ · P P 1♣ 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -1996,7 +1996,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p47"><h2>Page 47</h2>
 <p class="after">Reached 2185 times, after: 1♦ 1♥ P · P P 1♦ 1♥ P · P 1♦ 1♥ P · 1♣ 1♥ P · P P 1♣ 1♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -2058,7 +2058,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p48"><h2>Page 48</h2>
 <p class="after">Reached 411 times, after: P P 1♦ 1♥ P 2♥ P · 1♦ 1♥ P 2♥ P · P 1♦ 1♥ P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">9</text>
 <text class="tick" x="200" y="8">10</text>
 <text class="tick" x="333.3" y="8">11</text>
@@ -2087,7 +2087,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p49"><h2>Page 49</h2>
 <p class="after">Reached 584 times, after: P P 1♦ 1♥ P 2♥ · 1♦ 1♥ P 2♥ · P 1♦ 1♥ P 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -2123,7 +2123,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p50"><h2>Page 50</h2>
 <p class="after">Reached 105 times, after: P P 1♦ 1♥ P 2♥ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -2149,7 +2149,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p51"><h2>Page 51</h2>
 <p class="after">Reached 210 times, after: 1♦ 1♥ P 3♥ P · P P 1♦ 1♥ P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">9</text>
 <text class="tick" x="200" y="8">10</text>
 <text class="tick" x="333.3" y="8">11</text>
@@ -2175,7 +2175,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p52"><h2>Page 52</h2>
 <p class="after">Reached 227 times, after: 1♦ 1♥ P 3♥ · P P 1♦ 1♥ P 3♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -2205,7 +2205,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p53"><h2>Page 53</h2>
 <p class="after">Reached 993 times, after: 1♣ 1♦ P · P P 1♣ 1♦ P · P 1♣ 1♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -2261,7 +2261,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1133.3v30h-1
 </section>
 <section id="p54"><h2>Page 54</h2>
 <p class="after">Reached 113 times, after: P P 1♣ 1♦ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -2292,7 +2292,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p55"><h2>Page 55</h2>
 <p class="after">Reached 256 times, after: 1♦ 1♥ 2♦ · P P 1♦ 1♥ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="40" y="8">1</text>
 <text class="tick" x="120" y="8">2</text>
 <text class="tick" x="200" y="8">3</text>
@@ -2340,7 +2340,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p56"><h2>Page 56</h2>
 <p class="after">Reached 110 times, after: P P 1♦ 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -2381,7 +2381,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1200v30h-120
 </section>
 <section id="p57"><h2>Page 57</h2>
 <p class="after">Reached 402 times, after: P P 1♦ 1♠ 2♣ · 1♦ 1♠ 2♣ · P 1♦ 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">0</text>
 <text class="tick" x="105.9" y="8">1</text>
 <text class="tick" x="176.5" y="8">2</text>
@@ -2429,7 +2429,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h1200v30h-120
 </section>
 <section id="p58"><h2>Page 58</h2>
 <p class="after">Reached 416 times, after: 1♦ 1♥ 2♣ · P 1♦ 1♥ 2♣ · P P 1♦ 1♥ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">1</text>
 <text class="tick" x="105.9" y="8">2</text>
 <text class="tick" x="176.5" y="8">3</text>
@@ -2482,7 +2482,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h1129.4v30h-1
 </section>
 <section id="p59"><h2>Page 59</h2>
 <p class="after">Reached 362 times, after: P P P 1♦ 1♥ · P P P 1♦ 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -2531,7 +2531,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p60"><h2>Page 60</h2>
 <p class="after">Reached 3155 times, after: 1♦ 2♣ P · P P 1♦ 2♣ P · P 1♦ 2♣ P · 1♠ 2♣ P · 1♥ 2♣ P · P P 1♠ 2♣ P · and 4 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -2591,7 +2591,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p61"><h2>Page 61</h2>
 <p class="after">Reached 1420 times, after: P P 1♦ 2♣ P P · 1♦ 2♣ P P · P 1♦ 2♣ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -2628,7 +2628,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p62"><h2>Page 62</h2>
 <p class="after">Reached 424 times, after: 1♦ 2♣ P P 2♦ · P P 1♦ 2♣ P P 2♦ · P 1♦ 2♣ P P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">9</text>
 <text class="tick" x="200" y="8">10</text>
 <text class="tick" x="333.3" y="8">11</text>
@@ -2668,7 +2668,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p63"><h2>Page 63</h2>
 <p class="after">Reached 338 times, after: 1♠ 2♣ P P · P 1♠ 2♣ P P · P P 1♠ 2♣ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -2706,7 +2706,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p64"><h2>Page 64</h2>
 <p class="after">Reached 231 times, after: P P 1♥ 2♣ P P · 1♥ 2♣ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">9</text>
 <text class="tick" x="163.6" y="8">10</text>
 <text class="tick" x="272.7" y="8">11</text>
@@ -2739,7 +2739,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p65"><h2>Page 65</h2>
 <p class="after">Reached 351 times, after: 1♦ 2♣ P 3♣ · P P 1♦ 2♣ P 3♣ · P 1♦ 2♣ P 3♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -2772,7 +2772,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p66"><h2>Page 66</h2>
 <p class="after">Reached 826 times, after: P P 1♦ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -2809,7 +2809,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p67"><h2>Page 67</h2>
 <p class="after">Reached 219 times, after: P P P 1♦ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -2856,7 +2856,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p68"><h2>Page 68</h2>
 <p class="after">Reached 15833 times, after: 1NT P · P 1NT P · P P 1NT P · P P P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -2921,7 +2921,7 @@ Pass: Response pass; 5- hcp</title><path d="M884.2 16h126.3v30h-126.3z"/><text x
 </section>
 <section id="p69"><h2>Page 69</h2>
 <p class="after">Reached 6284 times, after: 1NT P 2♣ P · P 1NT P 2♣ P · P P 1NT P 2♣ P · P P P 1NT P 2♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -2942,7 +2942,7 @@ Pass: Response pass; 5- hcp</title><path d="M884.2 16h126.3v30h-126.3z"/><text x
 </section>
 <section id="p70"><h2>Page 70</h2>
 <p class="after">Reached 2359 times, after: 1NT P 2♣ P 2♥ P · P 1NT P 2♣ P 2♥ P · P P 1NT P 2♣ P 2♥ P · P P P 1NT P 2♣ P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -2998,7 +2998,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M884.2 16h189.5v30
 </section>
 <section id="p71"><h2>Page 71</h2>
 <p class="after">Reached 6973 times, after: 1NT P 2♥ P 2♠ P · 1NT P 2♦ P 2♥ P · P 1NT P 2♦ P 2♥ P · P 1NT P 2♥ P 2♠ P · 1NT P 2♣ P 2♦ P · P 1NT P 2♣ P 2♦ P · and 6 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -3056,7 +3056,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M884.2 16h189.5v30
 </section>
 <section id="p72"><h2>Page 72</h2>
 <p class="after">Reached 240 times, after: 1NT P 2♥ P 2♠ P 3NT P · P 1NT P 2♥ P 2♠ P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3076,7 +3076,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1200v30h-120
 </section>
 <section id="p73"><h2>Page 73</h2>
 <p class="after">Reached 900 times, after: 1NT P 3NT P · P 1NT P 3NT P · 1NT P 2♣ P 2♦ P 3NT P · P P 1NT P 3NT P · P 1NT P 2♣ P 2♦ P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3098,7 +3098,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p74"><h2>Page 74</h2>
 <p class="after">Reached 230 times, after: 1NT P 2♦ P 2♥ P 3NT P · P 1NT P 2♦ P 2♥ P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3118,7 +3118,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1200v30h-120
 </section>
 <section id="p75"><h2>Page 75</h2>
 <p class="after">Reached 1909 times, after: 1NT P 2♣ P 2♠ P · P 1NT P 2♣ P 2♠ P · P P 1NT P 2♣ P 2♠ P · P P P 1NT P 2♣ P 2♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -3175,7 +3175,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M840 16h180v30h-18
 </section>
 <section id="p76"><h2>Page 76</h2>
 <p class="after">Reached 2536 times, after: 1NT P 2♥ P · P 1NT P 2♥ P · P P 1NT P 2♥ P · P P P 1NT P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3192,7 +3192,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M840 16h180v30h-18
 </section>
 <section id="p77"><h2>Page 77</h2>
 <p class="after">Reached 2421 times, after: 1NT P 2♦ P · P 1NT P 2♦ P · P P 1NT P 2♦ P · P P P 1NT P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3209,7 +3209,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M840 16h180v30h-18
 </section>
 <section id="p78"><h2>Page 78</h2>
 <p class="after">Reached 1411 times, after: 1NT P 2NT P · P 1NT P 2NT P · P P 1NT P 2NT P · P P P 1NT P 2NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">15</text>
 <text class="tick" x="600" y="8">16</text>
 <text class="tick" x="1000" y="8">17</text>
@@ -3235,7 +3235,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h400v60h-400z
 </section>
 <section id="p79"><h2>Page 79</h2>
 <p class="after">Reached 1056 times, after: P P P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -3281,7 +3281,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h500v90h-500zM500 46h700v30h-70
 </section>
 <section id="p80"><h2>Page 80</h2>
 <p class="after">Reached 2728 times, after: 1♠ P 1NT P · P 1♠ P 1NT P · P P 1♠ P 1NT P · P P P 1♠ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -3321,7 +3321,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p81"><h2>Page 81</h2>
 <p class="after">Reached 1642 times, after: 1♠ P 2♠ P · P P 1♠ P 2♠ P · P 1♠ P 2♠ P · P P P 1♠ P 2♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -3353,7 +3353,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v30h-800z
 </section>
 <section id="p82"><h2>Page 82</h2>
 <p class="after">Reached 1842 times, after: 1♠ P P · P P 1♠ P P · P 1♠ P P · P P P 1♠ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">0</text>
 <text class="tick" x="75" y="8">1</text>
 <text class="tick" x="125" y="8">2</text>
@@ -3398,7 +3398,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h450v60h-450z
 </section>
 <section id="p83"><h2>Page 83</h2>
 <p class="after">Reached 172 times, after: 1♠ P P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">1</text>
 <text class="tick" x="100" y="8">2</text>
 <text class="tick" x="166.7" y="8">3</text>
@@ -3439,7 +3439,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h933.3v60h-93
 </section>
 <section id="p84"><h2>Page 84</h2>
 <p class="after">Reached 1312 times, after: 1♠ P 2♥ P · P 1♠ P 2♥ P · P P 1♠ P 2♥ P · P P P 1♠ P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -3478,7 +3478,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h933.3v60h-93
 </section>
 <section id="p85"><h2>Page 85</h2>
 <p class="after">Reached 611 times, after: 1♠ P 2♥ P 3♠ P · P 1♠ P 2♥ P 3♠ P · 1♠ P 2♦ P 3♠ P · P 1♠ P 2♦ P 3♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">11</text>
 <text class="tick" x="150" y="8">12</text>
 <text class="tick" x="250" y="8">13</text>
@@ -3522,7 +3522,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M500 16h300v30h-30
 </section>
 <section id="p86"><h2>Page 86</h2>
 <p class="after">Reached 101 times, after: P 1♠ P 2♥ P 4♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="66.7" y="8">11</text>
 <text class="tick" x="200" y="8">12</text>
 <text class="tick" x="333.3" y="8">13</text>
@@ -3551,7 +3551,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h400v60h-400z
 </section>
 <section id="p87"><h2>Page 87</h2>
 <p class="after">Reached 303 times, after: P P 1♠ P 2♥ · P P P 1♠ P 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -3582,7 +3582,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v60h-800z
 </section>
 <section id="p88"><h2>Page 88</h2>
 <p class="after">Reached 4866 times, after: P P 1♠ · P P P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">1</text>
 <text class="tick" x="90" y="8">2</text>
 <text class="tick" x="150" y="8">3</text>
@@ -3632,7 +3632,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h480v120h-480
 </section>
 <section id="p89"><h2>Page 89</h2>
 <p class="after">Reached 1873 times, after: P P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -3681,7 +3681,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h553.8v90h-553.8zM553.8 46h646.
 </section>
 <section id="p90"><h2>Page 90</h2>
 <p class="after">Reached 112 times, after: P P 1♠ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -3713,7 +3713,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v90h-800z
 </section>
 <section id="p91"><h2>Page 91</h2>
 <p class="after">Reached 451 times, after: P P 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -3761,7 +3761,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p92"><h2>Page 92</h2>
 <p class="after">Reached 490 times, after: 1♠ 2♣ 2♠ · P P 1♠ 2♣ 2♠ · P 1♠ 2♣ 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -3806,7 +3806,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p93"><h2>Page 93</h2>
 <p class="after">Reached 188 times, after: P P P 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -3846,7 +3846,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1200v30h-120
 </section>
 <section id="p94"><h2>Page 94</h2>
 <p class="after">Reached 492 times, after: P P 1♠ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -3888,7 +3888,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p95"><h2>Page 95</h2>
 <p class="after">Reached 453 times, after: 1♠ 2♥ 2♠ · P 1♠ 2♥ 2♠ · P P 1♠ 2♥ 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -3935,7 +3935,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p96"><h2>Page 96</h2>
 <p class="after">Reached 128 times, after: P P P 1♠ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">2</text>
 <text class="tick" x="163.6" y="8">3</text>
 <text class="tick" x="272.7" y="8">4</text>
@@ -3969,7 +3969,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p97"><h2>Page 97</h2>
 <p class="after">Reached 1123 times, after: 1♥ 2♦ P · 1♠ 2♦ P · P 1♠ 2♦ P · P P 1♥ 2♦ P · P P 1♠ 2♦ P · P 1♥ 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -4027,7 +4027,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p98"><h2>Page 98</h2>
 <p class="after">Reached 402 times, after: 1♥ 2♦ P P · P P 1♥ 2♦ P P · P 1♥ 2♦ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">8</text>
 <text class="tick" x="128.6" y="8">9</text>
 <text class="tick" x="214.3" y="8">10</text>
@@ -4063,7 +4063,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p99"><h2>Page 99</h2>
 <p class="after">Reached 400 times, after: 1♠ 2♦ P P · P 1♠ 2♦ P P · P P 1♠ 2♦ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -4102,7 +4102,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1133.3v30h-1
 </section>
 <section id="p100"><h2>Page 100</h2>
 <p class="after">Reached 440 times, after: P P 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -4142,7 +4142,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p101"><h2>Page 101</h2>
 <p class="after">Reached 442 times, after: 1♠ 2♦ 2♠ · P P 1♠ 2♦ 2♠ · P 1♠ 2♦ 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -4184,7 +4184,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p102"><h2>Page 102</h2>
 <p class="after">Reached 131 times, after: P P P 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -4223,7 +4223,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p103"><h2>Page 103</h2>
 <p class="after">Reached 715 times, after: P P P 1♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -4267,7 +4267,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 76h500v60h-500zM500 76h500v30h-50
 </section>
 <section id="p104"><h2>Page 104</h2>
 <p class="after">Reached 682 times, after: P P 1♣ P 1♠ · P P P 1♣ P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -4299,7 +4299,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p105"><h2>Page 105</h2>
 <p class="after">Reached 494 times, after: P P 1♣ P 1♥ · P P P 1♣ P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -4331,7 +4331,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v90h-800z
 </section>
 <section id="p106"><h2>Page 106</h2>
 <p class="after">Reached 935 times, after: 1♣ P 1♦ P · P 1♣ P 1♦ P · P P 1♣ P 1♦ P · P P P 1♣ P 1♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">10</text>
 <text class="tick" x="138.5" y="8">11</text>
 <text class="tick" x="230.8" y="8">12</text>
@@ -4367,7 +4367,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v90h-800z
 </section>
 <section id="p107"><h2>Page 107</h2>
 <p class="after">Reached 382 times, after: P P 1♣ P 1♦ · P P P 1♣ P 1♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -4399,7 +4399,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p108"><h2>Page 108</h2>
 <p class="after">Reached 2999 times, after: P P 1♣ · P P P 1♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">1</text>
 <text class="tick" x="90" y="8">2</text>
 <text class="tick" x="150" y="8">3</text>
@@ -4448,7 +4448,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h480v120h-480
 </section>
 <section id="p109"><h2>Page 109</h2>
 <p class="after">Reached 853 times, after: 1♣ P P · P P 1♣ P P · P 1♣ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="24" y="8">0</text>
 <text class="tick" x="72" y="8">1</text>
 <text class="tick" x="120" y="8">2</text>
@@ -4477,7 +4477,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h480v120h-480
 <g class="k-pass"><title>Pass, 0–24 points
 Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h432v60h-432zM432 16h432v30h-432zM864 16h288v60h-288zM1152 16h48v30h-48z"/><text x="600" y="25">Pass</text><text class="range" x="600" y="39">0–24</text></g>
 <g class="k-suit"><title>Natural, 24 points
-3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M1152 46h48v30h-48z"/><text x="1176" y="55">3<tspan class="spades">♠</tspan></text><text class="range" x="1176" y="69">Natural</text></g>
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M1152 46h48v30h-48z"/><text x="1176" y="55">3<tspan class="spades">♠</tspan></text><text class="range" x="1176" y="69">24</text></g>
 <g class="k-suit"><title>Overcall, 9–17 points
 1♦: Overcall; 9-17 hcp; 5+ ♦
 1♥: Overcall; 9-17 hcp; 5+ ♥
@@ -4497,7 +4497,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h432v60h-432z
 </section>
 <section id="p110"><h2>Page 110</h2>
 <p class="after">Reached 1197 times, after: P P 1♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -4540,7 +4540,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 76h553.8v60h-553.8zM553.8 76h461.
 </section>
 <section id="p111"><h2>Page 111</h2>
 <p class="after">Reached 2300 times, after: 2NT P · P 2NT P · P P 2NT P · P P P 2NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -4591,7 +4591,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M825 16h75v30h-75z
 </section>
 <section id="p112"><h2>Page 112</h2>
 <p class="after">Reached 875 times, after: 2NT P 3♣ P · P 2NT P 3♣ P · P P 2NT P 3♣ P · P P P 2NT P 3♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">20</text>
 <text class="tick" x="600" y="8">21</text>
 <text class="tick" x="1000" y="8">22</text>
@@ -4612,7 +4612,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M825 16h75v30h-75z
 </section>
 <section id="p113"><h2>Page 113</h2>
 <p class="after">Reached 110 times, after: 2NT P 3♣ P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -4656,7 +4656,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M675 16h225v30h-22
 </section>
 <section id="p114"><h2>Page 114</h2>
 <p class="after">Reached 141 times, after: 2NT P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">20</text>
 <text class="tick" x="600" y="8">21</text>
 <text class="tick" x="1000" y="8">22</text>
@@ -4673,7 +4673,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M675 16h225v30h-22
 </section>
 <section id="p115"><h2>Page 115</h2>
 <p class="after">Reached 141 times, after: 2NT P 3♥ P 3♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="40" y="8">0</text>
 <text class="tick" x="120" y="8">1</text>
 <text class="tick" x="200" y="8">2</text>
@@ -4718,7 +4718,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M720 16h240v30h-24
 </section>
 <section id="p116"><h2>Page 116</h2>
 <p class="after">Reached 208 times, after: P 2NT P 3NT P · P P 2NT P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">20</text>
 <text class="tick" x="600" y="8">21</text>
 <text class="tick" x="1000" y="8">22</text>
@@ -4740,7 +4740,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h400v60h-400z
 </section>
 <section id="p117"><h2>Page 117</h2>
 <p class="after">Reached 224 times, after: 2NT P 3♦ P · P 2NT P 3♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="200" y="8">20</text>
 <text class="tick" x="600" y="8">21</text>
 <text class="tick" x="1000" y="8">22</text>
@@ -4757,7 +4757,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h400v60h-400z
 </section>
 <section id="p118"><h2>Page 118</h2>
 <p class="after">Reached 224 times, after: 2NT P 3♦ P 3♥ P · P 2NT P 3♦ P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">1</text>
 <text class="tick" x="128.6" y="8">2</text>
 <text class="tick" x="214.3" y="8">3</text>
@@ -4799,7 +4799,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M685.7 16h257.1v30
 </section>
 <section id="p119"><h2>Page 119</h2>
 <p class="after">Reached 1453 times, after: P 2♣ P · 2♣ P · P P 2♣ P · P P P 2♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="40" y="8">0</text>
 <text class="tick" x="120" y="8">1</text>
 <text class="tick" x="200" y="8">2</text>
@@ -4874,7 +4874,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1040 46h80v30h-80
 </section>
 <section id="p120"><h2>Page 120</h2>
 <p class="after">Reached 145 times, after: P P P 1♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">3</text>
 <text class="tick" x="180" y="8">4</text>
 <text class="tick" x="300" y="8">5</text>
@@ -4916,7 +4916,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h360v120h-360zM360 106h840v30h-
 </section>
 <section id="p121"><h2>Page 121</h2>
 <p class="after">Reached 3369 times, after: P P 1♥ · P P P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="28.6" y="8">1</text>
 <text class="tick" x="85.7" y="8">2</text>
 <text class="tick" x="142.9" y="8">3</text>
@@ -4968,7 +4968,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h457.1v150h-4
 </section>
 <section id="p122"><h2>Page 122</h2>
 <p class="after">Reached 1298 times, after: 1♥ P P · P P 1♥ P P · P 1♥ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">1</text>
 <text class="tick" x="81.8" y="8">2</text>
 <text class="tick" x="136.4" y="8">3</text>
@@ -5012,7 +5012,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h436.4v90h-43
 </section>
 <section id="p123"><h2>Page 123</h2>
 <p class="after">Reached 1694 times, after: P P 1♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5060,7 +5060,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h553.8v120h-553.8zM553.8 106h46
 </section>
 <section id="p124"><h2>Page 124</h2>
 <p class="after">Reached 1683 times, after: 1♥ P 1♠ P · P 1♥ P 1♠ P · P P 1♥ P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -5097,7 +5097,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h553.8v120h-553.8zM553.8 106h46
 </section>
 <section id="p125"><h2>Page 125</h2>
 <p class="after">Reached 428 times, after: P P 1♥ P 1♠ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="85.7" y="8">6</text>
 <text class="tick" x="257.1" y="8">7</text>
 <text class="tick" x="428.6" y="8">8</text>
@@ -5121,7 +5121,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1028.6v60h-1
 </section>
 <section id="p126"><h2>Page 126</h2>
 <p class="after">Reached 615 times, after: P P 1♥ P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5153,7 +5153,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v60h-83
 </section>
 <section id="p127"><h2>Page 127</h2>
 <p class="after">Reached 845 times, after: 1♥ P 2♥ P · P P 1♥ P 2♥ P · P 1♥ P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">9</text>
 <text class="tick" x="150" y="8">10</text>
 <text class="tick" x="250" y="8">11</text>
@@ -5185,7 +5185,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h900v30h-900z
 </section>
 <section id="p128"><h2>Page 128</h2>
 <p class="after">Reached 788 times, after: 1♥ P 1NT P · P 1♥ P 1NT P · P P 1♥ P 1NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">8</text>
 <text class="tick" x="128.6" y="8">9</text>
 <text class="tick" x="214.3" y="8">10</text>
@@ -5226,7 +5226,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h857.1v60h-85
 </section>
 <section id="p129"><h2>Page 129</h2>
 <p class="after">Reached 1111 times, after: P 1♥ P 2♦ P · 1♥ P 2♦ P · P P 1♥ P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -5265,7 +5265,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h857.1v60h-85
 </section>
 <section id="p130"><h2>Page 130</h2>
 <p class="after">Reached 613 times, after: 1♥ P 2♦ P 3♥ P · P 1♥ P 2♦ P 3♥ P · P 1♥ P 2♣ P 3♥ P · 1♥ P 2♣ P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">11</text>
 <text class="tick" x="128.6" y="8">12</text>
 <text class="tick" x="214.3" y="8">13</text>
@@ -5319,7 +5319,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1028.6 16h85.7v60
 </section>
 <section id="p131"><h2>Page 131</h2>
 <p class="after">Reached 161 times, after: P P 1♥ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5352,7 +5352,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h830.8v90h-83
 </section>
 <section id="p132"><h2>Page 132</h2>
 <p class="after">Reached 463 times, after: P P 1♥ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5398,7 +5398,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p133"><h2>Page 133</h2>
 <p class="after">Reached 418 times, after: 1♥ 2♦ 2♥ · P P 1♥ 2♦ 2♥ · P 1♥ 2♦ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -5451,7 +5451,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1073.7v30h-1
 </section>
 <section id="p134"><h2>Page 134</h2>
 <p class="after">Reached 438 times, after: P P 1♥ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5499,7 +5499,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p135"><h2>Page 135</h2>
 <p class="after">Reached 387 times, after: 1♥ 2♣ 2♥ · P P 1♥ 2♣ 2♥ · P 1♥ 2♣ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">0</text>
 <text class="tick" x="105.9" y="8">1</text>
 <text class="tick" x="176.5" y="8">2</text>
@@ -5545,7 +5545,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p136"><h2>Page 136</h2>
 <p class="after">Reached 465 times, after: P P 1♥ 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">0</text>
 <text class="tick" x="138.5" y="8">1</text>
 <text class="tick" x="230.8" y="8">2</text>
@@ -5595,7 +5595,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p137"><h2>Page 137</h2>
 <p class="after">Reached 463 times, after: 1♥ 1♠ 2♥ · P P 1♥ 1♠ 2♥ · P 1♥ 1♠ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -5646,7 +5646,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 46h1073.7v30h-1
 </section>
 <section id="p138"><h2>Page 138</h2>
 <p class="after">Reached 102 times, after: P P 1♥ 1♠ 3♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
 <text class="tick" x="250" y="8">3</text>
@@ -5678,7 +5678,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p139"><h2>Page 139</h2>
 <p class="after">Reached 1883 times, after: 2♥ P · P 2♥ P · P P 2♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="24" y="8">0</text>
 <text class="tick" x="72" y="8">1</text>
 <text class="tick" x="120" y="8">2</text>
@@ -5737,7 +5737,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1152 16h48v30h-48
 </section>
 <section id="p140"><h2>Page 140</h2>
 <p class="after">Reached 1855 times, after: 2♠ P · P 2♠ P · P P 2♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">0</text>
 <text class="tick" x="75" y="8">1</text>
 <text class="tick" x="125" y="8">2</text>
@@ -5788,7 +5788,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h950v60h-950z
 </section>
 <section id="p141"><h2>Page 141</h2>
 <p class="after">Reached 1918 times, after: 2♦ P · P 2♦ P · P P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">0</text>
 <text class="tick" x="75" y="8">1</text>
 <text class="tick" x="125" y="8">2</text>
@@ -5843,7 +5843,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h950v60h-950z
 </section>
 <section id="p142"><h2>Page 142</h2>
 <p class="after">Reached 15093 times, after: 1♦ P · P 1♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -5916,7 +5916,7 @@ Pass: Response pass; 5- hcp</title><path d="M872.7 106h163.6v30h-163.6zM1036.4 1
 </section>
 <section id="p143"><h2>Page 143</h2>
 <p class="after">Reached 6319 times, after: 1♦ P 1♠ · P 1♦ P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -5958,7 +5958,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; Forcing</title><path d="M540 76h660v
 </section>
 <section id="p144"><h2>Page 144</h2>
 <p class="after">Reached 3975 times, after: 1♦ P 1♥ · P 1♦ P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -6001,7 +6001,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♠; Forcing</title><path d="M540 106h660
 </section>
 <section id="p145"><h2>Page 145</h2>
 <p class="after">Reached 319 times, after: 1♦ P 1♥ X P · P 1♦ P 1♥ X P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">0</text>
 <text class="tick" x="128.6" y="8">1</text>
 <text class="tick" x="214.3" y="8">2</text>
@@ -6032,7 +6032,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p146"><h2>Page 146</h2>
 <p class="after">Reached 543 times, after: 1♦ P 1♥ X · P 1♦ P 1♥ X · 1♣ P 1♥ X</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">9</text>
 <text class="tick" x="128.6" y="8">10</text>
 <text class="tick" x="214.3" y="8">11</text>
@@ -6075,7 +6075,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h771.4v60h-77
 </section>
 <section id="p147"><h2>Page 147</h2>
 <p class="after">Reached 118 times, after: 1♦ P 1♥ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">9</text>
 <text class="tick" x="163.6" y="8">10</text>
 <text class="tick" x="272.7" y="8">11</text>
@@ -6111,7 +6111,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p148"><h2>Page 148</h2>
 <p class="after">Reached 462 times, after: 1♦ P 3NT P · P 1♦ P 3NT P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -6145,7 +6145,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h600v60h-600z
 </section>
 <section id="p149"><h2>Page 149</h2>
 <p class="after">Reached 537 times, after: 3♦ · 1♦ P 3♦ · P 1♦ P 3♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">1</text>
 <text class="tick" x="75" y="8">2</text>
 <text class="tick" x="125" y="8">3</text>
@@ -6176,7 +6176,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h400v90h-400z
 X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M400 76h800v30h-800z"/><text x="800" y="85">X</text><text class="range" x="800" y="99">Takeout double</text></g>
 <g class="k-major"><title>Natural, 24 points
 3♥: Natural; 24-26 hcp; 5+ ♥
-3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M1150 16h50v30h-50z"/><text x="1175" y="25">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="1175" y="39">Natural</text></g>
+3♠: Natural; 24-26 hcp; 5+ ♠</title><path d="M1150 16h50v30h-50z"/><text x="1175" y="25">3<tspan class="hearts">♥</tspan>/<tspan class="spades">♠</tspan></text><text class="range" x="1175" y="39">24</text></g>
 <path class="edge" d="M1150 46h50M400 76h800M400 76v30M1150 16v30"/>
 </svg>
 </div>
@@ -6189,7 +6189,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M400
 </section>
 <section id="p150"><h2>Page 150</h2>
 <p class="after">Reached 952 times, after: 3♦ P P · 1♦ P 3♦ P P · 2NT P 3♦ · P 2NT P 3♦ · P P 1♦ P 3♦ · P 1♦ P 3♦ P P · and 1 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -6225,7 +6225,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p151"><h2>Page 151</h2>
 <p class="after">Reached 209 times, after: 3♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="26.1" y="8">1</text>
 <text class="tick" x="78.3" y="8">2</text>
 <text class="tick" x="130.4" y="8">3</text>
@@ -6271,7 +6271,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h939.1v60h-93
 </section>
 <section id="p152"><h2>Page 152</h2>
 <p class="after">Reached 1870 times, after: 2♦ · P 2♦ · 1♦ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">1</text>
 <text class="tick" x="75" y="8">2</text>
 <text class="tick" x="125" y="8">3</text>
@@ -6317,7 +6317,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M400
 </section>
 <section id="p153"><h2>Page 153</h2>
 <p class="after">Reached 103304 times, after: 1NT · P 1NT · P P 1NT · 1♦ P 1♠ P 1NT · 1NT P 2♣ · P P P 1NT · and 186 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="28.6" y="8">0</text>
 <text class="tick" x="85.7" y="8">1</text>
 <text class="tick" x="142.9" y="8">2</text>
@@ -6356,7 +6356,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p154"><h2>Page 154</h2>
 <p class="after">Reached 102 times, after: 1♦ P 3♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">10</text>
 <text class="tick" x="180" y="8">11</text>
 <text class="tick" x="300" y="8">12</text>
@@ -6391,7 +6391,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M960 46h240v30h-24
 </section>
 <section id="p155"><h2>Page 155</h2>
 <p class="after">Reached 121 times, after: 1♦ P 3♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">1</text>
 <text class="tick" x="105.9" y="8">2</text>
 <text class="tick" x="176.5" y="8">3</text>
@@ -6425,7 +6425,7 @@ X: Takeout double; 9+ lhcp; 4+ ♥; 4+ ♠; Forcing</title><path d="M564.7 46h63
 </section>
 <section id="p156"><h2>Page 156</h2>
 <p class="after">Reached 21650 times, after: 1♦ · P 1♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 196" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 196" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -6480,7 +6480,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; 4+ ♠; Forcing</title><path d="M490
 </section>
 <section id="p157"><h2>Page 157</h2>
 <p class="after">Reached 6209 times, after: 1♦ 1♥ · 1♦ 1♠ · P 1♦ 1♠ · P 1♦ 1♥ · 1♣ 1♦ · P 1♣ 1♦ · and 4 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -6553,7 +6553,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p158"><h2>Page 158</h2>
 <p class="after">Reached 1729 times, after: 1♦ 2♣ · P 1♦ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -6616,7 +6616,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p159"><h2>Page 159</h2>
 <p class="after">Reached 221 times, after: P 1♦ X · 1♦ X</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="35.3" y="8">0</text>
 <text class="tick" x="105.9" y="8">1</text>
 <text class="tick" x="176.5" y="8">2</text>
@@ -6674,7 +6674,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1129.4 46h70.6v30
 </section>
 <section id="p160"><h2>Page 160</h2>
 <p class="after">Reached 6852 times, after: 1♠ P · P 1♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -6736,7 +6736,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h327.3v90h-327.3zM327.3 46h381.
 </section>
 <section id="p161"><h2>Page 161</h2>
 <p class="after">Reached 1330 times, after: 1♠ P 2♥ · P 1♠ P 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -6774,7 +6774,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; Forcing</title><path d="M675 76h525v
 </section>
 <section id="p162"><h2>Page 162</h2>
 <p class="after">Reached 2642 times, after: 2♠ · 1♠ P 2♠ · P 2♠ · P 1♠ P 2♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="23.1" y="8">0</text>
 <text class="tick" x="253.8" y="8">5</text>
 <text class="tick" x="484.6" y="8">10</text>
@@ -6804,7 +6804,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♥; Forcing</title><path d="M415
 </section>
 <section id="p163"><h2>Page 163</h2>
 <p class="after">Reached 611 times, after: 1♠ P 2♦ P · P 1♠ P 2♦ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -6844,7 +6844,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♥; Forcing</title><path d="M415
 </section>
 <section id="p164"><h2>Page 164</h2>
 <p class="after">Reached 799 times, after: 1♠ P 2♦ · P 1♠ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -6885,7 +6885,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♥; Forcing</title><path d="M600 106h600
 </section>
 <section id="p165"><h2>Page 165</h2>
 <p class="after">Reached 788 times, after: 1♠ P 2NT P · 1♠ P P 2♦ · P 1♠ P 2NT P · 1♠ P P 2♣ · 1♠ P P 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -6912,7 +6912,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p166"><h2>Page 166</h2>
 <p class="after">Reached 153 times, after: 1♠ P 2♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -6948,7 +6948,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p167"><h2>Page 167</h2>
 <p class="after">Reached 1782 times, after: 1♣ P 1♠ · P 1♣ P 1♠ · 1♠ P 2♣ · P 1♠ P 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">1</text>
 <text class="tick" x="90" y="8">2</text>
 <text class="tick" x="150" y="8">3</text>
@@ -6990,7 +6990,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♥; Forcing</title><path d="M480 76h720v
 </section>
 <section id="p168"><h2>Page 168</h2>
 <p class="after">Reached 126 times, after: 1♣ P 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">9</text>
 <text class="tick" x="180" y="8">10</text>
 <text class="tick" x="300" y="8">11</text>
@@ -7023,7 +7023,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p169"><h2>Page 169</h2>
 <p class="after">Reached 10602 times, after: 1♠ · P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -7079,7 +7079,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♥; Forcing</title><path d="M490
 </section>
 <section id="p170"><h2>Page 170</h2>
 <p class="after">Reached 1152 times, after: 1♠ 2♥ · P 1♠ 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -7146,7 +7146,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M960 16h240v30h-24
 </section>
 <section id="p171"><h2>Page 171</h2>
 <p class="after">Reached 1128 times, after: 1♠ 2♦ · P 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -7213,7 +7213,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p172"><h2>Page 172</h2>
 <p class="after">Reached 104 times, after: 1♠ 2♦ 3♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -7248,7 +7248,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p173"><h2>Page 173</h2>
 <p class="after">Reached 1085 times, after: 1♠ 2♣ · P 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -7318,7 +7318,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1010.5 16h189.5v3
 </section>
 <section id="p174"><h2>Page 174</h2>
 <p class="after">Reached 6356 times, after: 1♥ P · P 1♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -7380,7 +7380,7 @@ Pass: Response pass; 5- hcp</title><path d="M0 16h327.3v120h-327.3zM327.3 106h38
 </section>
 <section id="p175"><h2>Page 175</h2>
 <p class="after">Reached 1773 times, after: 1♥ P 1♠ · P 1♥ P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="28.6" y="8">0</text>
 <text class="tick" x="85.7" y="8">1</text>
 <text class="tick" x="142.9" y="8">2</text>
@@ -7423,7 +7423,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; Forcing</title><path d="M514.3 76h68
 </section>
 <section id="p176"><h2>Page 176</h2>
 <p class="after">Reached 161 times, after: 1♥ P 1♠ X P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -7461,7 +7461,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 76h1200v30h-120
 </section>
 <section id="p177"><h2>Page 177</h2>
 <p class="after">Reached 273 times, after: 1♥ P 1♠ X · P 1♥ P 1♠ X</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">10</text>
 <text class="tick" x="150" y="8">11</text>
 <text class="tick" x="250" y="8">12</text>
@@ -7495,7 +7495,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v30h-800z
 </section>
 <section id="p178"><h2>Page 178</h2>
 <p class="after">Reached 106 times, after: 1♥ P 1♠ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">9</text>
 <text class="tick" x="163.6" y="8">10</text>
 <text class="tick" x="272.7" y="8">11</text>
@@ -7532,7 +7532,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v30h-800z
 </section>
 <section id="p179"><h2>Page 179</h2>
 <p class="after">Reached 103 times, after: 1♥ P 1♠ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="60" y="8">10</text>
 <text class="tick" x="180" y="8">11</text>
 <text class="tick" x="300" y="8">12</text>
@@ -7566,7 +7566,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h800v30h-800z
 </section>
 <section id="p180"><h2>Page 180</h2>
 <p class="after">Reached 1238 times, after: 1♥ P 2♦ · P 1♥ P 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -7608,7 +7608,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♠; Forcing</title><path d="M568.4 106h6
 </section>
 <section id="p181"><h2>Page 181</h2>
 <p class="after">Reached 635 times, after: 1♥ P 2♣ P · P 1♥ P 2♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="46.2" y="8">9</text>
 <text class="tick" x="138.5" y="8">10</text>
 <text class="tick" x="230.8" y="8">11</text>
@@ -7648,7 +7648,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♠; Forcing</title><path d="M568.4 106h6
 </section>
 <section id="p182"><h2>Page 182</h2>
 <p class="after">Reached 795 times, after: 1♥ P 2♣ · P 1♥ P 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="37.5" y="8">0</text>
 <text class="tick" x="112.5" y="8">1</text>
 <text class="tick" x="187.5" y="8">2</text>
@@ -7686,7 +7686,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♠; Forcing</title><path d="M675 76h525v
 </section>
 <section id="p183"><h2>Page 183</h2>
 <p class="after">Reached 2277 times, after: 2♥ · P 2♥ · 1♥ P 2♥ · P 1♥ P 2♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">1</text>
 <text class="tick" x="75" y="8">2</text>
 <text class="tick" x="125" y="8">3</text>
@@ -7732,7 +7732,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♠; Forcing</title><path d="M400
 </section>
 <section id="p184"><h2>Page 184</h2>
 <p class="after">Reached 568 times, after: 1♥ P 2NT P · P 1♥ P 2NT P · 1♥ P P 2♣ · 1♥ P P 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="54.5" y="8">10</text>
 <text class="tick" x="163.6" y="8">11</text>
 <text class="tick" x="272.7" y="8">12</text>
@@ -7757,7 +7757,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p185"><h2>Page 185</h2>
 <p class="after">Reached 9851 times, after: 1♥ · P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 196" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 196" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -7812,7 +7812,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♠; Forcing</title><path d="M490
 </section>
 <section id="p186"><h2>Page 186</h2>
 <p class="after">Reached 1107 times, after: 1♥ 2♦ · P 1♥ 2♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -7881,7 +7881,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p187"><h2>Page 187</h2>
 <p class="after">Reached 1066 times, after: 1♥ 1♠ · P 1♥ 1♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -7959,7 +7959,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 16h133.3v3
 </section>
 <section id="p188"><h2>Page 188</h2>
 <p class="after">Reached 970 times, after: 1♥ 2♣ · P 1♥ 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -8032,7 +8032,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1010.5 16h189.5v3
 </section>
 <section id="p189"><h2>Page 189</h2>
 <p class="after">Reached 103 times, after: 1♥ 2♣ 3♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="42.9" y="8">1</text>
 <text class="tick" x="128.6" y="8">2</text>
 <text class="tick" x="214.3" y="8">3</text>
@@ -8070,7 +8070,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p190"><h2>Page 190</h2>
 <p class="after">Reached 3986 times, after: 1♣ P · P 1♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">0</text>
 <text class="tick" x="81.8" y="8">1</text>
 <text class="tick" x="136.4" y="8">2</text>
@@ -8138,7 +8138,7 @@ Pass: Response pass; 5- hcp</title><path d="M872.7 76h163.6v30h-163.6zM1036.4 76
 </section>
 <section id="p191"><h2>Page 191</h2>
 <p class="after">Reached 996 times, after: 1♣ P 1♥ · P 1♣ P 1♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 136" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -8181,7 +8181,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♠; Forcing</title><path d="M540 106h660
 </section>
 <section id="p192"><h2>Page 192</h2>
 <p class="after">Reached 812 times, after: 1♣ P 1♦ · P 1♣ P 1♦</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="30" y="8">0</text>
 <text class="tick" x="90" y="8">1</text>
 <text class="tick" x="150" y="8">2</text>
@@ -8223,7 +8223,7 @@ X: Takeout double; 9+ lhcp; 4+ ♥; 4+ ♠; Forcing</title><path d="M540 76h660v
 </section>
 <section id="p193"><h2>Page 193</h2>
 <p class="after">Reached 5961 times, after: 1♣ · P 1♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 166" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="28.6" y="8">0</text>
 <text class="tick" x="85.7" y="8">1</text>
 <text class="tick" x="142.9" y="8">2</text>
@@ -8276,7 +8276,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♥; 4+ ♠; Forcing</title><path d="M514
 </section>
 <section id="p194"><h2>Page 194</h2>
 <p class="after">Reached 341 times, after: 3♠ P · P 3♠ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">2</text>
 <text class="tick" x="81.8" y="8">3</text>
 <text class="tick" x="136.4" y="8">4</text>
@@ -8319,7 +8319,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1036.4v60h-1
 </section>
 <section id="p195"><h2>Page 195</h2>
 <p class="after">Reached 352 times, after: 3♠ · P 3♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">3</text>
 <text class="tick" x="81.8" y="8">4</text>
 <text class="tick" x="136.4" y="8">5</text>
@@ -8358,7 +8358,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♥; Forcing</title><path d="M327
 </section>
 <section id="p196"><h2>Page 196</h2>
 <p class="after">Reached 1320 times, after: 3♠ P P · 1♠ P 2♥ P 3♠ · P 1♠ P 2♥ P 3♠ · 2NT P 3♥ P 3♠ · 1♠ P 2♦ P 3♠ · 1♠ P 2♥ P 3♠ P P · and 3 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="26.1" y="8">0</text>
 <text class="tick" x="78.3" y="8">1</text>
 <text class="tick" x="130.4" y="8">2</text>
@@ -8396,7 +8396,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p197"><h2>Page 197</h2>
 <p class="after">Reached 334 times, after: 3♣ P · P 3♣ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="22.2" y="8">0</text>
 <text class="tick" x="244.4" y="8">5</text>
 <text class="tick" x="466.7" y="8">10</text>
@@ -8430,7 +8430,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M1066.7 46h133.3v3
 </section>
 <section id="p198"><h2>Page 198</h2>
 <p class="after">Reached 343 times, after: 3♣ · P 3♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 106" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="24" y="8">2</text>
 <text class="tick" x="72" y="8">3</text>
 <text class="tick" x="120" y="8">4</text>
@@ -8480,7 +8480,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♥; 4+ ♠; Forcing</title><path d="M336
 </section>
 <section id="p199"><h2>Page 199</h2>
 <p class="after">Reached 1201 times, after: 2NT P 3♣ · P 2NT P 3♣ · 3♣ P P · P P 2NT P 3♣ · P P P 2NT P 3♣ · P 3♣ P P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="26.1" y="8">0</text>
 <text class="tick" x="78.3" y="8">1</text>
 <text class="tick" x="130.4" y="8">2</text>
@@ -8518,7 +8518,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p200"><h2>Page 200</h2>
 <p class="after">Reached 297 times, after: 3♥ P · P 3♥ P</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="25" y="8">0</text>
 <text class="tick" x="75" y="8">1</text>
 <text class="tick" x="125" y="8">2</text>
@@ -8563,7 +8563,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h950v60h-950z
 </section>
 <section id="p201"><h2>Page 201</h2>
 <p class="after">Reached 308 times, after: 3♥ · P 3♥</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="27.3" y="8">2</text>
 <text class="tick" x="81.8" y="8">3</text>
 <text class="tick" x="136.4" y="8">4</text>
@@ -8602,7 +8602,7 @@ X: Takeout double; 9+ lhcp; 4+ ♣; 4+ ♦; 4+ ♠; Forcing</title><path d="M381
 </section>
 <section id="p202"><h2>Page 202</h2>
 <p class="after">Reached 1381 times, after: 1♥ P 2♦ P 3♥ · 3♥ P P · P 1♥ P 2♦ P 3♥ · 2NT P 3♥ · P 1♥ P 2♣ P 3♥ · 1♥ P 2♣ P 3♥ · and 4 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="31.6" y="8">0</text>
 <text class="tick" x="94.7" y="8">1</text>
 <text class="tick" x="157.9" y="8">2</text>
@@ -8635,7 +8635,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p203"><h2>Page 203</h2>
 <p class="after">Reached 5712 times, after: 1♦ P 1♠ P 1NT P 3NT · P 1♦ P 1♠ P 1NT P 3NT · 1♦ P 1♠ P 1NT P 3NT P P · P 1♦ P 1♠ P 1NT P 3NT P P · 1NT P 3NT · P 1NT P 3NT · and 23 more</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="40" y="8">0</text>
 <text class="tick" x="120" y="8">1</text>
 <text class="tick" x="200" y="8">2</text>
@@ -8664,7 +8664,7 @@ Pass: Nothing else fits, so the robot passes.</title><path d="M0 16h1200v30h-120
 </section>
 <section id="p204"><h2>Page 204</h2>
 <p class="after">Reached 794 times, after: P 2♣ · 2♣</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 76" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="33.3" y="8">0</text>
 <text class="tick" x="100" y="8">1</text>
 <text class="tick" x="166.7" y="8">2</text>
@@ -8699,7 +8699,7 @@ X: Takeout double; 9+ lhcp; 4+ ♦; 4+ ♥; 4+ ♠; Forcing</title><path d="M600
 </section>
 <section id="p205"><h2>Page 205</h2>
 <p class="after">Reached 101 times, after: P 1♠ P 2♥ P 4♠</p>
-<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 640px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
+<div class="scroll"><svg class="blocks" viewBox="0 0 1200 46" style="width: 100%; min-width: 900px" role="img" aria-label="Which call the robot makes, by points and kind of hand">
 <text class="tick" x="50" y="8">0</text>
 <text class="tick" x="150" y="8">1</text>
 <text class="tick" x="250" y="8">2</text>

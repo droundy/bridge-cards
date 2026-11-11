@@ -32,7 +32,7 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 
 mod layout;
-use layout::Layout;
+use layout::{Block, Layout};
 
 /// A number a hand has, other than its points.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -455,23 +455,133 @@ impl Blocks {
 }
 
 /// How wide the drawing is and how tall a row, in its own units.  The page
-/// scales the drawing to the width of the window, so each count of points is as
-/// wide as the table's counts share `WIDTH` between them, and the drawing is
-/// never narrower than `MIN_WIDTH_PX` pixels.
+/// scales the drawing to the width of the window, but never to less than
+/// `MIN_WIDTH_PX` pixels, where it scrolls instead, and never to more than
+/// `WIDTH` (the page is no wider), so the text is never set smaller than
+/// three quarters of the sizes below.  Each count of points is as wide as the
+/// table's counts share `WIDTH` between them.
 const WIDTH: usize = 1200;
-const MIN_WIDTH_PX: usize = 640;
+const MIN_WIDTH_PX: usize = 900;
 const ROW_H: usize = 30;
 /// Room above the table for the counts of points.
 const TOP: usize = 16;
-/// The font size of a label set small, and how wide one of its characters is.
-const SMALL_PX: f64 = 9.0;
-const SMALL_EM: f64 = 5.6;
+/// How wide one character of a label is, by the size it is set in, as in the
+/// page's style: a label is 12 pixels, the second line of one 11, and one
+/// set small 10.
+const LABEL_EM: f64 = 7.5;
+const RANGE_EM: f64 = 6.4;
+const SMALL_PX: f64 = 10.0;
+const SMALL_EM: f64 = 6.2;
 
 impl Blocks {
     /// The blocks of the table, packed into as few units of height as they go
     /// in.
     fn layout(&self) -> Layout {
         Layout::of(&self.rows)
+    }
+}
+
+/// A label as SVG text centred on `(x, y)`, set small or not, and turned to
+/// run up the block or not.
+fn text(class: Option<&str>, turned: bool, x: f64, y: f64, content: &str) -> String {
+    let class = class.map_or(String::new(), |class| format!(" class=\"{}\"", class));
+    let turn = if turned {
+        format!(" transform=\"rotate(-90 {x} {y})\"")
+    } else {
+        String::new()
+    };
+    format!("<text{class}{turn} x=\"{x}\" y=\"{y}\">{content}</text>")
+}
+
+/// The label of `block` as SVG, or nothing where there is no room for one.
+/// `name` is its calls as markup and `plain_name` as plain text, `kind` is
+/// what the family is called and `range` its points, and `cw` is how wide a
+/// count of points is.  The label goes in the widest rectangle of the block.
+/// Where the name does not fit along it, the name is shortened and then set
+/// smaller, and where it still does not fit, it is turned to run up the
+/// tallest rectangle, or the calls are put one above another.
+fn label(
+    block: &Block,
+    calls: &[&super::Line],
+    name: &str,
+    plain_name: &str,
+    kind: &str,
+    range: &str,
+    cw: f64,
+) -> String {
+    let fits = |room: f64, chars: usize, em: f64| room >= chars as f64 * em + 6.0;
+    let centre = |(c, length, top, bottom): (usize, usize, usize, usize)| {
+        (
+            (c as f64 + length as f64 / 2.0) * cw,
+            TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0,
+        )
+    };
+    let wide = block.label_room();
+    let (x, y) = centre(wide);
+    let room = wide.1 as f64 * cw;
+    let (name, plain_name) =
+        if calls.is_empty() || fits(room, plain_name.chars().count(), LABEL_EM) {
+            (name.to_string(), plain_name.to_string())
+        } else {
+            short_names(calls)
+        };
+    let chars = plain_name.chars().count();
+    if fits(room, chars, LABEL_EM) {
+        // The second line says what the calls are, if there is room, and
+        // otherwise at which points.
+        let second = if kind != plain_name && fits(room, kind.chars().count(), RANGE_EM) {
+            Some(escape(kind))
+        } else if fits(room, range.chars().count(), RANGE_EM) {
+            Some(range.to_string())
+        } else {
+            None
+        };
+        return match second {
+            Some(second) => {
+                text(None, false, x, y - 6.0, &name)
+                    + &text(Some("range"), false, x, y + 8.0, &second)
+            }
+            None => text(None, false, x, y, &name),
+        };
+    }
+    if fits(room, chars, SMALL_EM) {
+        return text(Some("small"), false, x, y, &name);
+    }
+    let tall = block.tall_room();
+    let (x, y) = centre(tall);
+    let across = tall.1 as f64 * cw;
+    let along = ((tall.3 - tall.2) * ROW_H) as f64;
+    let thick_enough = across >= SMALL_PX + 3.0;
+    if thick_enough && fits(along, chars, SMALL_EM) {
+        return text(Some("small"), true, x, y, &name);
+    }
+    // With no calls there is only the name of the family, and it does not fit.
+    let Some(first) = calls.first() else {
+        return String::new();
+    };
+    let widest = calls
+        .iter()
+        .map(|l| super::call(l.call).chars().count())
+        .max()
+        .unwrap_or(0);
+    let line = SMALL_PX + 1.0;
+    if fits(across, widest, SMALL_EM) && along >= calls.len() as f64 * line + 2.0 {
+        let top = y - (calls.len() as f64 - 1.0) * line / 2.0;
+        return calls
+            .iter()
+            .enumerate()
+            .map(|(i, l)| text(Some("small"), false, x, top + i as f64 * line, &call_svg(l.call)))
+            .collect();
+    }
+    // Only the first call, and dots for the others.
+    let short = format!("{}…", call_svg(first.call));
+    let chars = super::call(first.call).chars().count() + 1;
+    if fits(across, chars, SMALL_EM) {
+        text(Some("small"), false, x, y, &short)
+    } else if thick_enough && fits(along, chars, SMALL_EM) {
+        text(Some("small"), true, x, y, &short)
+    } else {
+        String::new()
     }
 }
 
@@ -590,93 +700,8 @@ impl Booklet {
                 ));
                 c += length;
             }
-            // The label goes in the widest rectangle of the block.  Where the
-            // name does not fit along it, it is set smaller, and where it
-            // still does not, it is turned to run up the tallest rectangle.
-            let (c, length, top, bottom) = block.label_room();
-            let x = (c as f64 + length as f64 / 2.0) * cw;
-            let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
-            let room = length as f64 * cw;
-            let fits = |room: f64, chars: usize, em: f64| room >= chars as f64 * em + 6.0;
-            if !calls.is_empty() && !fits(room, plain_name.chars().count(), 7.5) {
-                (name, plain_name) = short_names(&calls);
-            }
-            let chars = plain_name.chars().count();
-            // The second line says what the calls are, if there is room, and
-            // otherwise at which points.
             let kind = families.names[block.family.0].as_str();
-            let second = if kind != plain_name && fits(room, kind.chars().count(), 5.8) {
-                Some(escape(kind))
-            } else if fits(room, range.chars().count(), 5.8) {
-                Some(range.clone())
-            } else {
-                None
-            };
-            let label = if fits(room, chars, 7.5) {
-                match second {
-                    Some(second) => format!(
-                        "<text x=\"{x}\" y=\"{}\">{}</text><text class=\"range\" x=\"{x}\" y=\"{}\">{}</text>",
-                        y - 6.0,
-                        name,
-                        y + 8.0,
-                        second
-                    ),
-                    None => format!("<text x=\"{}\" y=\"{}\">{}</text>", x, y, name),
-                }
-            } else if fits(room, chars, SMALL_EM) {
-                format!("<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>", x, y, name)
-            } else {
-                let (c, length, top, bottom) = block.tall_room();
-                let x = (c as f64 + length as f64 / 2.0) * cw;
-                let y = TOP as f64 + ((top + bottom) * ROW_H) as f64 / 2.0;
-                let across = length as f64 * cw;
-                let along = ((bottom - top) * ROW_H) as f64;
-                if across >= SMALL_PX + 3.0 && fits(along, chars, SMALL_EM) {
-                    format!(
-                        "<text class=\"small\" transform=\"rotate(-90 {x} {y})\" x=\"{x}\" y=\"{y}\">{}</text>",
-                        name
-                    )
-                } else {
-                    // The calls one above another, each as short as it goes.
-                    let widest = calls
-                        .iter()
-                        .map(|l| super::call(l.call).chars().count())
-                        .max()
-                        .unwrap_or(0);
-                    let line = SMALL_PX + 1.0;
-                    if !calls.is_empty() && fits(across, widest, SMALL_EM) && along >= calls.len() as f64 * line + 2.0 {
-                        let first = y - (calls.len() as f64 - 1.0) * line / 2.0;
-                        calls
-                            .iter()
-                            .enumerate()
-                            .map(|(i, l)| {
-                                format!(
-                                    "<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>",
-                                    x,
-                                    first + i as f64 * line,
-                                    call_svg(l.call)
-                                )
-                            })
-                            .collect()
-                    } else {
-                        // Only the first call, and dots for the others.
-                        let short = format!("{}…", call_svg(calls[0].call));
-                        let chars = super::call(calls[0].call).chars().count() + 1;
-                        if calls.is_empty() {
-                            String::new()
-                        } else if fits(across, chars, SMALL_EM) {
-                            format!("<text class=\"small\" x=\"{}\" y=\"{}\">{}</text>", x, y, short)
-                        } else if across >= SMALL_PX + 3.0 && fits(along, chars, SMALL_EM) {
-                            format!(
-                                "<text class=\"small\" transform=\"rotate(-90 {x} {y})\" x=\"{x}\" y=\"{y}\">{}</text>",
-                                short
-                            )
-                        } else {
-                            String::new()
-                        }
-                    }
-                }
-            };
+            let label = label(block, &calls, &name, &plain_name, kind, &range, cw);
 
             let link = reply.map(|p| format!("<a href=\"#p{}\">", p + 1));
             out.push_str(&format!(
@@ -747,5 +772,25 @@ impl Blocks {
         !self.rows.is_empty()
             && self.rows.len() <= MAX_ROWS
             && self.rows.iter().all(|row| row.len() == self.rows[0].len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_block_with_no_calls_and_no_room_has_no_label() {
+        // The family of a block may have no call on its page, and then only
+        // its name can be written, if it fits.
+        let block = Block {
+            family: Family(0),
+            first: 0,
+            bands: vec![(0, 1)],
+        };
+        let name = "A family with a long name";
+        assert_eq!("", label(&block, &[], name, name, name, "10", 5.0));
+        let label = label(&block, &[], name, name, name, "10", 400.0);
+        assert!(label.contains(name), "{}", label);
     }
 }

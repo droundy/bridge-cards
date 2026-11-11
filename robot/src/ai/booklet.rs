@@ -1106,9 +1106,10 @@ fn the_block_table_fills_its_space() {
     assert!(svg.ends_with("</svg>\n"));
 }
 
-#[test]
-fn every_block_has_a_label() {
-    let booklet = small_booklet();
+/// A block with no room for a label has only its hover text, which a reader
+/// on a phone cannot see, so every block of the tables the robot makes has one.
+#[cfg(test)]
+fn assert_every_block_is_labelled(booklet: &Booklet) {
     for page in booklet.pages.iter() {
         for block in booklet.block_table(page).split("<g class=").skip(1) {
             let block = block.split("</g>").next().unwrap();
@@ -1118,5 +1119,20 @@ fn every_block_has_a_label() {
                 block
             );
         }
+    }
+}
+
+#[test]
+fn every_block_has_a_label() {
+    assert_every_block_is_labelled(small_booklet());
+}
+
+/// Every system's tables, from many deals, which is too slow without
+/// optimisation: `cargo test -p robot --release label`.
+#[test]
+#[cfg_attr(debug_assertions, ignore)]
+fn every_block_of_every_system_has_a_label() {
+    for system in crate::ai::BiddingSystem::ALL {
+        assert_every_block_is_labelled(&Booklet::new(&system.convention(), 20_000, 20));
     }
 }
