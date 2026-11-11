@@ -14,7 +14,7 @@
 //! and never a grand slam unasked.  Partner answers and leaves the contract
 //! to the one who asked.
 use super::super::{all_bids, Convention, Fit, Forcing};
-use super::{trump, uncontested, Kind};
+use super::{trump, uncontested, Kind, TRUMPS};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
@@ -239,7 +239,7 @@ impl Convention {
             (Ask::Gerber, Bid::NT(4)) => Some(Fit::new(HandValuation::MIN, missing)),
             (_, Bid::Suit(5, suit)) => {
                 let mut fit = HandValuation::MIN;
-                fit.length[suit] = 8u8.saturating_sub(partner.min.length[suit]);
+                fit.length[suit] = TRUMPS.saturating_sub(partner.min.length[suit]);
                 Some(Fit::new(fit, missing))
             }
             _ => None,

@@ -16,7 +16,9 @@
 //!    bids.
 //!
 //! An invitation is the lowest bid in the strain, below the contract it
-//! invites, that no table entry describes.  The rules only bid games and
+//! invites, that no table entry describes.  A suit is invited in only when
+//! one of the partners has shown four cards in it, so that a first bid of a
+//! suit, such as a jump shift, is no invitation.  The rules only bid games and
 //! slams.  They invite games in notrump and the majors, and slams only in
 //! notrump (the quantitative 4NT), so slams in a suit are bid only when
 //! they are sure, and then after asking for aces with Blackwood or Gerber
@@ -56,10 +58,82 @@
 //! a limit bid (`Fit::limit`), and then its most points are one fewer than
 //! the fewest with which the system makes a stronger bid instead.  Each bid
 //! the rules make carries a `Reason`, which explains it in words.
-use super::{bids_string, earlier_auctions, legal_bids, Convention, Fit, Forcing};
+use super::{bids_string, earlier_auctions, legal_bids, Convention, Explanation, Fit, Forcing};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use wording::{numbered, Number, Text, Word};
+
+/// The fewest cards that show a suit, so that a game in it can be invited.
+const A_SUIT: u8 = 4;
+
+/// The trumps a suit contract needs between the two hands.
+const TRUMPS: u8 = 8;
+/// How many points more than the fewest partner promised an invitation
+/// counts partner for.
+const INVITING: u8 = 2;
+/// The same for a contract bid when no bid is left to invite it with.
+const LAST_CHANCE: u8 = 1;
+/// The most values that the points of a limit bid span.
+const LIMIT_SPAN: u8 = 4;
+
+/// The rules in words, for a table that bids by them to say of itself (see
+/// `Convention::explain`), with the numbers the rules use.
+pub(crate) fn explanation() -> Explanation {
+    let needs = |bid| contract_points(bid).expect("a game or a slam");
+    let game = needs(Bid::NT(3));
+    let minor = needs(Bid::Suit(5, Suit::Clubs));
+    let small = needs(Bid::NT(6));
+    let grand = needs(Bid::NT(7));
+    Explanation::new(
+        "When the opponents have only passed",
+        [
+            format!(
+                "A bid that no entry describes is about the contract your side can make. \
+                 Between the two hands, a game in notrump or a major needs {game} points, a \
+                 game in a minor {minor}, a small slam {small} and a grand slam {grand}, and \
+                 a suit contract needs {TRUMPS} trumps as well."
+            ),
+            "Count high card points for notrump, short high card points for a suit that \
+             partner has shown, and long high card points for a suit of your own. Partner \
+             has shown a range of points, and what you bid goes by the fewest of them."
+                .to_string(),
+            "Bid the contract when your side has the points even if partner has the fewest \
+             they have shown."
+                .to_string(),
+            format!(
+                "Invite it when your side has the points if partner has {INVITING} more than \
+                 that. The invitation is the lowest bid in the same strain, below the \
+                 contract, that no entry describes. Games in notrump and the majors are \
+                 invited, a major only when one of you has shown {A_SUIT} cards in it, \
+                 and a slam only in notrump, with 4NT."
+            ),
+            format!(
+                "With no bid left to invite with, as when partner has just invited, bid the \
+                 contract when your side has the points if partner has {LAST_CHANCE} more \
+                 than the fewest."
+            ),
+            "A slam in a suit is bid only when it is sure. A hand with an ace that would bid \
+             one asks first, with Blackwood's 4NT, or Gerber's 4C directly over partner's \
+             notrump, and bids the slam only if no more than one ace is missing, and a \
+             grand slam only after asking for kings as well. A hand without the card to \
+             ask with bids the small slam."
+                .to_string(),
+            format!(
+                "When your side has forced to game, nothing is invited, and the cheapest bid \
+                 that is true explores, with a raise of partner's suit that makes {TRUMPS} \
+                 trumps, a suit of your own one longer than shown, or a new suit of {A_SUIT} \
+                 cards, so that skipping a bid denies it."
+            ),
+            format!(
+                "Nothing is bid for a \
+                 part-score: that is a call an entry describes, or a pass. When partner's \
+                 last bid was a limit bid, one that is not forcing and whose points span at \
+                 most {LIMIT_SPAN} values, you are the captain: placing the contract shows \
+                 nothing more about your hand."
+            ),
+        ],
+    )
+}
 
 mod slam;
 use slam::Asked;
@@ -172,7 +246,7 @@ pub(crate) fn contract_points(bid: Bid) -> Option<u8> {
 pub(crate) fn contract_needs(bid: Bid) -> Option<HandValuation> {
     let mut needs = HandValuation::MIN.with_hcp(contract_points(bid)?);
     if let Some(suit) = trump(bid) {
-        needs.length[suit] = 8;
+        needs.length[suit] = TRUMPS;
     }
     Some(needs)
 }
@@ -231,6 +305,20 @@ pub struct Reason {
 }
 
 impl Reason {
+    /// What the bid is for, in words that are the same in every auction, as
+    /// in "Invites a game, which needs 25 dummy points between you".
+    pub(crate) fn aim(&self) -> Text {
+        let does = match self.rule {
+            Rule::Invite => "Invites a",
+            Rule::Sure | Rule::LastChance | Rule::Forced => "To play: a",
+        };
+        let kind = Kind::of(self.contract).name();
+        let points = self.points.name();
+        Text::from(format!(
+            "{does} {kind}, which needs {} {points} between you",
+            self.needs
+        ))
+    }
     /// Does the bid show partner nothing about the hand?
     pub(crate) fn shows_nothing(&self) -> bool {
         self.captain && self.rule != Rule::Invite
@@ -260,7 +348,7 @@ impl Reason {
                     + (you + Word::HAS + "if")
                     + (partner + Word::HAS)
                     + self.partner
-                    + ", two more than they promised, so invite it."
+                    + format!(", {INVITING} more than they promised, so invite it.")
             }
             Rule::LastChance => {
                 Text::from("which")
@@ -339,8 +427,8 @@ impl Rival {
     fn fit(&self, hand: &HandValuation) -> (bool, bool) {
         match self.trumps {
             Some((suit, least, most)) => (
-                hand.length[suit] + least >= 8,
-                hand.length[suit] + most >= 8,
+                hand.length[suit] + least >= TRUMPS,
+                hand.length[suit] + most >= TRUMPS,
             ),
             None => (true, true),
         }
@@ -418,7 +506,7 @@ fn reach(lo: u8, hi: u8) -> u8 {
     if hi < HandValuation::MAX.hcp {
         hi
     } else {
-        lo + 2
+        lo + INVITING
     }
 }
 
@@ -519,7 +607,7 @@ fn is_limit_bid(meaning: &Convention) -> bool {
         return false;
     }
     let (min, max) = meaning.bounds();
-    Points::described(&min, &max).is_some_and(|p| p.of(&max) <= p.of(&min) + 3)
+    Points::described(&min, &max).is_some_and(|p| p.of(&max) < p.of(&min) + LIMIT_SPAN)
 }
 
 /// What the player has promised, as bounds combined from the meanings of
@@ -558,6 +646,9 @@ struct Strain<'a> {
     ours: Option<Bid>,
     /// Has this side forced to game, so that no game is invited?
     game_forced: bool,
+    /// The most cards that either partner has promised in the strain's
+    /// suit.
+    shown: u8,
 }
 
 impl Strain<'_> {
@@ -582,7 +673,7 @@ impl Strain<'_> {
             Some(suit) => Bid::Suit(level, suit),
             None => Bid::NT(level),
         };
-        self.legal().any(|b| b == bid).then(|| bid)
+        self.legal().any(|b| b == bid).then_some(bid)
     }
     /// The bid that places a contract of `kind`, unless this side already
     /// plays one in this strain, when passing places it.
@@ -617,7 +708,11 @@ impl Strain<'_> {
         // Nothing is invited that this side has already reached.
         let reached = self.ours.is_some_and(|c| Kind::of(c) >= kind);
         let minor = matches!(self.strain, Some(Suit::Clubs | Suit::Diamonds));
+        // Nor in a suit that neither partner has shown: a first bid of a
+        // suit says what the table makes it say, or nothing.
+        let unshown = self.strain.is_some() && self.shown < A_SUIT;
         if reached
+            || unshown
             || self.invited == Some(contract)
             || (kind == Kind::Game && (minor || self.game_forced))
             || (kind > Kind::Game && (self.strain.is_some() || !in_notrump))
@@ -733,12 +828,12 @@ impl Convention {
                 return None;
             }
             let (shown, theirs) = (mine.min.length[suit], partner.min.length[suit]);
-            let (explore, length) = if shown >= 4 && shown >= theirs {
+            let (explore, length) = if shown >= A_SUIT && shown >= theirs {
                 (Explore::Rebid, shown + 1)
             } else if theirs >= 3 {
-                (Explore::Raise, 8u8.saturating_sub(theirs).max(shown))
+                (Explore::Raise, TRUMPS.saturating_sub(theirs).max(shown))
             } else {
-                (Explore::NewSuit, 4)
+                (Explore::NewSuit, A_SUIT)
             };
             let below_notrump = level < 4;
             (length <= 13 && (below_notrump || explore == Explore::Raise)).then_some((
@@ -782,13 +877,14 @@ impl Convention {
             })
             .collect();
         let (lo, hi) = partner.points();
+        let small = contract_points(Bid::NT(6))?;
         let exploration = Exploration {
             explore,
             suit,
             length,
             past_notrump: !below_notrump,
             cheaper_past_notrump,
-            slam: 33u8.saturating_sub(reach(lo, hi)),
+            slam: small.saturating_sub(reach(lo, hi)),
             placements,
         };
         Some(Convention::Explored {
@@ -828,13 +924,16 @@ impl Convention {
         };
         let ours = ours(history);
         let game_forced = self.game_forced(bids);
-        let here = |strain| Strain {
+        let here = |strain: Option<Suit>| Strain {
             convention: self,
             history,
             strain,
             invited,
             ours,
             game_forced,
+            shown: strain.map_or(0, |suit| {
+                partner.min.length[suit].max(mine.min.length[suit])
+            }),
         };
         let strain = here(trump(bid));
 
@@ -873,8 +972,8 @@ impl Convention {
         };
         let counted = |rule| match rule {
             Rule::Sure | Rule::Forced => lo,
-            Rule::Invite => hi.min(lo + 2),
-            Rule::LastChance => hi.min(lo + 1),
+            Rule::Invite => hi.min(lo + INVITING),
+            Rule::LastChance => hi.min(lo + LAST_CHANCE),
         };
         let least = if rule == Rule::Forced {
             0
@@ -925,7 +1024,7 @@ impl Convention {
         points.set(&mut min, least);
         points.set(&mut max, most.min(points.of(&HandValuation::MAX)));
         if let Some(suit) = strain.strain {
-            min.length[suit] = 8u8.saturating_sub(partner.min.length[suit]);
+            min.length[suit] = TRUMPS.saturating_sub(partner.min.length[suit]);
             // A game force must reach game, so with no fit known it may be
             // played in a suit of this hand's own with six cards, or as many
             // as it has shown.
