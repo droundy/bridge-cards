@@ -83,6 +83,24 @@ async fn serves_the_pages() {
     let (head, _) = get(addr, "/style.css").await;
     assert_eq!(header(&head, "content-type"), Some("text/css"));
 
+    // Each bidding system has a booklet, which is one HTML page.
+    for system in robot::BiddingSystem::ALL {
+        let path = format!("/booklet/{}", system.slug());
+        let (head, body) = get(addr, &path).await;
+        assert!(head.starts_with("HTTP/1.1 200"), "{path}: {head}");
+        assert!(
+            header(&head, "content-type").is_some_and(|t| t.starts_with("text/html")),
+            "{head}"
+        );
+        assert!(body.contains(" bidding booklet</title>"), "{path}");
+        assert!(
+            body.contains("<section class=\"page\" id=\"opening-bids\">"),
+            "{path} has no opening bids"
+        );
+    }
+    let (head, _) = get(addr, "/booklet/no-such-system").await;
+    assert!(head.starts_with("HTTP/1.1 404"), "{head}");
+
     let (head, body) = get(addr, "/a%20table/south").await;
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
     assert!(body.contains("/ws"), "this is not a player's page");

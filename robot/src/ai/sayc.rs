@@ -19,9 +19,15 @@
 //! fallback, such as opener rebidding a five card suit when nothing else
 //! fits.
 //!
+//! Natural games, slams and invitations come from the contract rules (see
+//! `rules`), which come after the entries that describe a hand and before
+//! the new suit responses to a major, which explore.  So SAYC's limit raise
+//! of a major and its natural notrump responses are not written here, and
+//! the single raise is a limit bid, whose most points the rules derive.
+//! Raises count dummy points (`shcp`), as the booklet does.
+//!
 //! Where the table still differs from the booklet:
 //!
-//! * Raises count high card points, not the booklet's dummy points.
 //! * Notrump bids do not check for a stopper.
 //! * 2H over 1S promises five hearts.
 //! * In two over one the direct limit raise 3M takes three trumps, though
@@ -31,12 +37,17 @@
 //! `responder_rebids`): a sign-off, which opener passes, an invitation,
 //! which opener accepts with enough for 25 points, game, or a new suit,
 //! which forces.  The notrump structure is SAYC's own (see `notrump`),
-//! with Stayman only for a four card major.  The strong 2C, the weak twos and threes, and the
-//! natural fallbacks are shared with Sheets.
+//! and answers 2NT after 2C-2D as it does a 2NT opening.  Stayman asks for
+//! a four card major and shows nothing, though the robot asks only with a
+//! four card major of its own, or 5-5 in the majors over 3NT.  The strong
+//! 2C, the weak twos and threes, and the natural fallbacks are shared with
+//! Sheets, though over a weak two's 2NT response opener rebids the suit
+//! with a minimum.
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
-//! Gerber), negative doubles, responder's strong jump shifts, a 3NT opening,
-//! 3H or 3S over 1NT, and Michaels over a major.  (Splinters are not part of
+//! Gerber), negative doubles, responder's strong jump shifts, the feature
+//! that opener shows over a weak two's 2NT with a maximum, and Michaels over
+//! a major.  (Splinters are not part of
 //! SAYC.)  Auctions the tables do not mention fall back on the natural bids
 //! shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
@@ -79,11 +90,32 @@ impl Shape for HandValuation {
     }
 }
 
-/// A convention under construction.
-struct Sheet(Convention);
+/// A convention under construction: the entries that describe a hand, and
+/// those that explore, which come after the contract rules, so that a hand
+/// explores only when the rules do not know which contract to aim for.
+struct Sheet(Convention, Convention);
+
+/// An entry that a hand fits if it fits any of `fits`.
+fn rule(
+    name: &'static str,
+    regex: &str,
+    description: &str,
+    forcing: Forcing,
+    fits: impl IntoIterator<Item = Fit>,
+) -> Convention {
+    let fits: Vec<Fit> = fits.into_iter().collect();
+    assert!(!fits.is_empty(), "{} {} fits no hand", name, regex);
+    Convention::Rule {
+        regex: RegexSet::new([regex]).unwrap(),
+        the_description: format_as!(HTML, description),
+        the_name: name,
+        fits,
+        forcing,
+    }
+}
 
 impl Sheet {
-    /// An entry that a hand fits if it fits any of `fits`.
+    /// An entry that describes a hand that fits any of `fits`.
     fn add(
         &mut self,
         name: &'static str,
@@ -92,15 +124,18 @@ impl Sheet {
         forcing: Forcing,
         fits: impl IntoIterator<Item = Fit>,
     ) {
-        let fits: Vec<Fit> = fits.into_iter().collect();
-        assert!(!fits.is_empty(), "{} {} fits no hand", name, regex);
-        self.0.add(Convention::Rule {
-            regex: RegexSet::new([regex]).unwrap(),
-            the_description: format_as!(HTML, description),
-            the_name: name,
-            fits,
-            forcing,
-        });
+        self.0.add(rule(name, regex, description, forcing, fits));
+    }
+    /// An entry that explores, for a hand that fits any of `fits`.
+    fn explore(
+        &mut self,
+        name: &'static str,
+        regex: &str,
+        description: &str,
+        forcing: Forcing,
+        fits: impl IntoIterator<Item = Fit>,
+    ) {
+        self.1.add(rule(name, regex, description, forcing, fits));
     }
     /// The entries that `add` makes, which were written to be sorted the
     /// way Sheets is (see `Convention::most_forcing_then_highest`).
@@ -166,15 +201,30 @@ fn longest(mut fit: Fit, suit: Suit, others: impl Iterator<Item = Suit>) -> Fit 
 }
 
 fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
-    let mut s = Sheet(Convention::new(name));
-    s.add_block(|t| t.add_strong_two_clubs(22));
+    let mut s = Sheet(Convention::new(name), Convention::new(""));
+    // The notrump structure comes first, so that a balanced hand opens 2NT
+    // or 3NT rather than 2C, and rebids 2NT over 2C-2D with 22-24 rather
+    // than 3NT.
     notrump(&mut s);
+    three_notrump(&mut s);
+    s.add_block(|t| t.add_strong_two_clubs(22, false));
     s.add_block(|t| t.add_preempts());
+    weak_two_rebids(&mut s);
     openings(&mut s);
     responses(&mut s, two_over_one);
     opener_rebids(&mut s, two_over_one);
     responder_rebids(&mut s);
     competition(&mut s);
+    // Natural invitations, games and slams when the opponents have only
+    // passed, by the contract rules, then the bids that explore, and the
+    // shared natural bids for when they have bid or doubled.
+    s.0.add(Convention::Contract {
+        the_name: "Natural",
+        regex: RegexSet::new(["[1-7][CDHSN]$"]).unwrap(),
+    });
+    s.0.explain(super::rules::explanation());
+    let explore = std::mem::replace(&mut s.1, Convention::new(""));
+    s.0.append(explore);
     s.add_block(|t| t.add_natural_bids());
     s.0
 }
@@ -190,16 +240,20 @@ fn auction(calls: &[&str]) -> String {
 /// quantitative 4NT, with the continuations the booklet gives.
 fn notrump(s: &mut Sheet) {
     use Suit::*;
-    // Each opening, with responder's points to invite (if 1NT), for game,
-    // and to invite a slam.
-    for (nt, (lo, hi), invite, game, slam) in [
-        ("2N", (20, 21), None, 5, (11, 12)),
-        ("1N", (15, 17), Some((8, 9)), 10, (16, 17)),
+    // Each opening, with responder's points to invite (if 1NT) and for
+    // game, as the contract rules give them: over 2NT there is no room to
+    // invite, so game takes 25 opposite 21.  The natural notrump bids
+    // themselves come from the rules.  The booklet answers 2NT after 2C-2D,
+    // which shows 22-24, as it answers a 2NT opening.
+    for (nt, (lo, hi), invite, game) in [
+        ("2N", (20, 21), None, 4),
+        ("2C [PX] 2D [PX] 2N", (22, 24), None, 3),
+        ("1N", (15, 17), Some((8, 9)), 10),
     ] {
-        let name = if nt == "1N" {
-            "Opening 1NT"
-        } else {
-            "Opening 2NT"
+        let name = match nt {
+            "1N" => "Opening 1NT",
+            "2N" => "Opening 2NT",
+            _ => "Strong two rebid",
         };
         s.add(
             name,
@@ -215,7 +269,25 @@ fn notrump(s: &mut Sheet) {
         let maximum = MIN.with_hcp(if nt == "1N" { hi - 1 } else { hi });
         let stayman_min = invite.map_or(game, |(lo, _)| lo);
 
-        // Responder's first bid.
+        // Responder's first bid.  The booklet gives 1NT-3M no points, so it
+        // takes what makes a small slam possible opposite 1NT's maximum.
+        if nt == "1N" {
+            let slam_interest = MIN.with_lhcp(33 - hi);
+            s.add(
+                "Response",
+                &auction(&[nt, "3S"]),
+                "6+ spades, slam interest",
+                Forcing::GameForcing,
+                [fit(slam_interest.min_len(Spades, 6), MAX).with(AtLeastAsLong(Spades, Hearts))],
+            );
+            s.add(
+                "Response",
+                &auction(&[nt, "3H"]),
+                "6+ hearts, slam interest",
+                Forcing::GameForcing,
+                [fit(slam_interest.min_len(Hearts, 6), MAX)],
+            );
+        }
         s.add(
             "Jacoby transfer",
             &auction(&[nt, &to_spades]),
@@ -233,11 +305,11 @@ fn notrump(s: &mut Sheet) {
         s.add(
             "Stayman",
             &auction(&[nt, &stayman]),
-            "A 4 card major",
+            "Asks for a 4 card major",
             Forcing::Forcing,
             [
-                fit(MIN.with_hcp(stayman_min).min_len(Hearts, 4), MAX),
-                fit(MIN.with_hcp(stayman_min).min_len(Spades, 4), MAX),
+                fit(MIN.with_hcp(stayman_min).min_len(Hearts, 4), MAX).asks(),
+                fit(MIN.with_hcp(stayman_min).min_len(Spades, 4), MAX).asks(),
             ],
         );
         if let Some((invite_lo, invite_hi)) = invite {
@@ -264,28 +336,7 @@ fn notrump(s: &mut Sheet) {
                     )],
                 );
             }
-            s.add(
-                "Game invite",
-                &auction(&[nt, "2N"]),
-                "",
-                Forcing::Passable,
-                [fit(MIN.with_hcp(invite_lo), MAX.with_hcp(invite_hi))],
-            );
         }
-        s.add(
-            "Game",
-            &auction(&[nt, "3N"]),
-            "To play",
-            Forcing::Passable,
-            [fit(MIN.with_hcp(game), MAX.with_hcp(slam.0 - 1))],
-        );
-        s.add(
-            "Slam invite",
-            &auction(&[nt, "4N"]),
-            "Quantitative",
-            Forcing::Passable,
-            [fit(MIN.with_hcp(slam.0), MAX.with_hcp(slam.1))],
-        );
         s.add(
             "Response pass",
             &auction(&[nt, "P"]),
@@ -343,23 +394,7 @@ fn notrump(s: &mut Sheet) {
                 Forcing::Passable,
                 [fit(MIN, MAX)],
             );
-            for response in ["2N", "3D", "3C"] {
-                s.add(
-                    "Game",
-                    &auction(&[nt, response, "3N"]),
-                    "Maximum",
-                    Forcing::Passable,
-                    [fit(maximum, MAX)],
-                );
-            }
         }
-        s.add(
-            "Slam",
-            &auction(&[nt, "4N", "6N"]),
-            "Maximum",
-            Forcing::Passable,
-            [fit(maximum, MAX)],
-        );
 
         // Responder's second bid.
         let invitational = invite.map(|(lo, hi)| (MIN.with_hcp(lo), MAX.with_hcp(hi)));
@@ -553,6 +588,138 @@ fn notrump(s: &mut Sheet) {
     }
 }
 
+/// Opener's rebid of a weak two's suit over 2NT, which the booklet makes
+/// forcing, with a minimum of 5-8 points.  With more, the contract rules
+/// answer 2NT as the invitation they make it.
+fn weak_two_rebids(s: &mut Sheet) {
+    for suit in [Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+        let two = format!("2{}", suit.latin());
+        s.add(
+            "Weak two rebid",
+            &auction(&[&two, "2N", &format!("3{}", suit.latin())]),
+            "A minimum",
+            Forcing::Passable,
+            [fit(MIN, MAX.with_hcp(8))],
+        );
+    }
+}
+
+/// The 3NT opening, which comes before the strong 2C that its hands also
+/// fit, with the booklet's Stayman and transfers at the four level.  The
+/// quantitative 4NT and the slams come from the contract rules.
+fn three_notrump(s: &mut Sheet) {
+    use Suit::*;
+    let (lo, hi) = (25, 27);
+    s.add(
+        "Opening 3NT",
+        &auction(&["3N"]),
+        "",
+        Forcing::Passable,
+        [balanced_hcp(lo, hi)],
+    );
+    // Game is already bid, so Stayman looks for a slam in a major, with the
+    // points that make one possible opposite 3NT's maximum.  After 4D there
+    // is no way back to 3NT, and 4NT is then quantitative.  With 5-5 in the
+    // majors it finds the eight card fit that 3NT's balanced hand must have
+    // in one of them, at any strength, which a transfer might miss.
+    let five_five = MIN.min_len(Hearts, 5).min_len(Spades, 5);
+    s.add(
+        "Stayman",
+        &auction(&["3N", "4C"]),
+        "Asks for a 4 card major",
+        Forcing::Forcing,
+        [fit(five_five, MAX).asks()],
+    );
+    s.add(
+        "Jacoby transfer",
+        &auction(&["3N", "4H"]),
+        "5+ spades",
+        Forcing::Forcing,
+        [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
+    );
+    s.add(
+        "Jacoby transfer",
+        &auction(&["3N", "4D"]),
+        "5+ hearts",
+        Forcing::Forcing,
+        [fit(MIN.min_len(Hearts, 5), MAX)],
+    );
+    let slam_possible = MIN.with_hcp(33 - hi);
+    s.add(
+        "Stayman",
+        &auction(&["3N", "4C"]),
+        "Asks for a 4 card major",
+        Forcing::Forcing,
+        [
+            fit(slam_possible.min_len(Hearts, 4), MAX).asks(),
+            fit(slam_possible.min_len(Spades, 4), MAX).asks(),
+        ],
+    );
+    s.add(
+        "Response pass",
+        &auction(&["3N", "P"]),
+        "No slam interest",
+        Forcing::Passable,
+        [fit(MIN, MAX.with_hcp(33 - hi - 1))],
+    );
+
+    // Opener's replies.
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4H"]),
+        "4+ hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Hearts, 4), MAX)],
+    );
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4S"]),
+        "4+ spades, not 4 hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
+    );
+    s.add(
+        "Stayman response",
+        &auction(&["3N", "4C", "4D"]),
+        "No 4 card major",
+        Forcing::Passable,
+        [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
+    );
+    for (transfer, accept) in [("4D", "4H"), ("4H", "4S")] {
+        s.add(
+            "Transfer accepted",
+            &auction(&["3N", transfer, accept]),
+            "",
+            Forcing::Passable,
+            [fit(MIN, MAX)],
+        );
+    }
+
+    // With 5-5 after 4D, responder lets opener choose the major, which the
+    // booklet does not say.
+    s.add(
+        "Pass or correct",
+        &auction(&["3N", "4C", "4D", "4H"]),
+        "5-5 in the majors",
+        Forcing::Passable,
+        [fit(five_five, MAX)],
+    );
+    s.add(
+        "Choice of games",
+        &auction(&["3N", "4C", "4D", "4H", "P"]),
+        "3 hearts",
+        Forcing::Passable,
+        [fit(MIN.min_len(Hearts, 3), MAX)],
+    );
+    s.add(
+        "Choice of games",
+        &auction(&["3N", "4C", "4D", "4H", "4S"]),
+        "2 hearts, so 3 spades",
+        Forcing::Passable,
+        [fit(MIN.min_len(Spades, 3), MAX.max_len(Hearts, 2))],
+    );
+}
+
 /// One of a suit, after the strong 2C, the notrump openings and the weak
 /// twos and threes, which come first in the table.
 fn openings(s: &mut Sheet) {
@@ -623,8 +790,9 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
     for opening in Suit::ALL.iter().cloned() {
         let o = opening.latin();
         let after = format!("^{OPEN}1{o} [PX] ");
-        // New suits at the two level, the longest first.
-        let two_level = |s: &mut Sheet| {
+        // New suits at the two level, the longest first, which explore if
+        // `explore`.
+        let two_level = |s: &mut Sheet, explore: bool| {
             let (strength, forcing) = if two_over_one {
                 (12, Forcing::GameForcing)
             } else {
@@ -637,13 +805,18 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                     4
                 };
                 let min = MIN.with_hcp(strength).min_len(response, length);
-                s.add(
+                let entry = rule(
                     "Two-level response",
                     &format!("{after}2{}$", response.latin()),
                     "New suit",
                     forcing,
                     [longest(fit(min, MAX), response, suits_except(&[opening]))],
                 );
+                if explore {
+                    s.1.add(entry);
+                } else {
+                    s.0.add(entry);
+                }
             }
         };
 
@@ -653,7 +826,19 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 &format!("{after}2N$"),
                 "4+ card support",
                 Forcing::GameForcing,
-                [fit(MIN.with_hcp(13).min_len(opening, 4), MAX)],
+                [fit(MIN.with_shcp(13).min_len(opening, 4), MAX)],
+            );
+            // The booklet's 4M is "usually" five trumps and a singleton or
+            // void with fewer than 10 HCP; here it is always that, and short
+            // of Jacoby's dummy points.
+            let preempt = MAX.with_hcp(9).with_shcp(12);
+            s.add(
+                "Preemptive raise",
+                &format!("{after}4{o}$"),
+                "5+ card support, a singleton or void",
+                Forcing::Passable,
+                suits_except(&[opening])
+                    .map(|short| fit(MIN.min_len(opening, 5), preempt.max_len(short, 1))),
             );
             s.add(
                 "Response",
@@ -665,18 +850,23 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                     MAX.with_hcp(17).max_len(opening, 2),
                 )],
             );
-            s.add(
-                "Limit raise",
-                &format!("{after}3{o}$"),
-                "3+ card support",
-                Forcing::Passable,
-                [fit(
-                    MIN.with_hcp(10).min_len(opening, 3),
-                    MAX.with_hcp(if two_over_one { 12 } else { 11 }),
-                )],
-            );
-            if opening == Hearts {
+            // SAYC's limit raise is the contract rules' invitation, but two
+            // over one's takes a twelfth point, short of its game force.
+            if two_over_one {
                 s.add(
+                    "Limit raise",
+                    &format!("{after}3{o}$"),
+                    "3+ card support",
+                    Forcing::Passable,
+                    [fit(
+                        MIN.with_shcp(10).min_len(opening, 3),
+                        MAX.with_shcp(12),
+                    )],
+                );
+            }
+            // New suits explore, after the raises and the contract rules.
+            if opening == Hearts {
+                s.explore(
                     "Response",
                     &format!("{after}1S$"),
                     "4+ spades",
@@ -684,15 +874,17 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                     [fit(weak.min_len(Spades, 4), MAX)],
                 );
             }
-            two_level(s);
+            two_level(s, true);
             s.add(
                 "Single raise",
                 &format!("{after}2{o}$"),
                 "3+ card support",
                 Forcing::Passable,
-                [fit(weak.min_len(opening, 3), MAX.with_hcp(9))],
+                [fit(MIN.with_shcp(6).min_len(opening, 3), MAX).limit()],
             );
-            s.add(
+            // It denies four spades, which bid 1S over 1H.  Two over one's
+            // forcing 1NT explores, after the new suits, as before.
+            let notrump = rule(
                 "Response",
                 &format!("{after}1N$"),
                 "No fit and no suit to bid",
@@ -701,8 +893,17 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 } else {
                     Forcing::Passable
                 },
-                [fit(weak, MAX.with_hcp(if two_over_one { 12 } else { 9 }))],
+                [fit(
+                    weak,
+                    MAX.with_hcp(if two_over_one { 12 } else { 9 })
+                        .max_len(Spades, if opening == Hearts { 3 } else { 13 }),
+                )],
             );
+            if two_over_one {
+                s.1.add(notrump);
+            } else {
+                s.0.add(notrump);
+            }
         } else {
             s.add(
                 "Response",
@@ -746,7 +947,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                     [fit(weak.min_len(Diamonds, 4), MAX)],
                 );
             }
-            two_level(s);
+            two_level(s, false);
             // Four trumps raise 1D, but five raise 1C.
             let (support, shown) = if opening == Diamonds {
                 (4, "4+ card support")
@@ -759,8 +960,8 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 shown,
                 Forcing::Passable,
                 [fit(
-                    MIN.with_hcp(10).min_len(opening, support),
-                    MAX.with_hcp(12),
+                    MIN.with_shcp(10).min_len(opening, support),
+                    MAX.with_shcp(12),
                 )],
             );
             s.add(
@@ -768,7 +969,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 &format!("{after}2{o}$"),
                 shown,
                 Forcing::Passable,
-                [fit(weak.min_len(opening, support), MAX.with_hcp(9))],
+                [fit(MIN.with_shcp(6).min_len(opening, support), MAX).limit()],
             );
             // Up to the strength of a new suit at the two level, which in
             // two over one is a game force.
@@ -782,12 +983,12 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
         }
     }
     // Responder may not pass with six or more points, so when nothing else
-    // fits there is a forcing bid that may be short.  With less than its
-    // strength, 1NT has already fit.
+    // fits, after the contract rules too, there is a forcing bid that may be
+    // short.  With less than its strength, 1NT has already fit.
     for opening in Suit::ALL.iter().cloned() {
         let after = format!("^{OPEN}1{} [PX] ", opening.latin());
         if opening == Clubs {
-            s.add(
+            s.explore(
                 "Response",
                 &format!("{after}1D$"),
                 "Nothing else fits, may be short",
@@ -795,7 +996,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 [fit(weak, MAX)],
             );
         } else {
-            s.add(
+            s.explore(
                 "Two-level response",
                 &format!("{after}2C$"),
                 "Nothing else fits, may be short",
@@ -1187,9 +1388,16 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
     let after = format!("{first}{} P ", x.call());
     let regex = |bid: &str| format!("{after}{bid}$");
     let legal = |level, strain| above(level, strain, x);
-    // Responder's high card points to invite, and to bid game.
-    let invite = 25 - x.hi.min(x.lo + 2);
-    let game = 25 - x.lo;
+    // Responder's high card points to invite, and to bid game, by the
+    // contract rules: with no bid left that any hand can invite with, which
+    // is 2NT, game takes 25 opposite one more than opener promised.
+    let can_invite = legal(2, None);
+    let (invite, game) = if can_invite {
+        (25 - x.hi.min(x.lo + 2), 25 - x.lo)
+    } else {
+        let game = 25 - x.hi.min(x.lo + 1);
+        (game, game)
+    };
     let weak = MAX.with_hcp(invite - 1);
     let inviting = (MIN.with_hcp(invite), MAX.with_hcp(game - 1));
     let game_values = MIN.with_hcp(game);

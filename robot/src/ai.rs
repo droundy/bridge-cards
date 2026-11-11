@@ -31,6 +31,14 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "2/1",
         }
     }
+    /// The system's name as a word that can be part of a path.
+    pub fn slug(self) -> &'static str {
+        match self {
+            BiddingSystem::Sheets => "sheets",
+            BiddingSystem::Sayc => "sayc",
+            BiddingSystem::TwoOverOne => "two-over-one",
+        }
+    }
     /// The conventions this system bids by.
     pub fn convention(self) -> Convention {
         match self {
@@ -45,6 +53,12 @@ impl BiddingSystem {
 pub struct BridgeAi {
     bidder: ConventionalBid,
     player: RandomPlay,
+}
+
+impl Default for BridgeAi {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BridgeAi {
@@ -80,15 +94,6 @@ pub trait BidAI: std::fmt::Debug {
 }
 pub trait PlayAI: std::fmt::Debug {
     fn play<C>(&mut self, game: &GameState<C>) -> Card;
-}
-
-#[derive(Debug)]
-pub struct AllPass;
-impl BidAI for AllPass {
-    fn bid(&mut self, _history: &[Bid], _hand: Cards) -> Bid {
-        println!("Using AllPass AI");
-        Bid::Pass
-    }
 }
 
 /// The bids that may follow `history`, lowest priority first: Pass, then
@@ -130,6 +135,12 @@ impl BidAI for ConventionalBid {
                 best = Some((i, b, c));
             }
         }
+        if best.is_none() {
+            best = self
+                .0
+                .contract_known(history, &hand)
+                .map(|(b, c)| (usize::MAX, b, c));
+        }
         if let Some((_, b, c)) = best {
             println!(
                 "Bidding {:?} with convention {}",
@@ -144,6 +155,23 @@ impl BidAI for ConventionalBid {
 }
 
 impl Convention {
+    /// When no entry fits `hand` after `history`, the contract the rules know
+    /// for it, though they would rather have explored: the highest bid of
+    /// the rules that fits it, if any.
+    pub(crate) fn contract_known(
+        &self,
+        history: &[Bid],
+        hand: &HandValuation,
+    ) -> Option<(Bid, Convention)> {
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        legal_bids(history).into_iter().rev().find_map(|b| {
+            *bids.last_mut().unwrap() = b;
+            self.refine(&bids)
+                .filter(|c| c.fits_when_nothing_explores(hand))
+                .map(|c| (b, c))
+        })
+    }
     /// The first entry of this table before the one at `before` that
     /// describes the last of `bids` and fits `hand`, with its index and what it
     /// says about that bid.  The robot bids the legal bid whose entry comes
@@ -155,7 +183,7 @@ impl Convention {
         before: usize,
     ) -> Option<(usize, Convention)> {
         let auction = bids_string(bids);
-        let default = self.default_for(&auction);
+        let default = self.default_for(&auction, bids);
         for i in self.candidates(&auction) {
             if before <= i {
                 break;
@@ -224,7 +252,7 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
         let best_goodness = goodness.iter().cloned().max().unwrap();
         for i in (0..3).rev() {
             if goodness[i] == best_goodness && suits_to_consider[i].non_empty() {
-                let cards = suits_to_consider[i];
+                let mut cards = suits_to_consider[i];
                 let have_ace = cards.aces().non_empty();
                 let have_king = cards.kings().non_empty();
                 let have_queen = cards.queens().non_empty();
@@ -233,7 +261,7 @@ fn opening_lead(trump: Option<Suit>, hand: Cards) -> Card {
                 if have_ace && have_king {
                     return cards.kings().next().unwrap();
                 } else if ((have_king || have_jack) && have_queen) || (cards.len() == 2) {
-                    return cards.rev().next().unwrap();
+                    return cards.next_back().unwrap();
                 } else if have_jack && have_ten {
                     return cards.jacks().next().unwrap();
                 }
@@ -313,7 +341,7 @@ impl PlayAI for RandomPlay {
         };
         println!("trump is {:?}", nt_or_trump);
         let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
-        if game.played.len() % 4 == 0 && starting.hands[0].len() == 13 {
+        if game.played.len().is_multiple_of(4) && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
         } else if tricks_left < 14 && game.could_be_played().clone().len() > 1 {
             let cards_played: &[Card] = if game.played.len() == 4 {
@@ -355,10 +383,18 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
+mod booklet;
 #[cfg(test)]
 mod daily_columns;
+pub(crate) mod rules;
 mod sayc;
+pub use booklet::Booklet;
+use rules::{contracted_fits, Choice, Reason};
 
+#[expect(
+    clippy::enum_variant_names,
+    reason = "the names say how forcing a bid is, which renaming them would obscure"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
     Forced,
@@ -413,6 +449,11 @@ pub struct Fit {
     min: HandValuation,
     max: HandValuation,
     shape: Vec<ShapeRule>,
+    /// Is this a limit bid, whose most points are the fewest with which the
+    /// system makes a stronger bid instead?  See `Convention::limit`.
+    limit: bool,
+    /// Does this ask rather than tell?  See `Fit::asks`.
+    asks: bool,
 }
 
 impl Fit {
@@ -422,12 +463,35 @@ impl Fit {
             min,
             max,
             shape: Vec::new(),
+            limit: false,
+            asks: false,
         }
     }
     /// A hand that also follows `rule`.
     pub fn with(mut self, rule: ShapeRule) -> Self {
         self.shape.push(rule);
         self
+    }
+    /// A limit bid, whose most points are derived from the rest of the
+    /// system rather than written down.
+    pub fn limit(mut self) -> Self {
+        self.limit = true;
+        self
+    }
+    /// An asking bid, such as Stayman: the robot makes it with a hand like
+    /// this, but partner learns nothing from it, since it is a question and
+    /// other hands could ask it too.
+    pub fn asks(mut self) -> Self {
+        self.asks = true;
+        self
+    }
+    /// The bounds that partner learns from a hand fitting this way.
+    fn shown(&self) -> (HandValuation, HandValuation) {
+        if self.asks {
+            (HandValuation::MIN, HandValuation::MAX)
+        } else {
+            (self.min, self.max)
+        }
     }
     fn holds(&self, hand: &HandValuation) -> bool {
         !hand.exceeds(self.max)
@@ -459,8 +523,8 @@ impl Fit {
 /// defaults, for bids that no other entry describes, and only the first of
 /// them to match a bid applies.
 ///
-/// What this cannot yet say: points for shortness when raising ("dummy
-/// points"), and that a bid denies the entries before it.
+/// What this cannot yet say: that a bid denies the entries before it,
+/// except where the contract rules derive a limit bid's maximum.
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
@@ -491,6 +555,25 @@ pub enum Convention {
         min: HandValuation,
         max: HandValuation,
     },
+    /// A natural bid of a contract in an auction where the opponents have
+    /// only passed, which means whatever the contract rules make it mean
+    /// (see `rules`).  Like `Natural`, it is a default, and only when the
+    /// rules give the bid a meaning.
+    Contract {
+        the_name: &'static str,
+        regex: RegexSet,
+    },
+    /// What the contract rules make of a bid: the hands that make it, and
+    /// why.  Placing a contract opposite a limit bid shows nothing, so then
+    /// its bounds say only when the robot bids it.
+    Contracted {
+        the_name: &'static str,
+        min: HandValuation,
+        max: HandValuation,
+        reason: Reason,
+        /// What the rules weigh to choose the bid for a hand.
+        choice: Choice,
+    },
     Ordered {
         conventions: Vec<Convention>,
         the_name: &'static str,
@@ -498,10 +581,38 @@ pub enum Convention {
         /// the bid as `bids_string` writes it, or by `*` for entries that
         /// can describe any bid.
         by_bid: std::collections::HashMap<String, Vec<usize>>,
+        /// What auctions have been found to mean, since the contract rules
+        /// ask about partner's calls again and again.
+        meanings: Meanings,
+        /// What the table says about how it bids: see `Convention::explain`.
+        explanations: Vec<Explanation>,
     },
     /// Several entries that describe the same bid, of which the bidder may
     /// have used any.
     Either(Vec<Convention>),
+}
+
+/// Something a table says in words about how it bids, which its entries
+/// cannot say of one bid at a time, such as the rules that natural bids go
+/// by.  The booklet prints it.
+#[derive(Clone, Debug)]
+pub struct Explanation {
+    /// What it is about, as a heading.
+    pub title: &'static str,
+    pub paragraphs: Vec<wording::Text>,
+}
+
+impl Explanation {
+    /// An explanation that says each of `paragraphs` under `title`.
+    pub fn new(
+        title: &'static str,
+        paragraphs: impl IntoIterator<Item = impl Into<wording::Text>>,
+    ) -> Self {
+        Explanation {
+            title,
+            paragraphs: paragraphs.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 fn bids_string(bids: &[Bid]) -> String {
@@ -580,6 +691,40 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
             )
         }
     )
+}
+
+/// What the auctions a table has been asked about mean, remembered.  A copy
+/// of a table starts with none remembered.
+#[derive(Default)]
+pub struct Meanings(std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>);
+
+impl Meanings {
+    /// What `bids` mean, from `find` the first time.
+    fn get(&self, bids: &[Bid], find: impl FnOnce() -> Option<Convention>) -> Option<Convention> {
+        let key = bids_string(bids);
+        if let Some(meaning) = self.0.lock().unwrap().get(&key) {
+            return meaning.clone();
+        }
+        // Not holding the lock, since finding a meaning asks about others.
+        let meaning = find();
+        self.0.lock().unwrap().insert(key, meaning.clone());
+        meaning
+    }
+    fn clear(&mut self) {
+        self.0.get_mut().unwrap().clear();
+    }
+}
+
+impl Clone for Meanings {
+    fn clone(&self) -> Self {
+        Meanings::default()
+    }
+}
+
+impl std::fmt::Debug for Meanings {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("Meanings")
+    }
 }
 
 /// The smallest bounds that hold all of `bounds`.
@@ -691,9 +836,15 @@ impl Convention {
             Convention::Simple { min, max, .. }
             | Convention::Natural { min, max, .. }
             | Convention::Forced { min, max, .. } => (*min, *max),
-            Convention::Rule { fits, .. } => hull(fits.iter().map(|f| (f.min, f.max))),
+            Convention::Rule { fits, .. } => hull(fits.iter().map(Fit::shown)),
             Convention::Either(options) => hull(options.iter().map(|c| c.bounds())),
-            Convention::Ordered { .. } => (HandValuation::MIN, HandValuation::MAX),
+            Convention::Contracted { reason, .. } if reason.shows_nothing() => {
+                (HandValuation::MIN, HandValuation::MAX)
+            }
+            Convention::Contracted { min, max, .. } => (*min, *max),
+            Convention::Ordered { .. } | Convention::Contract { .. } => {
+                (HandValuation::MIN, HandValuation::MAX)
+            }
         }
     }
     /// Does a hand with these values fit this bid?
@@ -701,10 +852,42 @@ impl Convention {
         match self {
             Convention::Rule { fits, .. } => fits.iter().any(|f| f.holds(hand)),
             Convention::Either(options) => options.iter().any(|c| c.fits(hand)),
+            Convention::Contracted {
+                min,
+                max,
+                reason,
+                choice,
+                ..
+            } => contracted_fits(min, max, reason, choice, hand, true),
             _ => {
                 let (min, max) = self.bounds();
                 !hand.exceeds(max) && !min.exceeds(*hand)
             }
+        }
+    }
+    /// Does this describe a hand, as far as partner can tell?  It does if the
+    /// hand fits it, or, for what the contract rules make of a bid, if the
+    /// hand lies within its bounds, whatever led the robot to choose it.
+    #[cfg(test)]
+    fn describes(&self, hand: &HandValuation) -> bool {
+        match self {
+            Convention::Contracted { min, max, .. } => !hand.exceeds(*max) && !min.exceeds(*hand),
+            Convention::Either(options) => options.iter().any(|c| c.describes(hand)),
+            c => c.fits(hand),
+        }
+    }
+    /// Does a hand fit what the contract rules make of a bid, when nothing
+    /// else fits, so that it bids the contract it knows rather than explore?
+    fn fits_when_nothing_explores(&self, hand: &HandValuation) -> bool {
+        match self {
+            Convention::Contracted {
+                min,
+                max,
+                reason,
+                choice,
+                ..
+            } => contracted_fits(min, max, reason, choice, hand, false),
+            _ => false,
         }
     }
     /// The bounds on the hand that made the last of `actual_bids`.
@@ -719,8 +902,14 @@ impl Convention {
     /// What the last of `actual_bids` means: the entry that describes it, or
     /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
+        if let Convention::Ordered { meanings, .. } = self {
+            return meanings.get(actual_bids, || self.refine_afresh(actual_bids));
+        }
+        self.refine_afresh(actual_bids)
+    }
+    fn refine_afresh(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
-        let default = self.default_for(&auction);
+        let default = self.default_for(&auction, actual_bids);
         let mut found: Vec<Convention> = self
             .candidates(&auction)
             .into_iter()
@@ -733,10 +922,11 @@ impl Convention {
             _ => Some(Convention::Either(found)),
         }
     }
-    /// The index of the default for the last bid of `auction`: the first
-    /// `Natural` or `Forced` entry of this table to match it, when no
-    /// `Simple` or `Rule` entry does.
-    fn default_for(&self, auction: &str) -> Option<usize> {
+    /// The index of the default for the last bid of `auction`, whose bids are
+    /// `bids`: the first `Natural`, `Forced` or `Contract` entry of this table
+    /// to match it, when no `Simple` or `Rule` entry does.  A `Contract` entry
+    /// matches only when the contract rules give the bid a meaning.
+    fn default_for(&self, auction: &str, bids: &[Bid]) -> Option<usize> {
         let mut default = None;
         for i in self.candidates(auction) {
             match &self.entries()[i] {
@@ -747,6 +937,13 @@ impl Convention {
                 }
                 Convention::Natural { regex, .. } | Convention::Forced { regex, .. }
                     if default.is_none() && regex.is_match(auction) =>
+                {
+                    default = Some(i);
+                }
+                Convention::Contract { regex, .. }
+                    if default.is_none()
+                        && regex.is_match(auction)
+                        && self.contract_meaning(bids, "").is_some() =>
                 {
                     default = Some(i);
                 }
@@ -771,9 +968,29 @@ impl Convention {
         let is_default = default == Some(index);
         let entry = &self.entries()[index];
         match entry {
-            Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
-                regex.is_match(auction).then(|| entry.clone())
-            }
+            Convention::Simple { regex, .. } => regex.is_match(auction).then(|| entry.clone()),
+            Convention::Rule {
+                regex,
+                the_description,
+                the_name,
+                fits,
+                forcing,
+            } if regex.is_match(auction) => Some(Convention::Rule {
+                regex: regex.clone(),
+                the_description: the_description.clone(),
+                the_name,
+                fits: fits
+                    .iter()
+                    .map(|f| {
+                        if f.limit {
+                            self.limit(bids, f)
+                        } else {
+                            f.clone()
+                        }
+                    })
+                    .collect(),
+                forcing: *forcing,
+            }),
             Convention::Natural {
                 the_name,
                 regex,
@@ -813,6 +1030,12 @@ impl Convention {
                     min,
                     max,
                 })
+            }
+            Convention::Contract { the_name, regex } if regex.is_match(auction) => {
+                if !in_table || !is_default {
+                    return None;
+                }
+                self.contract_meaning(bids, the_name)
             }
             Convention::Ordered { .. } => entry.refine(bids),
             _ => None,
@@ -954,6 +1177,22 @@ impl Convention {
                     suit_ranges(min, max)
                 )
             }
+            Convention::Contract { the_name, .. } => {
+                format_as!(HTML, "<strong>" the_name "</strong>")
+            }
+            Convention::Contracted {
+                the_name, reason, ..
+            } => {
+                let (min, max) = self.bounds();
+                format_as!(HTML,
+                    "<strong>" the_name "</strong><br/>"
+                    ValueRange::new(min.hcp, max.hcp, HandValuation::MAX.hcp, "hcp") ""
+                    ValueRange::new(min.shcp, max.shcp, HandValuation::MAX.lhcp, "shcp") ""
+                    ValueRange::new(min.lhcp, max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+                    suit_ranges(&min, &max) ""
+                    reason.text()
+                )
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -973,6 +1212,8 @@ impl Convention {
             | Convention::Rule { the_name, .. }
             | Convention::Natural { the_name, .. }
             | Convention::Forced { the_name, .. }
+            | Convention::Contract { the_name, .. }
+            | Convention::Contracted { the_name, .. }
             | Convention::Ordered { the_name, .. } => the_name,
             Convention::Either(options) => options[0].the_name(),
         }
@@ -984,6 +1225,9 @@ impl Convention {
             Convention::Rule { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
+            Convention::Contract { the_name, .. } | Convention::Contracted { the_name, .. } => {
+                format_as!(HTML, the_name)
+            }
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
             Convention::Either(options) => options[0].name(),
         }
@@ -998,7 +1242,9 @@ impl Convention {
     fn is_forcing(&self) -> Forcing {
         match self {
             Convention::Simple { forcing, .. } | Convention::Rule { forcing, .. } => *forcing,
-            Convention::Natural { .. } => Forcing::Passable,
+            Convention::Natural { .. }
+            | Convention::Contract { .. }
+            | Convention::Contracted { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
             Convention::Ordered { .. } => Forcing::Passable,
             Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
@@ -1011,6 +1257,23 @@ impl Convention {
             the_name: name,
             conventions: Vec::new(),
             by_bid: Default::default(),
+            meanings: Meanings::default(),
+            explanations: Vec::new(),
+        }
+    }
+    /// Have this table say `explanation` of how it bids, after what it
+    /// already says.
+    fn explain(&mut self, explanation: Explanation) {
+        match self {
+            Convention::Ordered { explanations, .. } => explanations.push(explanation),
+            _ => panic!("only a table explains how it bids"),
+        }
+    }
+    /// What this table says about how it bids, in the order it was told.
+    pub fn explanations(&self) -> &[Explanation] {
+        match self {
+            Convention::Ordered { explanations, .. } => explanations,
+            _ => &[],
         }
     }
     /// Add another possibility to the OrderedConvention
@@ -1019,8 +1282,10 @@ impl Convention {
             Convention::Ordered {
                 conventions,
                 by_bid,
+                meanings,
                 ..
             } => {
+                meanings.clear();
                 for key in convention.bids_described() {
                     by_bid.entry(key).or_default().push(conventions.len());
                 }
@@ -1072,10 +1337,14 @@ impl Convention {
             _ => vec![0],
         }
     }
-    /// Add the entries of `table` after those already here.
+    /// Add the entries of `table` after those already here, and likewise
+    /// what it says about how it bids.
     fn append(&mut self, table: Convention) {
         for entry in table.entries().iter().cloned() {
             self.add(entry);
+        }
+        for explanation in table.explanations().iter().cloned() {
+            self.explain(explanation);
         }
     }
     /// The regex of an entry.
@@ -1084,7 +1353,8 @@ impl Convention {
             Convention::Simple { regex, .. }
             | Convention::Rule { regex, .. }
             | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. } => Some(regex),
+            | Convention::Forced { regex, .. }
+            | Convention::Contract { regex, .. } => Some(regex),
             _ => None,
         }
     }
@@ -1095,7 +1365,8 @@ impl Convention {
             Convention::Simple { regex, .. }
             | Convention::Rule { regex, .. }
             | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
+            | Convention::Forced { regex, .. }
+            | Convention::Contract { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
             _ => unreachable!(),
         }
         entry
@@ -1129,6 +1400,9 @@ impl Convention {
         });
         for (_, entry) in keyed {
             sorted.add(entry);
+        }
+        for explanation in self.explanations().iter().cloned() {
+            sorted.explain(explanation);
         }
         sorted
     }
@@ -1236,7 +1510,7 @@ impl Convention {
                 length: [0, 0, 0, 4].into(),
                 ..min
             },
-            the_description: format_as!(HTML, Spades ">" Hearts),
+            the_description: format_as!(HTML, "4+ spades, at most 3 hearts"),
             the_name: "Stayman response",
             forcing: Forcing::Passable,
         });
@@ -1279,8 +1553,9 @@ impl Convention {
     }
 
     /// The strong artificial 2C opening, which shows `base` or more points,
-    /// and its responses.
-    fn add_strong_two_clubs(&mut self, base: u8) {
+    /// and its responses, with opener's 2NT rebid unless the system gives
+    /// its own (`two_notrump_rebid` false).
+    fn add_strong_two_clubs(&mut self, base: u8, two_notrump_rebid: bool) {
         let sheets = self;
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
@@ -1289,7 +1564,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*2C$"]).unwrap(),
             max,
             min: min.with_lhcp(base),
-            the_description: format_as!(HTML, "hcp≥" base),
+            the_description: format_as!(HTML, base "+ points"),
             the_name: "Strong two",
             forcing: Forcing::GameForcing,
         });
@@ -1301,64 +1576,92 @@ impl Convention {
             the_name: "Weak response",
             forcing: Forcing::Passable,
         });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2S$"]).unwrap(),
-            max,
-            min: HandValuation {
-                length: [0, 0, 0, 5].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Spades ">" Hearts),
-            the_name: "Strong two rebid",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2H$"]).unwrap(),
-            max,
-            min: HandValuation {
-                length: [0, 0, 5, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, ""),
-            the_name: "Strong two rebid",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3C$"]).unwrap(),
-            max: HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            },
-            min: HandValuation {
-                length: [5, 0, 0, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, ""),
-            the_name: "Strong two rebid",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3D$"]).unwrap(),
-            max: HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            },
-            min: HandValuation {
-                length: [0, 5, 0, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Diamonds ">" Clubs),
-            the_name: "Strong two rebid",
-            forcing: Forcing::GameForcing,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
-            max: max.with_lhcp(base + 1),
-            min: min.with_lhcp(base),
-            the_description: format_as!(HTML, ""),
-            the_name: "Game invite",
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    length: [0, 0, 0, 5].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2S$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
+                the_name: "Strong two rebid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    length: [0, 0, 5, 0].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2H$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ hearts, longer than spades"),
+                the_name: "Strong two rebid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    length: [5, 0, 0, 0].into(),
+                    ..min
+                },
+                HandValuation {
+                    length: [13, 13, 4, 4].into(),
+                    ..max
+                },
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3C$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "5+ clubs, longer than diamonds, no 5 card major"
+                ),
+                the_name: "Strong two rebid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    length: [0, 5, 0, 0].into(),
+                    ..min
+                },
+                HandValuation {
+                    length: [13, 13, 4, 4].into(),
+                    ..max
+                },
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3D$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "5+ diamonds, at least as long as clubs, no 5 card major"
+                ),
+                the_name: "Strong two rebid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs))],
+                forcing: Forcing::GameForcing,
+            });
+        }
+        if two_notrump_rebid {
+            sheets.add(Convention::Simple {
+                regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 2N$"]).unwrap(),
+                max: max.with_lhcp(base + 1),
+                min: min.with_lhcp(base),
+                the_description: format_as!(HTML, ""),
+                the_name: "Game invite",
+                forcing: Forcing::Passable,
+            });
+        }
         sheets.add(Convention::Simple {
             regex: RegexSet::new([r"^(P )*2C [PX] 2D [PX] 3N$"]).unwrap(),
             max: max.with_lhcp(base + 4),
@@ -1493,6 +1796,14 @@ impl Convention {
     /// Natural fallbacks for competitive and slam auctions.
     fn add_natural_bids(&mut self) {
         let sheets = self;
+        sheets.explain(Explanation::new(
+            "Natural bids",
+            [
+                "A bid that nothing else describes is natural: it says that your side has what \
+              the contract needs. Count what your hand has together with the least that \
+              partner has shown.",
+            ],
+        ));
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
         let min = HandValuation::MIN;
@@ -1764,7 +2075,7 @@ impl Convention {
                 all_unbid[o] = 4;
             }
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([&format!(r"^(P )?[123]{:?} X$", bid)]).unwrap(),
+                regex: RegexSet::new([&format!(r"^(P )*[123]{:?} X$", bid)]).unwrap(),
                 max,
                 min: HandValuation {
                     lhcp: 9,
@@ -1782,9 +2093,9 @@ impl Convention {
                     length[response] = 4;
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
-                            &format!(r"^(P )?1{:?} X P {}{:?}$", bid, level, response),
-                            &format!(r"^(P )?2{:?} X P {}{:?}$", bid, level + 1, response),
-                            &format!(r"^(P )?3{:?} X P {}{:?}$", bid, level + 2, response),
+                            &format!(r"^(P )*1{:?} X P {}{:?}$", bid, level, response),
+                            &format!(r"^(P )*2{:?} X P {}{:?}$", bid, level + 1, response),
+                            &format!(r"^(P )*3{:?} X P {}{:?}$", bid, level + 2, response),
                         ])
                         .unwrap(),
                         max,
@@ -1805,7 +2116,7 @@ impl Convention {
                 }
                 sheets.add(Convention::Simple {
                     regex: RegexSet::new([&format!(
-                        r"^(P )?[123]{:?} P [123]{:?} X$",
+                        r"^(P )*[123]{:?} P [123]{:?} X$",
                         bid, response
                     )])
                     .unwrap(),
@@ -1831,18 +2142,18 @@ impl Convention {
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
                             &format!(
-                                r"^(P )?1{:?} P 1{:?} X P {}{:?}$",
+                                r"^(P )*1{:?} P 1{:?} X P {}{:?}$",
                                 bid, response, level, takeout_response
                             ),
                             &format!(
-                                r"^(P )?.{:?} P 2{:?} X P {}{:?}$",
+                                r"^(P )*.{:?} P 2{:?} X P {}{:?}$",
                                 bid,
                                 response,
                                 level + 1,
                                 takeout_response,
                             ),
                             &format!(
-                                r"^(P )?.{:?} P 3{:?} X P {}{:?}$",
+                                r"^(P )*.{:?} P 3{:?} X P {}{:?}$",
                                 bid,
                                 response,
                                 level + 2,
@@ -1860,194 +2171,324 @@ impl Convention {
             }
         }
 
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P P 1H$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 12,
-                length: [0, 0, 5, 4].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, "15+ hcp + " Spades),
-            the_name: "Rule of 15 opening",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P P 1S$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 11,
-                length: [0, 0, 0, 5].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, "15+ hcp + " Spades),
-            the_name: "Rule of 15 opening",
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [0, 0, 5, 4].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P P 1H$"]).unwrap(),
+                the_description: format_as!(HTML, "15+ hcp + " Spades),
+                the_name: "Rule of 15 opening",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 11,
+                    length: [0, 0, 0, 5].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P P 1S$"]).unwrap(),
+                the_description: format_as!(HTML, "15+ hcp + " Spades),
+                the_name: "Rule of 15 opening",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
+                forcing: Forcing::Passable,
+            });
+        }
 
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P P 1C$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 12,
-                length: [3, 0, 0, 3].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, "15+ hcp + " Spades),
-            the_name: "Rule of 15 opening",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P P 1D$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 12,
-                length: [0, 3, 0, 3].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, "15+ hcp + " Spades),
-            the_name: "Rule of 15 opening",
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [3, 0, 0, 3].into(),
+                    ..min
+                },
+                max,
+            );
+            let mut three = hi;
+            three.length[Diamonds] = 3;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P P 1C$"]).unwrap(),
+                the_description: format_as!(HTML, "15+ hcp + " Spades),
+                the_name: "Rule of 15 opening",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds)),
+                    Fit::new(lo, three).with(ShapeRule::AtLeastAsLong(Clubs, Diamonds)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [0, 3, 0, 3].into(),
+                    ..min
+                },
+                max,
+            );
+            let mut four = lo;
+            four.length[Diamonds] = 4;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P P 1D$"]).unwrap(),
+                the_description: format_as!(HTML, "15+ hcp + " Spades),
+                the_name: "Rule of 15 opening",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Diamonds, Clubs)),
+                    Fit::new(four, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
 
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P 1H$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 12,
-                length: [0, 0, 5, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Hearts "≥" Spades),
-            the_name: "Rule of 20 opening",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P 1S$"]).unwrap(),
-            max,
-            min: HandValuation {
-                lhcp: 12,
-                length: [0, 0, 0, 5].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Spades ">" Hearts),
-            the_name: "Rule of 20 opening",
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [0, 0, 5, 0].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P 1H$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ hearts, longer than spades"),
+                the_name: "Rule of 20 opening",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [0, 0, 0, 5].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P 1S$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
+                the_name: "Rule of 20 opening",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
+                forcing: Forcing::Passable,
+            });
+        }
 
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P 1C$"]).unwrap(),
-            max: max_no_5_major,
-            min: HandValuation {
-                lhcp: 12,
-                length: [3, 0, 0, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Clubs "≥" Diamonds),
-            the_name: "Rule of 20 opening",
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^P P 1D$"]).unwrap(),
-            max: max_no_5_major,
-            min: HandValuation {
-                lhcp: 12,
-                length: [0, 3, 0, 0].into(),
-                ..min
-            },
-            the_description: format_as!(HTML, Diamonds ">" Clubs),
-            the_name: "Rule of 20 opening",
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [3, 0, 0, 0].into(),
+                    ..min
+                },
+                max_no_5_major,
+            );
+            let mut three = hi;
+            three.length[Diamonds] = 3;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P 1C$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "No 5 card major, more clubs than diamonds, or 3-3"
+                ),
+                the_name: "Rule of 20 opening",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds)),
+                    Fit::new(lo, three).with(ShapeRule::AtLeastAsLong(Clubs, Diamonds)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 12,
+                    length: [0, 3, 0, 0].into(),
+                    ..min
+                },
+                max_no_5_major,
+            );
+            let mut four = lo;
+            four.length[Diamonds] = 4;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^P P 1D$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "No 5 card major, more diamonds than clubs, or 4-4"
+                ),
+                the_name: "Rule of 20 opening",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Diamonds, Clubs)),
+                    Fit::new(four, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
 
-        sheets.add(Convention::Simple {
-            the_name: "Opening bid",
-            regex: RegexSet::new([r"^(P )?1H$"]).unwrap(),
-            the_description: format_as!(HTML, Hearts "≥" Spades),
-            max,
-            min: HandValuation {
-                lhcp: 13,
-                length: [0, 0, 5, 0].into(),
-                ..min
-            },
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )?1S$"]).unwrap(),
-            the_description: format_as!(HTML, Spades ">" Hearts),
-            the_name: "Opening bid",
-            max,
-            min: HandValuation {
-                lhcp: 13,
-                length: [0, 0, 0, 5].into(),
-                ..min
-            },
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )?1C$"]).unwrap(),
-            the_description: format_as!(HTML, Clubs "≥" Diamonds),
-            the_name: "Opening bid",
-            max: max_no_5_major,
-            min: HandValuation {
-                lhcp: 13,
-                length: [3, 0, 0, 0].into(),
-                ..min
-            },
-            forcing: Forcing::Passable,
-        });
-        sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )?1D$"]).unwrap(),
-            the_description: format_as!(HTML, Diamonds ">" Clubs),
-            the_name: "Opening bid",
-            max: max_no_5_major,
-            min: HandValuation {
-                lhcp: 13,
-                length: [0, 3, 0, 0].into(),
-                ..min
-            },
-            forcing: Forcing::Passable,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 13,
+                    length: [0, 0, 5, 0].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )?1H$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ hearts, longer than spades"),
+                the_name: "Opening bid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 13,
+                    length: [0, 0, 0, 5].into(),
+                    ..min
+                },
+                max,
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )?1S$"]).unwrap(),
+                the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
+                the_name: "Opening bid",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 13,
+                    length: [3, 0, 0, 0].into(),
+                    ..min
+                },
+                max_no_5_major,
+            );
+            let mut three = hi;
+            three.length[Diamonds] = 3;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )?1C$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "No 5 card major, more clubs than diamonds, or 3-3"
+                ),
+                the_name: "Opening bid",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds)),
+                    Fit::new(lo, three).with(ShapeRule::AtLeastAsLong(Clubs, Diamonds)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    lhcp: 13,
+                    length: [0, 3, 0, 0].into(),
+                    ..min
+                },
+                max_no_5_major,
+            );
+            let mut four = lo;
+            four.length[Diamonds] = 4;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )?1D$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "No 5 card major, more diamonds than clubs, or 4-4"
+                ),
+                the_name: "Opening bid",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Diamonds, Clubs)),
+                    Fit::new(four, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs)),
+                ],
+                forcing: Forcing::Passable,
+            });
+        }
 
-        sheets.add(Convention::Simple {
-            the_name: "Response",
-            regex: RegexSet::new([r"^(P )*1. [PX] 1S$"]).unwrap(),
-            the_description: format_as!(HTML, Spades ">" Hearts),
-            max,
-            min: HandValuation {
-                hcp: 6,
-                length: [0, 0, 0, 4].into(),
-                ..min
-            },
-            forcing: Forcing::Forcing,
-        });
-        sheets.add(Convention::Simple {
-            the_name: "Response",
-            regex: RegexSet::new([r"^(P )*1. [PX] 1H$"]).unwrap(),
-            the_description: format_as!(HTML, Hearts "≥" Spades),
-            max,
-            min: HandValuation {
-                hcp: 6,
-                length: [0, 0, 4, 0].into(),
-                ..min
-            },
-            forcing: Forcing::Forcing,
-        });
-        sheets.add(Convention::Simple {
-            the_name: "Response",
-            regex: RegexSet::new([r"^(P )*1. [PX] 1D$"]).unwrap(),
-            the_description: format_as!(HTML, Diamonds ">" Clubs),
-            max: HandValuation {
-                length: [13, 13, 3, 3].into(),
-                ..max
-            },
-            min: HandValuation {
-                hcp: 6,
-                length: [0, 4, 0, 0].into(),
-                ..min
-            },
-            forcing: Forcing::Forcing,
-        });
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    hcp: 6,
+                    length: [0, 0, 0, 4].into(),
+                    ..min
+                },
+                max,
+            );
+            let mut five = lo;
+            five.length[Spades] = 5;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*1. [PX] 1S$"]).unwrap(),
+                the_description: format_as!(HTML, "4+ spades, longer than hearts, or 5-5"),
+                the_name: "Response",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Spades, Hearts)),
+                    Fit::new(five, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts)),
+                ],
+                forcing: Forcing::Forcing,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    hcp: 6,
+                    length: [0, 0, 4, 0].into(),
+                    ..min
+                },
+                max,
+            );
+            let mut four = hi;
+            four.length[Spades] = 4;
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*1. [PX] 1H$"]).unwrap(),
+                the_description: format_as!(HTML, "4+ hearts, longer than spades, or 4-4"),
+                the_name: "Response",
+                fits: vec![
+                    Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades)),
+                    Fit::new(lo, four).with(ShapeRule::AtLeastAsLong(Hearts, Spades)),
+                ],
+                forcing: Forcing::Forcing,
+            });
+        }
+        {
+            let (lo, hi) = (
+                HandValuation {
+                    hcp: 6,
+                    length: [0, 4, 0, 0].into(),
+                    ..min
+                },
+                HandValuation {
+                    length: [13, 13, 3, 3].into(),
+                    ..max
+                },
+            );
+            sheets.add(Convention::Rule {
+                regex: RegexSet::new([r"^(P )*1. [PX] 1D$"]).unwrap(),
+                the_description: format_as!(
+                    HTML,
+                    "4+ diamonds, at least as long as clubs, no 4 card major"
+                ),
+                the_name: "Response",
+                fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs))],
+                forcing: Forcing::Forcing,
+            });
+        }
         sheets.add(Convention::Simple {
             the_name: "Up the line",
             regex: RegexSet::new([r"^(P )*1[CD] P 1[DH] [PX] 1S$"]).unwrap(),
@@ -2207,7 +2648,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*1C [PX] 1N$"]).unwrap(),
             min: max,
             max,
-            the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
+            the_description: format_as!(HTML, "Never bid: bid a four card suit instead"),
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
@@ -2249,7 +2690,7 @@ impl Convention {
 
         sheets.add_notrump((22, 23, 23), 0);
 
-        sheets.add_strong_two_clubs(23);
+        sheets.add_strong_two_clubs(23, true);
 
         sheets.add_preempts();
 
@@ -2501,7 +2942,8 @@ fn test_sayc_openings() {
         ("S AK3 H Q42 D KJ54 C 432", Suit(1, Diamonds)),
         ("S AK3 H Q42 D 543 C KJ54", Suit(1, Clubs)),
         ("S KQJ876 H 32 D 876 C 32", Suit(2, Spades)),
-        ("S AK3 H AK4 D KQ5 C AQJ2", Suit(2, Clubs)),
+        ("S AK3 H AK4 D KQ5 C AQJ2", NT(3)),
+        ("S AKQJ32 H AK4 D K5 C A2", Suit(2, Clubs)),
         ("S 432 H K32 D Q32 C KJ32", Pass),
     ] {
         let hand = Cards::from_str(hand).unwrap();
@@ -2648,7 +3090,7 @@ fn test_every_system_finishes_seeded_auctions() {
         let passed_out = auctions.lines().filter(|l| l.ends_with("P P P P")).count();
         let first_round_pass = auctions
             .lines()
-            .filter(|l| l.splitn(2, ' ').nth(1).unwrap().starts_with("P P P P"))
+            .filter(|l| l.split_once(' ').unwrap().1.starts_with("P P P P"))
             .count();
         assert_eq!(passed_out, first_round_pass, "{:?}", system);
         // About one deal in eight is passed out when nobody has an opening.
@@ -2815,8 +3257,12 @@ fn sayc_raises_a_major_as_the_booklet_says() {
             Suit(2, Diamonds),
         ),
         ("S KJ43 H 32 D AK3 C Q432", NT(2), NT(2)),
-        // Twelve with three trumps is too strong for SAYC's limit raise.
-        ("S KJ4 H 32 D AK3 C J5432", Suit(2, Clubs), Suit(3, Spades)),
+        // Twelve dummy points with three trumps is too strong for SAYC's
+        // limit raise, but not for two over one's.
+        ("S KJ4 H 432 D AK3 C J543", Suit(2, Clubs), Suit(3, Spades)),
+        // Raises count dummy points, so a doubleton makes twelve high card
+        // points into thirteen, a game force in both.
+        ("S KJ4 H 32 D AK3 C J5432", Suit(2, Clubs), Suit(2, Clubs)),
     ] {
         assert_eq!(sayc, system_bid(BiddingSystem::Sayc, &auction, hand));
         assert_eq!(
@@ -3134,6 +3580,130 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
     seen.into_iter().map(|(k, v)| (v, k)).collect()
 }
 
+/// The holes the robots fall into in seeded auctions: a pass when partner's
+/// bid forces, for want of anything that fits, and a call whose meaning does
+/// not cover the hand that made it, so that partner is told something false.
+#[cfg(test)]
+fn holes(convention: &Convention, deals: u64) -> Vec<String> {
+    let mut holes = Vec::new();
+    for (seed, hands, bids) in seeded_deals(convention.clone(), deals) {
+        for n in 0..bids.len() {
+            let hand = hands[n % 4];
+            let values = hand.values();
+            let auction = &bids[..=n];
+            let mut hole = |what: String| {
+                holes.push(format!(
+                    "{seed} {}: {what} with {}",
+                    bids_string(auction),
+                    format_as!(UTF8, hand).into_string().replace('\n', " ")
+                ))
+            };
+            let forced = n >= 2
+                && bids[n - 1] == Bid::Pass
+                && convention.check_forcing(&bids[..n - 1]) >= Forcing::Forcing;
+            if bids[n] == Bid::Pass && forced {
+                hole("passes a forcing bid".to_string());
+            }
+            if let Some(meaning) = convention.refine(auction) {
+                if !meaning.describes(&values) {
+                    hole(format!("{} does not describe the hand", meaning.the_name()));
+                }
+            }
+        }
+    }
+    holes
+}
+
+#[test]
+fn sayc_has_no_holes() {
+    let mut report = String::new();
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let holes = holes(&system.convention(), 300);
+        if !holes.is_empty() {
+            report.push_str(&format!("{:?} has {} holes:\n", system, holes.len()));
+            report.push_str(&holes[..holes.len().min(40)].join("\n"));
+            report.push('\n');
+        }
+    }
+    assert!(report.is_empty(), "{}", report);
+}
+
+/// The contract rules invite a game only in a suit that one of the partners
+/// has shown, so the first bid of a suit, such as a jump shift or a new suit
+/// over a weak two, is not an invitation with eight cards in it.
+#[test]
+fn the_rules_invite_only_in_a_suit_that_was_shown() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let table = BiddingSystem::Sayc.convention();
+    let invites = |bids: &[Bid]| {
+        matches!(
+            table.refine(bids),
+            Some(Convention::Contracted { reason, .. }) if reason.rule == rules::Rule::Invite
+        )
+    };
+    // The first bid of a suit.
+    assert!(!invites(&[Suit(1, Diamonds), Pass, Suit(2, Spades)]));
+    assert!(!invites(&[Suit(1, Spades), Pass, Suit(3, Hearts)]));
+    assert!(!invites(&[Suit(2, Clubs), Pass, Suit(3, Hearts)]));
+    assert!(!invites(&[Suit(2, Diamonds), Pass, Suit(2, Spades)]));
+    assert!(!invites(&[NT(2), Pass, Suit(3, Spades)]));
+    assert!(!invites(&[NT(1), Pass, NT(2), Pass, Suit(3, Hearts)]));
+    // A raise of partner's suit, and notrump, are invitations as before.
+    assert!(invites(&[Suit(1, Hearts), Pass, Suit(3, Hearts)]));
+    assert!(invites(&[NT(1), Pass, NT(2)]));
+}
+
+/// Sheets opens and responds in its longer suit, and in the higher of two
+/// suits of the same length, except that it opens 1C with three cards in
+/// each minor and responds 1H with four cards in each major.
+#[test]
+fn sheets_bids_the_longer_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    // The opening is the same in the first three seats.
+    for passes in 0..3 {
+        let opens = |hand: &str| sheets(&vec![Pass; passes], hand);
+        // Six hearts and five spades, then five of each.
+        assert_eq!(Suit(1, Hearts), opens("S AK752 H KQ8643 D 9 C 2"));
+        assert_eq!(Suit(1, Spades), opens("S AK752 H KQ864 D 92 C 2"));
+        // Four clubs and three diamonds, four of each, then three of each.
+        assert_eq!(Suit(1, Clubs), opens("S AK7 H KQ8 D 964 C Q732"));
+        assert_eq!(Suit(1, Diamonds), opens("S AK7 H Q8 D K964 C Q873"));
+        assert_eq!(Suit(1, Clubs), opens("S AK72 H KQ8 D 964 C Q73"));
+        assert_eq!(Suit(1, Diamonds), opens("S AK72 H KQ83 D 964 C Q7"));
+    }
+    // Responder bids four card majors up the line, the longer major
+    // first, and spades first with five of each.
+    let responds = |hand: &str| sheets(&[Suit(1, Diamonds), Pass], hand);
+    assert_eq!(Suit(1, Hearts), responds("S A972 H AQJ7 D 106 C K87"));
+    assert_eq!(Suit(1, Hearts), responds("S A987 H J108643 D 4 C J2"));
+    assert_eq!(Suit(1, Spades), responds("S KJ972 H AQJ73 D 10 C 87"));
+    assert_eq!(Suit(1, Spades), responds("S KJ972 H AQJ7 D 106 C 87"));
+}
+
+/// After a strong 2C and a weak 2D, opener rebids the longer suit, and the
+/// higher of two suits of the same length, in every system.
+#[test]
+fn a_strong_two_rebids_the_longer_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let auction = [Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass];
+    for system in BiddingSystem::ALL {
+        let rebids = |hand: &str| system_bid(system, &auction, hand);
+        // These hands have too few points for the notrump rebids, which go
+        // by points alone.
+        assert_eq!(Suit(3, Clubs), rebids("S A H 2 D AQJ52 C KQJ762"));
+        assert_eq!(Suit(3, Diamonds), rebids("S A2 H 2 D AQJ52 C KQJ76"));
+        assert_eq!(Suit(2, Hearts), rebids("S AQJ52 H KQJ762 D A C 2"));
+        assert_eq!(Suit(2, Spades), rebids("S AQJ52 H KQJ76 D A C 32"));
+    }
+}
+
 /// Sheets has no fallbacks, so that read in order it bids just as it did
 /// when the most forcing bid won and only the first entry for a bid counted.
 #[test]
@@ -3285,6 +3855,50 @@ fn sheets_stayman_needs_a_four_card_major() {
     assert_ne!(Suit(2, Clubs), over("S 432 H 432 D 5432 C 432"));
 }
 
+/// Sheets competes over an opening made in any seat: with shortness in the
+/// opened suit and support for the others, a hand makes a takeout double of
+/// a third or fourth seat opening just as it does of a first or second seat
+/// one, and partner answers the double.
+#[test]
+fn sheets_makes_a_takeout_double_in_any_seat() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let hand = "S KJ97 H K762 D 9 C KQ63";
+    for opened in [
+        vec![Suit(1, Diamonds)],
+        vec![Pass, Suit(1, Diamonds)],
+        vec![Pass, Pass, Suit(1, Diamonds)],
+        vec![Pass, Pass, Pass, Suit(1, Diamonds)],
+    ] {
+        assert_eq!(
+            Double,
+            system_bid(BiddingSystem::Sheets, &opened, hand),
+            "{:?}",
+            opened
+        );
+    }
+    // Partner, with four spades and a weak hand, answers the double in the
+    // same way after a third seat opening.
+    assert_eq!(
+        Suit(1, Spades),
+        system_bid(
+            BiddingSystem::Sheets,
+            &[Pass, Pass, Suit(1, Diamonds), Double, Pass],
+            "S 8632 H J84 D K75 C J97"
+        )
+    );
+    // The same double of the response to a third seat opening.
+    assert_eq!(
+        Double,
+        system_bid(
+            BiddingSystem::Sheets,
+            &[Pass, Pass, Suit(1, Diamonds), Pass, Suit(1, Hearts)],
+            "S KJ97 H 9 D K76 C KQ632"
+        )
+    );
+}
+
 #[test]
 fn sayc_responder_rebids_as_the_booklet_says() {
     use bridge_deck::Suit::*;
@@ -3328,4 +3942,214 @@ fn sayc_responder_rebids_as_the_booklet_says() {
     new_suit.push(Suit(2, Clubs));
     let description = sayc.refine(&new_suit).unwrap().description().into_string();
     assert!(description.contains("Forcing"), "{}", description);
+}
+
+#[test]
+fn sayc_jumps_to_three_and_four_of_a_major_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 1M-4M is five trumps and a singleton or void with at most 9
+            // HCP.  Without the shortness it is a single raise, and with 10
+            // HCP it is too strong.
+            (
+                &[Suit(1, Spades), Pass][..],
+                "S Q5432 H 3 D 8765 C 432",
+                Suit(4, Spades),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S KJ432 H - D QJ765 C 432",
+                Suit(4, Spades),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S KJ432 H 32 D Q76 C 432",
+                Suit(2, Spades),
+            ),
+            // 1NT-3M is a six card suit with slam interest: slam may make
+            // with 16 long points opposite 1NT's maximum.  With less,
+            // responder transfers.
+            (&[NT(1), Pass], "S AKJ432 H K2 D A32 C 32", Suit(3, Spades)),
+            (&[NT(1), Pass], "S 32 H AKJ432 D A32 C K2", Suit(3, Hearts)),
+            (&[NT(1), Pass], "S AKJ432 H K2 D Q32 C 32", Suit(2, Hearts)),
+            // Opener bids the slam that is sure opposite 16, and otherwise
+            // game, after which responder bids the slam that is sure.
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass],
+                "S Q2 H AQ3 D KJ54 C AJ43",
+                Suit(6, Spades),
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass],
+                "S Q2 H AQ3 D KJ54 C K543",
+                Suit(4, Spades),
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass, Suit(4, Spades), Pass],
+                "S AKJ432 H K2 D A32 C 32",
+                Pass,
+            ),
+            (
+                &[NT(1), Pass, Suit(3, Spades), Pass, Suit(4, Spades), Pass],
+                "S AKJ432 H K2 D A32 C A2",
+                Suit(6, Spades),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{:?} {}",
+                auction,
+                hand
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_answers_2nt_after_2c_and_a_weak_two_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let two_clubs = [Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass];
+    let two_notrump = [Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass, NT(2), Pass];
+    let weak_two = [Suit(2, Diamonds), Pass, NT(2), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 2NT after 2C-2D is 22-24 balanced, and a 21 opens 2NT.
+            (&[][..], "S AKQ2 H AK3 D AJ2 C 432", NT(2)),
+            (&two_clubs, "S AKQ2 H AK3 D AQ2 C Q32", NT(2)),
+            (&two_clubs, "S AKQ2 H AK3 D AQ2 C 432", NT(2)),
+            // Responder answers as over a 2NT opening: game with the 3
+            // points that make 25, Stayman with a four card major, and a
+            // transfer with five.
+            (&two_notrump, "S Q52 H 932 D Q10 C 98732", NT(3)),
+            (&two_notrump, "S Q532 H 932 D Q10 C 9873", Suit(3, Clubs)),
+            (&two_notrump, "S Q5432 H 932 D Q10 C 987", Suit(3, Hearts)),
+            (&two_notrump, "S 5432 H 932 D 1092 C 987", Pass),
+            // Over a weak two's 2NT, which forces, opener rebids the suit
+            // with a minimum.
+            (&weak_two, "S 7 H 1076 D AJ9762 C J97", Suit(3, Diamonds)),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_responds_to_3nt_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let stayman = [NT(3), Pass, Suit(4, Clubs), Pass];
+    let no_major = [NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Diamonds), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 25-27 balanced opens 3NT rather than 2C.
+            (&[][..], "S AKQ2 H AK3 D AQ2 C KJ3", NT(3)),
+            // Responder transfers with a five card major, and passes with
+            // too little for a slam.
+            (
+                &[NT(3), Pass][..],
+                "S 32 H KJ432 D A32 C 432",
+                Suit(4, Diamonds),
+            ),
+            (&[NT(3), Pass], "S 65432 H 432 D 432 C 32", Suit(4, Hearts)),
+            (&[NT(3), Pass], "S 5432 H 432 D 432 C 432", Pass),
+            // Stayman takes a four card major and the 6 points that make a
+            // slam possible opposite 27, or 5-5 in the majors at any
+            // strength.  Without a major the rules invite with 4NT.
+            (&[NT(3), Pass], "S Q432 H K32 D 432 C Q32", Suit(4, Clubs)),
+            (&[NT(3), Pass], "S J8765 H 98765 D 32 C 3", Suit(4, Clubs)),
+            (&[NT(3), Pass], "S 532 H 432 D K432 C QJ2", NT(4)),
+            (&stayman, "S AKQ H AK32 D AQ2 C K32", Suit(4, Hearts)),
+            (&stayman, "S AKQ H AK3 D AQ32 C K32", Suit(4, Diamonds)),
+            // After 4D, 4NT is quantitative, and 5-5 lets opener choose.
+            (&no_major, "S Q432 H K32 D 432 C Q32", NT(4)),
+            (&no_major, "S Q432 H K32 D K32 C Q32", NT(6)),
+            (&no_major, "S J8765 H 98765 D 32 C 3", Suit(4, Hearts)),
+            (
+                &[
+                    NT(3),
+                    Pass,
+                    Suit(4, Clubs),
+                    Pass,
+                    Suit(4, Diamonds),
+                    Pass,
+                    Suit(4, Hearts),
+                    Pass,
+                ],
+                "S AK H AQ3 D AKJ4 C KQJ2",
+                Pass,
+            ),
+            (
+                &[
+                    NT(3),
+                    Pass,
+                    Suit(4, Clubs),
+                    Pass,
+                    Suit(4, Diamonds),
+                    Pass,
+                    Suit(4, Hearts),
+                    Pass,
+                ],
+                "S AKQ H A3 D AKJ4 C KQJ2",
+                Suit(4, Spades),
+            ),
+            // A fit found by Stayman, and slam when it is sure.
+            (
+                &[NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S Q432 H K432 D 432 C Q2",
+                Pass,
+            ),
+            (
+                &[NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S Q432 H K432 D K32 C Q2",
+                Suit(6, Hearts),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{:?} {}",
+                auction,
+                hand
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_stayman_asks_and_shows_nothing() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let convention = system.convention();
+        for stayman in [
+            &[NT(1), Pass, Suit(2, Clubs)][..],
+            &[NT(2), Pass, Suit(3, Clubs)],
+            &[NT(3), Pass, Suit(4, Clubs)],
+        ] {
+            // Partner learns nothing from the question.
+            assert_eq!(
+                convention.refine(stayman).map(|c| c.bounds()),
+                Some((HandValuation::MIN, HandValuation::MAX)),
+                "{system:?} {stayman:?}"
+            );
+            // The robot asks only with a hand like those its entries give.
+            assert_ne!(
+                system_bid(system, &stayman[..2], "S 432 H 432 D AKQ2 C AQ2"),
+                stayman[2],
+                "{system:?} {stayman:?}"
+            );
+        }
+    }
 }

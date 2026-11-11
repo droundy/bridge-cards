@@ -1,0 +1,23 @@
+# Run with prek (https://github.com/j178/prek): `prek install` to run on every
+# commit, `prek run --all-files` to run by hand.  Kept quick: the CI workflow in
+# .github/workflows/warnings.yml does the full build.
+repos:
+  - repo: builtin
+    hooks:
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+
+  - repo: local
+    hooks:
+      # `cargo clippy` fails on any warning, rustc's or clippy's.  It uses its
+      # own target directory because -D warnings changes the flags, and sharing
+      # target/ would make every other build recompile everything.  abridge
+      # embeds robot/pkg, which only exists after the wasm build, so it is
+      # skipped until then.
+      - id: cargo-clippy
+        name: cargo clippy (warnings are errors)
+        language: system
+        entry: bash -c 'exclude=; [ -f robot/pkg/robot_bg.wasm ] || exclude="--exclude abridge"; RUSTFLAGS="-D warnings" CARGO_TARGET_DIR=target/prek cargo clippy --workspace $exclude --all-targets --all-features'
+        pass_filenames: false
+        files: '\.(rs|toml)$|^Cargo\.lock$|\.html$'

@@ -10,6 +10,7 @@ use super::{
     describe, partner_text, phrases, you, Bound, Candidate, Line, Measure, Need, Reach, Shown,
     Strain, KNOW,
 };
+use crate::ai::rules::{contract_needs, uncontested, Kind};
 use crate::ai::{bids_string, legal_bids, Convention};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
@@ -62,7 +63,7 @@ impl Convention {
             let mut kinds: Vec<&Contract> = Vec::new();
             for c in contracts.iter().filter(|c| {
                 Strain::of(c.bid, &c.needs) == strain
-                    && !matches!(c.reach, Reach::OutOfReach(_))
+                    && !matches!(c.reach, Reach::Beyond(_))
                     && likely_fit(c, hand, partner)
             }) {
                 match kinds.last_mut() {
@@ -105,19 +106,25 @@ impl Convention {
             .collect()
     }
 
-    /// What the first natural entry for the last bid of `bids` says the
-    /// partnership needs between them.
+    /// What the partnership needs between them for the last bid of `bids`:
+    /// what the contract rules say for a game or slam, where they apply, and
+    /// otherwise what the first natural entry for it says.
     fn natural_needs(&self, bids: &[Bid]) -> Option<HandValuation> {
-        match self {
-            Convention::Ordered { conventions, .. } => self
-                .candidates(&bids_string(bids))
-                .into_iter()
-                .find_map(|i| match &conventions[i] {
-                    c @ Convention::Natural { min, .. } if c.applies(bids) => Some(*min),
-                    _ => None,
-                }),
-            _ => None,
+        let auction = bids_string(bids);
+        let candidates = self.candidates(&auction);
+        let entries = self.entries();
+        let ruled = candidates.iter().any(|&i| {
+            matches!(&entries[i], Convention::Contract { regex, .. } if regex.is_match(&auction))
+        });
+        if ruled && uncontested(&auction) {
+            if let Some(needs) = contract_needs(*bids.last()?) {
+                return Some(needs);
+            }
         }
+        candidates.into_iter().find_map(|i| match &entries[i] {
+            c @ Convention::Natural { min, .. } if c.applies(bids) => Some(*min),
+            _ => None,
+        })
     }
 }
 
@@ -160,38 +167,6 @@ fn likely_fit(contract: &Contract, hand: &HandValuation, partner: &Shown) -> boo
     hand.length[suit] + expected >= contract.needs.length[suit]
 }
 
-/// The kinds of contract, from the smallest.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Kind {
-    PartScore,
-    Game,
-    SmallSlam,
-    GrandSlam,
-}
-
-impl Kind {
-    fn of(bid: Bid) -> Self {
-        match bid {
-            Bid::Suit(7, _) | Bid::NT(7) => Kind::GrandSlam,
-            Bid::Suit(6, _) | Bid::NT(6) => Kind::SmallSlam,
-            Bid::NT(level) if level >= 3 => Kind::Game,
-            Bid::Suit(level, Suit::Hearts) | Bid::Suit(level, Suit::Spades) if level >= 4 => {
-                Kind::Game
-            }
-            Bid::Suit(level, _) if level >= 5 => Kind::Game,
-            _ => Kind::PartScore,
-        }
-    }
-    fn name(self) -> &'static str {
-        match self {
-            Kind::PartScore => "part-score",
-            Kind::Game => "game",
-            Kind::SmallSlam => "small slam",
-            Kind::GrandSlam => "grand slam",
-        }
-    }
-}
-
 /// How to bid toward a contract that depends on partner.  Among the bids in
 /// `candidates` that fit the hand, it takes the one after which partner
 /// needs the least beyond what they have shown, in points and in trumps
@@ -209,7 +184,7 @@ fn route(contract: &Contract, me: &Shown, partner: &Shown, candidates: &[Candida
             let stretch = match &reach {
                 Reach::Sure => 0,
                 Reach::IfPartnerHas(needs) => needs.iter().map(Need::stretch).sum(),
-                Reach::OutOfReach(_) => return None,
+                Reach::Beyond(_) => return None,
             };
             Some((stretch, c.rank, c.bid, after, reach))
         })
