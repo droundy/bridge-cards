@@ -1450,7 +1450,7 @@ impl Convention {
                 length: [0, 0, 0, 4].into(),
                 ..min
             },
-            the_description: format_as!(HTML, Spades ">" Hearts),
+            the_description: format_as!(HTML, "4+ spades, at most 3 hearts"),
             the_name: "Stayman response",
             forcing: Forcing::Passable,
         });
@@ -1504,7 +1504,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*2C$"]).unwrap(),
             max,
             min: min.with_lhcp(base),
-            the_description: format_as!(HTML, "hcp≥" base),
+            the_description: format_as!(HTML, base "+ points"),
             the_name: "Strong two",
             forcing: Forcing::GameForcing,
         });
@@ -2580,7 +2580,7 @@ impl Convention {
             regex: RegexSet::new([r"^(P )*1C [PX] 1N$"]).unwrap(),
             min: max,
             max,
-            the_description: format_as!(HTML, "Do not bid!<br/>Bid 4 card suit instead!"),
+            the_description: format_as!(HTML, "Never bid: bid a four card suit instead"),
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
