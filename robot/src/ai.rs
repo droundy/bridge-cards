@@ -39,13 +39,6 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "two-over-one",
         }
     }
-    /// The system that `slug` names, as [`BiddingSystem::slug`] gives it.
-    pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|system| system.slug() == slug)
-    }
     /// The conventions this system bids by.
     pub fn convention(self) -> Convention {
         match self {

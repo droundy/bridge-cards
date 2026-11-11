@@ -145,11 +145,16 @@ async fn style_css() -> impl IntoResponse {
 /// the system's table the first time someone asks for it, and kept.  Writing
 /// it takes about a second, so that is done off the threads that serve pages.
 async fn booklet(Path(system): Path<String>) -> Result<Html<&'static str>, NotFound> {
-    static PAGES: [OnceLock<String>; 3] = [const { OnceLock::new() }; 3];
-    let system = robot::BiddingSystem::from_slug(&system).ok_or(NotFound)?;
+    const SYSTEMS: [robot::BiddingSystem; robot::BiddingSystem::ALL.len()] =
+        robot::BiddingSystem::ALL;
+    static PAGES: [OnceLock<String>; SYSTEMS.len()] = [const { OnceLock::new() }; SYSTEMS.len()];
+    let which = SYSTEMS
+        .iter()
+        .position(|s| s.slug() == system)
+        .ok_or(NotFound)?;
     let write = move || {
-        PAGES[system as usize]
-            .get_or_init(|| format_as!(HTML, robot::Booklet::new(system)).into_string())
+        PAGES[which]
+            .get_or_init(|| format_as!(HTML, robot::Booklet::new(SYSTEMS[which])).into_string())
             .as_str()
     };
     let page = tokio::task::spawn_blocking(write).await;
