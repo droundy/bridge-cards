@@ -10,7 +10,10 @@
 //! 1. Bid the contract when it makes opposite `lo`.
 //! 2. Invite it when it makes opposite `lo` + 2 (but no more than `hi`).
 //! 3. With no bid left to invite with, as when partner has just invited,
-//!    bid it when it makes opposite `lo` + 1 (but no more than `hi`).
+//!    bid it when it makes opposite `lo` + 1 (but no more than `hi`).  This
+//!    weighs about half partner's range, so it needs a range with a top:
+//!    opposite an unlimited bid, such as a strong jump shift, only rule 1
+//!    bids.
 //!
 //! An invitation is the lowest bid in the strain, below the contract it
 //! invites, that no table entry describes.  The rules only bid games and
@@ -30,7 +33,21 @@
 //! those that explore, such as new suits, so that a hand explores only when
 //! the rules do not know the contract: when a fit that might yet be found
 //! could be better than notrump, or a slam in a suit might make opposite
-//! partner's most.  If nothing explores, the hand bids what it knows.
+//! partner's most (`reach`).  If nothing explores, the hand bids what it
+//! knows.
+//!
+//! In a game force the rules explore themselves, with the cheapest natural
+//! bid below game that is true of the hand (see `Exploration`): a raise of
+//! partner's suit with the cards that make eight, a suit of one's own with
+//! one more card than shown, or a new suit with four.  Bidding the cheapest
+//! saves room, and makes skipping a bid a statement: a hand that bids 3S
+//! over 1H-3C denies six hearts and four diamonds.  Only a raise goes past
+//! 3NT, which leaves the agreed suit to play in, and only when a slam is
+//! possible, opposite the most partner may have (or their minimum and two
+//! more, if they have no most).  When a slam is out of reach, the hand bids
+//! the game it knows instead, and explores only for a fit.  A game force
+//! needs no points for game and invites none, and leaves rule 3 to
+//! answering partner's invitations.
 //!
 //! A bid opposite a limit bid places the contract: its bidder is captain,
 //! so it shows nothing more.  A limit bid is one that does not force and
@@ -185,6 +202,8 @@ pub enum Rule {
     /// No bid is left to invite with, and the contract makes opposite one
     /// more than partner promised.
     LastChance,
+    /// The side has forced to game, which has promised the points for it.
+    Forced,
 }
 
 /// Why the contract rules make a bid, to explain it.
@@ -247,6 +266,7 @@ impl Reason {
                     + Text::from(format!("{lo}–{hi}"))
                     + "they promised, and there is no room to invite."
             }
+            Rule::Forced => Text::from("which you have, since you have forced to game."),
         };
         let mut text = needs + opposite;
         if self.shows_nothing() {
@@ -262,8 +282,9 @@ impl Reason {
 pub struct Choice {
     /// This bid's strain first, then the others.
     rivals: Vec<Rival>,
-    /// For a game in a suit, the points a slam needs, which the rules cannot
-    /// invite, so that a hand that might make one explores instead.
+    /// For a game in a suit, or in notrump in a game force, the points a
+    /// slam needs, which the rules cannot invite, so that a hand that might
+    /// make one explores instead.
     slam: Option<u8>,
 }
 
@@ -315,9 +336,9 @@ impl Rival {
 /// Does a hand fit what the contract rules make of a bid?  It must lie
 /// within the bounds, and no other strain where the rules can bid may rate
 /// better.  If `unsure_explores`, the rules must also know the contract: no
-/// strain where a fit might yet be found rates as well, and in a suit, no
-/// slam is within reach of partner's most, since the rules cannot invite
-/// one.  Otherwise the hand explores, with the table entries that come
+/// strain where a fit might yet be found rates as well, and no slam that
+/// the rules cannot invite is within `reach`.  Otherwise the hand explores,
+/// with the rules' own bids in a game force or the table entries that come
 /// after the rules, and only when none of them fits does it bid what it
 /// knows.
 pub(crate) fn contracted_fits(
@@ -336,7 +357,7 @@ pub(crate) fn contracted_fits(
     if unsure_explores
         && choice
             .slam
-            .is_some_and(|slam| ours.points.of(hand) + hi >= slam)
+            .is_some_and(|slam| ours.points.of(hand) + reach(lo, hi) >= slam)
     {
         return false;
     }
@@ -352,6 +373,107 @@ pub(crate) fn contracted_fits(
         (false, true) if looking => r.rating(hand, lo) < rating,
         _ => true,
     })
+}
+
+/// The most points partner might have, for a slam: the most they promised,
+/// or their minimum and two more if they have no most, as after a strong
+/// jump shift.
+fn reach(lo: u8, hi: u8) -> u8 {
+    if hi < HandValuation::MAX.hcp {
+        hi
+    } else {
+        lo + 2
+    }
+}
+
+/// What a bid that explores says about its suit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Explore {
+    /// Partner's suit, with the cards that make eight.
+    Raise,
+    /// A suit of one's own, with one more card than shown.
+    Rebid,
+    /// A suit neither has shown, with four cards.
+    NewSuit,
+}
+
+/// Why the rules explore with a bid in a game force, and what decides it
+/// for a hand.  The robot explores only when the rules do not know the
+/// contract, with the cheapest bid that is true of its hand, so a bid
+/// denies the cheaper ones (in its bounds).
+#[derive(Clone, Debug)]
+pub struct Exploration {
+    explore: Explore,
+    suit: Suit,
+    /// The cards in `suit` that the bid shows.
+    length: u8,
+    /// Does the bid go past 3NT, as only a raise does, when a slam in its
+    /// suit is possible?
+    past_notrump: bool,
+    /// The cheaper bids past 3NT, each suit with the cards it would show
+    /// and how its points count, which a hand that might make a slam would
+    /// bid instead.
+    cheaper_past_notrump: Vec<(Suit, u8, Points)>,
+    /// The points with which a slam is possible, within `reach`, counted as
+    /// dummy points for a raise and long points for a suit of one's own.
+    slam: u8,
+    /// What the rules would place instead, which a hand that fits them
+    /// bids rather than explore.
+    placements: Vec<Convention>,
+}
+
+impl Explore {
+    /// How a hand counts its points for a slam in the suit.
+    fn points(self) -> Points {
+        match self {
+            Explore::Raise => Points::Shcp,
+            _ => Points::Lhcp,
+        }
+    }
+}
+
+impl Exploration {
+    /// The exploration in words.
+    pub(crate) fn text(&self) -> Text {
+        let mut text =
+            Text::from("In a game force, the cheapest bid that is true explores, so this shows")
+                + Text::from(format!("{}+", self.length))
+                + self.suit
+                + match self.explore {
+                    Explore::Raise => ", a fit with partner.",
+                    Explore::Rebid => ", one more than shown.",
+                    Explore::NewSuit => ".",
+                };
+        if self.past_notrump {
+            text += "It goes past 3NT, so a slam is possible.";
+        }
+        text + "It denies the cheaper bids."
+    }
+}
+
+/// Does a hand fit a bid that explores?  It must lie within the bounds,
+/// which deny the cheaper bids, and the rules must not know the contract.
+/// A raise past 3NT needs a slam to be possible, and with one possible,
+/// the hand makes a cheaper raise past 3NT if it can.
+pub(crate) fn explored_fits(
+    min: &HandValuation,
+    max: &HandValuation,
+    exploration: &Exploration,
+    hand: &HandValuation,
+) -> bool {
+    if hand.exceeds(*max) || min.exceeds(*hand) {
+        return false;
+    }
+    let slam = |points: Points| points.of(hand) >= exploration.slam;
+    if exploration.past_notrump && !slam(exploration.explore.points()) {
+        return false;
+    }
+    let cheaper =
+        |&(suit, length, points): &(Suit, u8, Points)| hand.length[suit] >= length && slam(points);
+    if exploration.cheaper_past_notrump.iter().any(cheaper) {
+        return false;
+    }
+    exploration.placements.iter().all(|p| !p.fits(hand))
 }
 
 /// Is `meaning` a limit bid: one that does not force, and whose points span
@@ -381,6 +503,14 @@ impl Promise {
     }
 }
 
+/// The contract this side already plays after `history`, if it does.
+fn ours(history: &[Bid]) -> Option<Bid> {
+    history
+        .iter()
+        .rposition(|b| b.is_contract())
+        .and_then(|i| ((history.len() - i) % 2 == 0).then(|| history[i]))
+}
+
 /// Where the rules stand in one strain after `history`.
 struct Strain<'a> {
     convention: &'a Convention,
@@ -390,6 +520,8 @@ struct Strain<'a> {
     invited: Option<Bid>,
     /// The contract this side already plays, if it does.
     ours: Option<Bid>,
+    /// Has this side forced to game, so that no game is invited?
+    game_forced: bool,
 }
 
 impl Strain<'_> {
@@ -436,7 +568,7 @@ impl Strain<'_> {
     /// only in notrump once this side has bid notrump (as with the
     /// quantitative 4NT, also after Stayman or a transfer), since 4NT is
     /// otherwise Blackwood.  Partner's own invitation is answered, not
-    /// invited again.
+    /// invited again, and in a game force no game is invited.
     fn invitation(&self, contract: Bid) -> Option<Bid> {
         let kind = Kind::of(contract);
         let in_notrump = self
@@ -451,7 +583,7 @@ impl Strain<'_> {
         let minor = matches!(self.strain, Some(Suit::Clubs | Suit::Diamonds));
         if reached
             || self.invited == Some(contract)
-            || (kind == Kind::Game && minor)
+            || (kind == Kind::Game && (minor || self.game_forced))
             || (kind > Kind::Game && (self.strain.is_some() || !in_notrump))
         {
             return None;
@@ -496,16 +628,124 @@ impl Convention {
 
     /// What the contract rules make of the last of `bids`, a natural bid in
     /// an auction where the opponents have only passed, if they make it at
-    /// all.
+    /// all: a contract it places or invites, or a bid that explores.
     pub(crate) fn contract_meaning(
         &self,
         bids: &[Bid],
         the_name: &'static str,
     ) -> Option<Convention> {
-        let (&bid, history) = bids.split_last()?;
+        let bid = *bids.last()?;
         if !bid.is_contract() || !uncontested(&bids_string(bids)) {
             return None;
         }
+        self.contracted_meaning(bids, the_name)
+            .or_else(|| self.explored_meaning(bids))
+    }
+
+    /// Has the side making the last of `bids` forced to game, and not yet
+    /// bid one?
+    fn game_forced(&self, bids: &[Bid]) -> bool {
+        let history = &bids[..bids.len().saturating_sub(1)];
+        !ours(history).is_some_and(|c| Kind::of(c) >= Kind::Game)
+            && earlier_auctions(bids, 2)
+                .chain(earlier_auctions(bids, 4))
+                .any(|earlier| self.check_forcing(earlier) == Forcing::GameForcing)
+    }
+
+    /// What the last of `bids` shows, if it explores: a suit bid below game,
+    /// the cheapest in its suit, in a game force that has not reached game
+    /// (see `Exploration`).
+    fn explored_meaning(&self, bids: &[Bid]) -> Option<Convention> {
+        let (&bid, history) = bids.split_last()?;
+        if !self.game_forced(bids) {
+            return None;
+        }
+        let partner = self.promise(bids, 2);
+        let mine = self.promise(bids, 4);
+        let legal = legal_bids(history);
+        // What a bid would show, if it explores.
+        let explores = |b: Bid| {
+            let Bid::Suit(level, suit) = b else {
+                return None;
+            };
+            let cheapest = legal.iter().find(|c| trump(**c) == Some(suit)) == Some(&b);
+            if !cheapest || Kind::of(b) != Kind::PartScore {
+                return None;
+            }
+            let (shown, theirs) = (mine.min.length[suit], partner.min.length[suit]);
+            let (explore, length) = if shown >= 4 && shown >= theirs {
+                (Explore::Rebid, shown + 1)
+            } else if theirs >= 3 {
+                (Explore::Raise, 8u8.saturating_sub(theirs).max(shown))
+            } else {
+                (Explore::NewSuit, 4)
+            };
+            let below_notrump = level < 4;
+            (length <= 13 && (below_notrump || explore == Explore::Raise)).then_some((
+                suit,
+                explore,
+                length,
+                below_notrump,
+            ))
+        };
+        let (suit, explore, length, below_notrump) = explores(bid)?;
+
+        let (mut min, mut max) = (HandValuation::MIN, HandValuation::MAX);
+        min.length[suit] = length;
+        let mut cheaper_past_notrump = Vec::new();
+        for &cheaper in legal.iter().take_while(|&&c| c != bid) {
+            let mut auction = history.to_vec();
+            auction.push(cheaper);
+            if self.conventional(&auction) {
+                continue;
+            }
+            match explores(cheaper) {
+                Some((s, _, n, true)) => max.length[s] = max.length[s].min(n - 1),
+                Some((s, e, n, false)) => cheaper_past_notrump.push((s, n, e.points())),
+                None => (),
+            }
+        }
+        if min.exceeds(max) {
+            return None;
+        }
+        // What the rules would place instead.
+        let placements = legal
+            .iter()
+            .filter(|&&p| Kind::of(p) >= Kind::Game)
+            .filter_map(|&p| {
+                let mut auction = history.to_vec();
+                auction.push(p);
+                match self.refine(&auction) {
+                    Some(c @ Convention::Contracted { .. }) => Some(c),
+                    _ => None,
+                }
+            })
+            .collect();
+        let (lo, hi) = partner.points();
+        let exploration = Exploration {
+            explore,
+            suit,
+            length,
+            past_notrump: !below_notrump,
+            cheaper_past_notrump,
+            slam: 33u8.saturating_sub(reach(lo, hi)),
+            placements,
+        };
+        Some(Convention::Explored {
+            the_name: match explore {
+                Explore::Raise => "Raise",
+                Explore::Rebid => "Rebid",
+                Explore::NewSuit => "New suit",
+            },
+            min,
+            max,
+            exploration,
+        })
+    }
+
+    /// The contract that the last of `bids` places or invites, if any.
+    fn contracted_meaning(&self, bids: &[Bid], the_name: &'static str) -> Option<Convention> {
+        let (&bid, history) = bids.split_last()?;
         let partner = self.promise(bids, 2);
         let mine = self.promise(bids, 4);
         let (lo, hi) = partner.points();
@@ -521,17 +761,15 @@ impl Convention {
             }
             _ => None,
         };
-        // The contract this side already plays, if it does.
-        let ours = history
-            .iter()
-            .rposition(|b| b.is_contract())
-            .and_then(|i| ((history.len() - i) % 2 == 0).then(|| history[i]));
+        let ours = ours(history);
+        let game_forced = self.game_forced(bids);
         let here = |strain| Strain {
             convention: self,
             history,
             strain,
             invited,
             ours,
+            game_forced,
         };
         let strain = here(trump(bid));
 
@@ -539,12 +777,20 @@ impl Convention {
         // A slam in a suit is bid only when it is sure, and otherwise a
         // contract that could have been invited must be sure too.
         let kind = Kind::of(bid);
+        // Rule 3 weighs half partner's range, which an unlimited one lacks,
+        // and stands in for an invitation, which a game force does without
+        // by exploring, unless partner has just invited.
+        let last_chance = if invited.is_some() || (hi < HandValuation::MAX.hcp && !game_forced) {
+            Rule::LastChance
+        } else {
+            Rule::Sure
+        };
         let (contract, rule) = if strain.placing(kind) == Some(bid) && kind >= Kind::Game {
             let suit_slam = kind > Kind::Game && strain.strain.is_some();
             if suit_slam || strain.invitation(bid).is_some() {
                 (bid, Rule::Sure)
             } else {
-                (bid, Rule::LastChance)
+                (bid, last_chance)
             }
         } else {
             let next = kind.above().and_then(|k| strain.contract(k))?;
@@ -554,17 +800,31 @@ impl Convention {
             (next, Rule::Invite)
         };
         let needs = contract_points(contract)?;
+        // A game force has promised the points for game.
+        let rule = if game_forced && Kind::of(contract) == Kind::Game && rule != Rule::Invite {
+            Rule::Forced
+        } else {
+            rule
+        };
         let counted = |rule| match rule {
-            Rule::Sure => lo,
+            Rule::Sure | Rule::Forced => lo,
             Rule::Invite => hi.min(lo + 2),
             Rule::LastChance => hi.min(lo + 1),
         };
-        let least = needs.saturating_sub(counted(rule));
+        let least = if rule == Rule::Forced {
+            0
+        } else {
+            needs.saturating_sub(counted(rule))
+        };
         // The hand goes no further than this: placing a contract, it would
         // otherwise go on to the next kind, and inviting, it would place
         // the contract itself.
         let most = if rule == Rule::Invite {
             needs.checked_sub(lo + 1)?
+        } else if rule == Rule::Forced {
+            // Short of the fit that a slam needs, a game force still bids
+            // game, and with the fit the slam is the higher bid.
+            u8::MAX
         } else {
             match Kind::of(contract).above().and_then(|k| strain.contract(k)) {
                 Some(next) => {
@@ -573,7 +833,7 @@ impl Convention {
                     } else if strain.strain.is_some() {
                         Rule::Sure
                     } else {
-                        Rule::LastChance
+                        last_chance
                     };
                     contract_points(next)?.checked_sub(counted(next_rule) + 1)?
                 }
@@ -600,6 +860,13 @@ impl Convention {
         points.set(&mut max, most.min(points.of(&HandValuation::MAX)));
         if let Some(suit) = strain.strain {
             min.length[suit] = 8u8.saturating_sub(partner.min.length[suit]);
+            // A game force must reach game, so with no fit known it may be
+            // played in a suit of this hand's own with six cards, or as many
+            // as it has shown.
+            if rule == Rule::Forced {
+                let own = mine.min.length[suit].max(6);
+                min.length[suit] = min.length[suit].min(own);
+            }
         }
 
         // The strains the hand could play the same kind of contract in.
@@ -655,9 +922,15 @@ impl Convention {
             rivals.push(rival(s, theirs, available));
         }
         let slam = match (strain.strain, rule) {
-            (Some(_), Rule::Sure | Rule::LastChance) => Kind::of(contract)
+            (Some(_), Rule::Sure | Rule::LastChance | Rule::Forced) => Kind::of(contract)
                 .above()
                 .and_then(|k| strain.contract(k))
+                .and_then(contract_points),
+            // In a game force there is room to look for a slam that notrump
+            // cannot invite.
+            (None, Rule::Forced) => strain
+                .contract(Kind::SmallSlam)
+                .filter(|&slam| strain.invitation(slam).is_none())
                 .and_then(contract_points),
             _ => None,
         };
