@@ -3626,6 +3626,33 @@ fn sayc_has_no_holes() {
     assert!(report.is_empty(), "{}", report);
 }
 
+/// The contract rules invite a game only in a suit that one of the partners
+/// has shown, so the first bid of a suit, such as a jump shift or a new suit
+/// over a weak two, is not an invitation with eight cards in it.
+#[test]
+fn the_rules_invite_only_in_a_suit_that_was_shown() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let table = BiddingSystem::Sayc.convention();
+    let invites = |bids: &[Bid]| {
+        matches!(
+            table.refine(bids),
+            Some(Convention::Contracted { reason, .. }) if reason.rule == rules::Rule::Invite
+        )
+    };
+    // The first bid of a suit.
+    assert!(!invites(&[Suit(1, Diamonds), Pass, Suit(2, Spades)]));
+    assert!(!invites(&[Suit(1, Spades), Pass, Suit(3, Hearts)]));
+    assert!(!invites(&[Suit(2, Clubs), Pass, Suit(3, Hearts)]));
+    assert!(!invites(&[Suit(2, Diamonds), Pass, Suit(2, Spades)]));
+    assert!(!invites(&[NT(2), Pass, Suit(3, Spades)]));
+    assert!(!invites(&[NT(1), Pass, NT(2), Pass, Suit(3, Hearts)]));
+    // A raise of partner's suit, and notrump, are invitations as before.
+    assert!(invites(&[Suit(1, Hearts), Pass, Suit(3, Hearts)]));
+    assert!(invites(&[NT(1), Pass, NT(2)]));
+}
+
 /// Sheets opens and responds in its longer suit, and in the higher of two
 /// suits of the same length, except that it opens 1C with three cards in
 /// each minor and responds 1H with four cards in each major.

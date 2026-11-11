@@ -13,7 +13,9 @@
 //!    bid it when it makes opposite `lo` + 1 (but no more than `hi`).
 //!
 //! An invitation is the lowest bid in the strain, below the contract it
-//! invites, that no table entry describes.  The rules only bid games and
+//! invites, that no table entry describes.  A suit is invited in only when
+//! one of the partners has shown four cards in it, so that a first bid of a
+//! suit, such as a jump shift, is no invitation.  The rules only bid games and
 //! slams.  They invite games in notrump and the majors, and slams only in
 //! notrump (the quantitative 4NT), so slams in a suit are bid only when
 //! they are sure, since bidding them is a matter for Blackwood.
@@ -42,6 +44,9 @@ use super::{bids_string, earlier_auctions, legal_bids, Convention, Explanation, 
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use wording::{numbered, Number, Text, Word};
+
+/// The fewest cards that show a suit, so that a game in it can be invited.
+const A_SUIT: u8 = 4;
 
 /// The trumps a suit contract needs between the two hands.
 const TRUMPS: u8 = 8;
@@ -81,7 +86,8 @@ pub(crate) fn explanation() -> Explanation {
                 "Invite it when your side has the points if partner has {INVITING} more than \
                  that. The invitation is the lowest bid in the same strain, below the \
                  contract, that no entry describes. Games in notrump and the majors are \
-                 invited, and a slam only in notrump, with 4NT."
+                 invited, a major only when one of you has shown {A_SUIT} cards in it, \
+                 and a slam only in notrump, with 4NT."
             ),
             format!(
                 "With no bid left to invite with, as when partner has just invited, bid the \
@@ -460,6 +466,9 @@ struct Strain<'a> {
     invited: Option<Bid>,
     /// The contract this side already plays, if it does.
     ours: Option<Bid>,
+    /// The most cards that either partner has promised in the strain's
+    /// suit.
+    shown: u8,
 }
 
 impl Strain<'_> {
@@ -519,7 +528,11 @@ impl Strain<'_> {
         // Nothing is invited that this side has already reached.
         let reached = self.ours.is_some_and(|c| Kind::of(c) >= kind);
         let minor = matches!(self.strain, Some(Suit::Clubs | Suit::Diamonds));
+        // Nor in a suit that neither partner has shown: a first bid of a
+        // suit says what the table makes it say, or nothing.
+        let unshown = self.strain.is_some() && self.shown < A_SUIT;
         if reached
+            || unshown
             || self.invited == Some(contract)
             || (kind == Kind::Game && minor)
             || (kind > Kind::Game && (self.strain.is_some() || !in_notrump))
@@ -596,12 +609,15 @@ impl Convention {
             .iter()
             .rposition(|b| b.is_contract())
             .and_then(|i| ((history.len() - i) % 2 == 0).then(|| history[i]));
-        let here = |strain| Strain {
+        let here = |strain: Option<Suit>| Strain {
             convention: self,
             history,
             strain,
             invited,
             ours,
+            shown: strain.map_or(0, |suit| {
+                partner.min.length[suit].max(mine.min.length[suit])
+            }),
         };
         let strain = here(trump(bid));
 
