@@ -3578,7 +3578,7 @@ fn sheets_makes_a_takeout_double_in_any_seat() {
             opened
         );
     }
-    // Partner, with four spades and no points, answers the double in the
+    // Partner, with four spades and a weak hand, answers the double in the
     // same way after a third seat opening.
     assert_eq!(
         Suit(1, Spades),
