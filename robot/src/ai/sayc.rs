@@ -37,10 +37,12 @@
 //! `responder_rebids`): a sign-off, which opener passes, an invitation,
 //! which opener accepts with enough for 25 points, game, or a new suit,
 //! which forces.  The notrump structure is SAYC's own (see `notrump`),
-//! with Stayman only for a four card major, and answers 2NT after 2C-2D as
-//! it does a 2NT opening.  The strong 2C, the weak twos and threes, and the
-//! natural fallbacks are shared with Sheets, though over a weak two's 2NT
-//! response opener rebids the suit with a minimum.
+//! and answers 2NT after 2C-2D as it does a 2NT opening.  Stayman asks for
+//! a four card major and shows nothing, though the robot asks only with a
+//! four card major of its own, or 5-5 in the majors over 3NT.  The strong
+//! 2C, the weak twos and threes, and the natural fallbacks are shared with
+//! Sheets, though over a weak two's 2NT response opener rebids the suit
+//! with a minimum.
 //!
 //! Not covered, though the booklet has them: slam conventions (Blackwood and
 //! Gerber), negative doubles, responder's strong jump shifts, the feature
@@ -302,11 +304,11 @@ fn notrump(s: &mut Sheet) {
         s.add(
             "Stayman",
             &auction(&[nt, &stayman]),
-            "A 4 card major",
+            "Asks for a 4 card major",
             Forcing::Forcing,
             [
-                fit(MIN.with_hcp(stayman_min).min_len(Hearts, 4), MAX),
-                fit(MIN.with_hcp(stayman_min).min_len(Spades, 4), MAX),
+                fit(MIN.with_hcp(stayman_min).min_len(Hearts, 4), MAX).asks(),
+                fit(MIN.with_hcp(stayman_min).min_len(Spades, 4), MAX).asks(),
             ],
         );
         if let Some((invite_lo, invite_hi)) = invite {
@@ -623,9 +625,9 @@ fn three_notrump(s: &mut Sheet) {
     s.add(
         "Stayman",
         &auction(&["3N", "4C"]),
-        "5-5 in the majors",
+        "Asks for a 4 card major",
         Forcing::Forcing,
-        [fit(five_five, MAX)],
+        [fit(five_five, MAX).asks()],
     );
     s.add(
         "Jacoby transfer",
@@ -645,11 +647,11 @@ fn three_notrump(s: &mut Sheet) {
     s.add(
         "Stayman",
         &auction(&["3N", "4C"]),
-        "A 4 card major, slam interest",
+        "Asks for a 4 card major",
         Forcing::Forcing,
         [
-            fit(slam_possible.min_len(Hearts, 4), MAX),
-            fit(slam_possible.min_len(Spades, 4), MAX),
+            fit(slam_possible.min_len(Hearts, 4), MAX).asks(),
+            fit(slam_possible.min_len(Spades, 4), MAX).asks(),
         ],
     );
     s.add(

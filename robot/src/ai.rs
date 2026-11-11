@@ -440,6 +440,8 @@ pub struct Fit {
     /// Is this a limit bid, whose most points are the fewest with which the
     /// system makes a stronger bid instead?  See `Convention::limit`.
     limit: bool,
+    /// Does this ask rather than tell?  See `Fit::asks`.
+    asks: bool,
 }
 
 impl Fit {
@@ -450,6 +452,7 @@ impl Fit {
             max,
             shape: Vec::new(),
             limit: false,
+            asks: false,
         }
     }
     /// A hand that also follows `rule`.
@@ -462,6 +465,21 @@ impl Fit {
     pub fn limit(mut self) -> Self {
         self.limit = true;
         self
+    }
+    /// An asking bid, such as Stayman: the robot makes it with a hand like
+    /// this, but partner learns nothing from it, since it is a question and
+    /// other hands could ask it too.
+    pub fn asks(mut self) -> Self {
+        self.asks = true;
+        self
+    }
+    /// The bounds that partner learns from a hand fitting this way.
+    fn shown(&self) -> (HandValuation, HandValuation) {
+        if self.asks {
+            (HandValuation::MIN, HandValuation::MAX)
+        } else {
+            (self.min, self.max)
+        }
     }
     fn holds(&self, hand: &HandValuation) -> bool {
         !hand.exceeds(self.max)
@@ -781,7 +799,7 @@ impl Convention {
             Convention::Simple { min, max, .. }
             | Convention::Natural { min, max, .. }
             | Convention::Forced { min, max, .. } => (*min, *max),
-            Convention::Rule { fits, .. } => hull(fits.iter().map(|f| (f.min, f.max))),
+            Convention::Rule { fits, .. } => hull(fits.iter().map(Fit::shown)),
             Convention::Either(options) => hull(options.iter().map(|c| c.bounds())),
             Convention::Contracted { reason, .. } if reason.shows_nothing() => {
                 (HandValuation::MIN, HandValuation::MAX)
@@ -3759,6 +3777,34 @@ fn sayc_responds_to_3nt_as_the_booklet_says() {
                 "{:?} {}",
                 auction,
                 hand
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_stayman_asks_and_shows_nothing() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let convention = system.convention();
+        for stayman in [
+            &[NT(1), Pass, Suit(2, Clubs)][..],
+            &[NT(2), Pass, Suit(3, Clubs)],
+            &[NT(3), Pass, Suit(4, Clubs)],
+        ] {
+            // Partner learns nothing from the question.
+            assert_eq!(
+                convention.refine(stayman).map(|c| c.bounds()),
+                Some((HandValuation::MIN, HandValuation::MAX)),
+                "{system:?} {stayman:?}"
+            );
+            // The robot asks only with a hand like those its entries give.
+            assert_ne!(
+                system_bid(system, &stayman[..2], "S 432 H 432 D AKQ2 C AQ2"),
+                stayman[2],
+                "{system:?} {stayman:?}"
             );
         }
     }
