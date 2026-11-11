@@ -384,6 +384,8 @@ impl PlayAI for RandomPlay {
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
 mod booklet;
+#[cfg(test)]
+mod daily_columns;
 pub(crate) mod rules;
 mod sayc;
 pub use booklet::Booklet;
