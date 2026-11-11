@@ -4415,6 +4415,70 @@ fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
 }
 
 #[test]
+fn sayc_blackwood_asks_only_when_it_can_stop() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    // Blackwood's answers are 5C, 5D, 5H and 5S, so an answer that leaves two
+    // aces missing must not go past five of the suit.  Asking before a slam
+    // in clubs takes two aces, in diamonds one, and in a major none.
+    let after = |suit, calls: &[Bid]| {
+        let mut bids = vec![
+            Suit(1, Hearts),
+            Pass,
+            Suit(3, suit),
+            Pass,
+            Suit(4, suit),
+            Pass,
+        ];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let one_ace_clubs = "S KQ H K2 D KQ2 C AKJ432";
+    let two_aces_clubs = "S A2 H K2 D KQ2 C AKJ432";
+    let one_ace_diamonds = "S K2 H K2 D AKJ432 C KQ2";
+    let no_ace_diamonds = "S KQ2 H K2 D KQJ432 C KQ";
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Partner's 5D would leave a hand with one ace in clubs nothing to
+            // sign off in, so it does not ask, and bids the game instead.
+            (after(Clubs, &[]), one_ace_clubs, Suit(5, Clubs)),
+            // With two aces only 5C leaves two missing (with 5D there are
+            // three), and it passes that, since 5C is the sign-off.
+            (after(Clubs, &[]), two_aces_clubs, NT(4)),
+            (after(Clubs, &[NT(4), Suit(5, Clubs)]), two_aces_clubs, Pass),
+            (
+                after(Clubs, &[NT(4), Suit(5, Diamonds)]),
+                two_aces_clubs,
+                Suit(6, Clubs),
+            ),
+            // In diamonds one ace is enough, and no ace is not.
+            (after(Diamonds, &[]), one_ace_diamonds, NT(4)),
+            (
+                after(Diamonds, &[NT(4), Suit(5, Clubs)]),
+                one_ace_diamonds,
+                Suit(5, Diamonds),
+            ),
+            (
+                after(Diamonds, &[NT(4), Suit(5, Diamonds)]),
+                one_ace_diamonds,
+                Pass,
+            ),
+            (after(Diamonds, &[]), no_ace_diamonds, Suit(5, Diamonds)),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, &auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
 fn sayc_slam_asks_need_the_cards_to_ask_with() {
     use bridge_deck::Suit::*;
     use Bid::*;

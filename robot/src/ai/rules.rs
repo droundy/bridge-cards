@@ -118,9 +118,12 @@ pub(crate) fn explanation() -> Explanation {
              shows none or all four, and your own aces tell which: with one you know \
              partner has none, and with none you know partner has all four. The slam is \
              bid only if no more than one ace is missing, and a grand slam only after \
-             asking for kings as well, which needs a king. A slam in notrump is different, \
-             since its points are high card points: a hand without an ace bids the small \
-             slam without asking."
+             asking for kings as well, which needs a king. Blackwood's answers go up to \
+             5S, so a hand asks only if it can stop at the five level in its suit after any \
+             answer that leaves two aces missing: with clubs it needs two aces, with \
+             diamonds one, and with a major none. A hand that cannot ask bids the game \
+             instead. A slam in notrump is different, since its points are high card \
+             points: a hand without an ace bids the small slam without asking."
                 .to_string(),
             format!(
                 "When your side has forced to game, nothing is invited, and the cheapest bid \
@@ -140,6 +143,7 @@ pub(crate) fn explanation() -> Explanation {
 }
 
 mod slam;
+use slam::aces_to_ask;
 use slam::Asked;
 pub(crate) use slam::{asking_fits, Asking};
 
@@ -388,18 +392,38 @@ pub struct Choice {
     /// notrump a hand without an ace cannot ask, so it bids a small slam on
     /// its points, but not a grand slam.
     ask_first: Option<bool>,
-    /// For a small slam, the ask that a hand which might make a grand slam
-    /// explores with, for kings (`true`) or aces (`false`), and the most it
-    /// may have without that cap on its points.  A hand that lacks the card
-    /// to ask with (a king, or an ace before a slam in notrump) bids the
-    /// small slam instead.
-    asks: Option<(bool, HandValuation)>,
+    /// What a hand needs to ask with before the slam this bid is, or the
+    /// slam it is the game for, if it can be asked about.  See `Asks`.
+    asks: Option<Asks>,
     /// For a slam bid once the aces are known, with the first step of the
     /// answer ("none or four") given: the aces a hand needs, unless it has
     /// none at all.  A hand with an ace knows that step means none, and a
     /// hand with none knows that partner has all four, so only a hand in
     /// between lacks the aces for the slam.
     aces_or_none: Option<u8>,
+}
+
+/// The ask that comes before a slam, and what a hand without the cards to ask
+/// with does instead.
+#[derive(Clone, Debug)]
+struct Asks {
+    /// Does it ask for kings (`true`) or aces (`false`)?
+    kings: bool,
+    /// The kings, or aces, a hand needs to ask.
+    needed: u8,
+    /// The most the bid takes of a hand without them, which is not capped by
+    /// the points with which it would ask: for a small slam that might be a
+    /// grand slam, or a game that might be a slam.  Such a hand bids the
+    /// small slam in notrump, or the game in a suit, instead.
+    uncapped: HandValuation,
+}
+
+impl Asks {
+    /// Does `hand` lack the cards to ask with?
+    fn lacked_by(&self, hand: &HandValuation) -> bool {
+        let held = if self.kings { hand.kings } else { hand.aces };
+        held < self.needed
+    }
 }
 
 /// A strain the hand might bid in instead, to choose among them.
@@ -470,14 +494,17 @@ pub(crate) fn contracted_fits(
     let grand = Kind::of(reason.contract) == Kind::GrandSlam;
     let in_suit = trump(reason.contract).is_some();
     let waits = match choice.ask_first {
-        Some(false) => in_suit || !hand_lacks(hand, false) || grand,
+        Some(false) => in_suit || hand.aces > 0 || grand,
         Some(true) => true,
         None => false,
     };
-    let (can_ask, max) = match &choice.asks {
-        Some((kings, uncapped)) if hand_lacks(hand, *kings) => (false, uncapped),
-        _ => (true, max),
-    };
+    // A hand without the cards to ask with is not held back by the points
+    // with which it would have asked.  It still bids a small slam on those
+    // points, rather than explore for a grand slam.  But it may explore for
+    // a slam instead of bidding a game, and does if a bid of the table fits.
+    let lacking = choice.asks.as_ref().filter(|asks| asks.lacked_by(hand));
+    let max = lacking.map_or(max, |asks| &asks.uncapped);
+    let can_ask = lacking.is_none() || Kind::of(reason.contract) < Kind::SmallSlam;
     let short_of_aces = choice
         .aces_or_none
         .is_some_and(|aces| hand.aces != 0 && hand.aces < aces);
@@ -506,15 +533,6 @@ pub(crate) fn contracted_fits(
         (false, true) if looking => r.rating(hand, lo) < rating,
         _ => true,
     })
-}
-
-/// Does the hand lack the card to ask for `kings`, or else aces, with?
-fn hand_lacks(hand: &HandValuation, kings: bool) -> bool {
-    if kings {
-        hand.kings == 0
-    } else {
-        hand.aces == 0
-    }
 }
 
 /// The most points partner might have, for a slam: the most they promised,
@@ -1060,13 +1078,14 @@ impl Convention {
             a.aces.is_some() && a.kings.is_none() && legal_bids(history).contains(&a.ask.bid(true))
         });
         let slam = Kind::of(contract);
+        // The ask for aces that comes before a slam in this strain, if one is
+        // possible: before the aces are known, for a slam or the game under it.
+        let ace_ask = (asked.is_none() && slam >= Kind::Game && rule != Rule::Invite)
+            .then(|| self.ace_ask(history, strain.strain.is_some()))
+            .flatten();
         if slam >= Kind::SmallSlam && rule != Rule::Invite {
             match asked {
-                None => {
-                    ask_first = self
-                        .ace_ask(history, strain.strain.is_some())
-                        .map(|_| false)
-                }
+                None => ask_first = ace_ask.map(|_| false),
                 Some(asked) => {
                     let all = if slam == Kind::GrandSlam { 4 } else { 3 };
                     match asked.aces {
@@ -1082,15 +1101,29 @@ impl Convention {
                 }
             }
         }
-        // A small slam that might be a grand slam asks first, if the hand can.
-        let asks = (slam == Kind::SmallSlam && rule != Rule::Invite)
-            .then(|| ask_first.or(king_ask.then_some(true)))
-            .flatten()
-            .map(|kings| {
-                let mut uncapped = max;
-                points.set(&mut uncapped, points.of(&HandValuation::MAX));
-                (kings, uncapped)
-            });
+        // What a hand needs to ask with, if it asks before the contract:
+        // for a small slam, for aces or kings, and for a game in a suit, for
+        // aces before a slam, if it takes more than a hand may lack.
+        let asks = match slam {
+            _ if rule == Rule::Invite => None,
+            Kind::SmallSlam => ace_ask
+                .map(|ask| (false, aces_to_ask(ask, contract)))
+                .or(king_ask.then_some((true, 1))),
+            Kind::Game => ace_ask
+                .zip(strain.contract(Kind::SmallSlam))
+                .map(|(ask, slam)| (false, aces_to_ask(ask, slam)))
+                .filter(|&(_, needed)| needed > 0),
+            _ => None,
+        }
+        .map(|(kings, needed)| {
+            let mut uncapped = max;
+            points.set(&mut uncapped, points.of(&HandValuation::MAX));
+            Asks {
+                kings,
+                needed,
+                uncapped,
+            }
+        });
 
         // The strains the hand could play the same kind of contract in.
         let rival = |s: Option<Suit>, contract: Bid, available: bool| {
