@@ -822,9 +822,10 @@ impl Convention {
             Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
                 (*min, *max)
             }
-            Convention::Ordered { .. }
-            | Convention::Contract { .. }
-            | Convention::SlamAsk { .. } => (HandValuation::MIN, HandValuation::MAX),
+            Convention::SlamAsk { asking, .. } => (asking.min, HandValuation::MAX),
+            Convention::Ordered { .. } | Convention::Contract { .. } => {
+                (HandValuation::MIN, HandValuation::MAX)
+            }
         }
     }
     /// Does a hand with these values fit this bid?
@@ -4032,5 +4033,75 @@ fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
                 "{system:?} {auction:?} {hand}"
             );
         }
+    }
+}
+
+#[test]
+fn sayc_slam_asks_need_the_cards_to_ask_with() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let gerber = [NT(1), Pass, Suit(4, Clubs), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Without an ace there is nothing to ask with, and no grand slam
+            // without asking, so the hand bids the small slam.
+            (&[NT(1), Pass][..], "S KQJ H KQ5 D KQ10 C KQ32", NT(6)),
+            (
+                &[Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass, NT(2), Pass],
+                "S KQJ H KJ2 D KJ2 C KQJ10",
+                NT(6),
+            ),
+            // With two aces missing, Gerber signs off in notrump.
+            (
+                &[NT(1), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S KQ2 H KQ3 D AQ2 C KQ32",
+                NT(4),
+            ),
+            // The answer to Blackwood's 5NT counts kings.
+            (
+                &[
+                    Suit(1, Hearts),
+                    Pass,
+                    Suit(3, Clubs),
+                    Pass,
+                    Suit(3, Hearts),
+                    Pass,
+                    NT(4),
+                    Pass,
+                    Suit(5, Clubs),
+                    Pass,
+                    NT(5),
+                    Pass,
+                ],
+                "S K2 H AQJ103 D K32 C K32",
+                Suit(6, Spades),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+        // An ask holds what it asks with: an ace for aces, a king for kings
+        // and every ace that partner did not show.
+        let convention = system.convention();
+        assert_eq!(1, convention.refine(&gerber[..3]).unwrap().bounds().0.aces);
+        let kings = [
+            Suit(1, Hearts),
+            Pass,
+            Suit(3, Clubs),
+            Pass,
+            Suit(3, Hearts),
+            Pass,
+            NT(4),
+            Pass,
+            Suit(5, Diamonds),
+            Pass,
+            NT(5),
+        ];
+        let (min, _) = convention.refine(&kings).unwrap().bounds();
+        assert_eq!((3, 1), (min.aces, min.kings));
     }
 }

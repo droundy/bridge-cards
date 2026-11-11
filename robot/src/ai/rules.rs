@@ -62,6 +62,7 @@ use bridge_deck::{HandValuation, Suit};
 use wording::{numbered, Number, Text, Word};
 
 mod slam;
+use slam::Asked;
 pub(crate) use slam::{asking_fits, Asking};
 
 /// The ways of counting a hand's points.
@@ -292,8 +293,13 @@ pub struct Choice {
     slam: Option<u8>,
     /// Is this a slam that waits for an ask for aces (`Some(false)`) or for
     /// kings (`Some(true)`)?  See `slam`.  A hand without an ace cannot ask,
-    /// so it bids a small slam on its points.
+    /// so it bids a small slam on its points, but not a grand slam.
     ask_first: Option<bool>,
+    /// For a small slam, the ask that a hand which might make a grand slam
+    /// explores with, for kings (`true`) or aces (`false`), and the most it
+    /// may have without that cap on its points.  A hand that lacks the card
+    /// to ask with bids the small slam instead.
+    asks: Option<(bool, HandValuation)>,
 }
 
 /// A strain the hand might bid in instead, to choose among them.
@@ -357,10 +363,17 @@ pub(crate) fn contracted_fits(
     hand: &HandValuation,
     unsure_explores: bool,
 ) -> bool {
+    // A hand without an ace cannot ask, and bids a small slam on its points,
+    // but a grand slam waits for the ask even then: it is never bid unasked.
+    let grand = Kind::of(reason.contract) == Kind::GrandSlam;
     let waits = match choice.ask_first {
-        Some(false) => hand.aces >= 1,
+        Some(false) => !hand_lacks(hand, false) || grand,
         Some(true) => true,
         None => false,
+    };
+    let (can_ask, max) = match &choice.asks {
+        Some((kings, uncapped)) if hand_lacks(hand, *kings) => (false, uncapped),
+        _ => (true, max),
     };
     if waits || hand.exceeds(*max) || min.exceeds(*hand) {
         return false;
@@ -368,6 +381,7 @@ pub(crate) fn contracted_fits(
     let (lo, hi) = reason.promised;
     let (ours, rivals) = choice.rivals.split_first().unwrap();
     if unsure_explores
+        && can_ask
         && choice
             .slam
             .is_some_and(|slam| ours.points.of(hand) + reach(lo, hi) >= slam)
@@ -386,6 +400,15 @@ pub(crate) fn contracted_fits(
         (false, true) if looking => r.rating(hand, lo) < rating,
         _ => true,
     })
+}
+
+/// Does the hand lack the card to ask for `kings`, or else aces, with?
+fn hand_lacks(hand: &HandValuation, kings: bool) -> bool {
+    if kings {
+        hand.kings == 0
+    } else {
+        hand.aces == 0
+    }
 }
 
 /// The most points partner might have, for a slam: the most they promised,
@@ -647,38 +670,36 @@ impl Convention {
         bids: &[Bid],
         the_name: &'static str,
     ) -> Option<Convention> {
-        let bid = *bids.last()?;
-        if !bid.is_contract() || !uncontested(&bids_string(bids)) {
-            return None;
-        }
-        if let Some(meaning) = self.slam_meaning(bids) {
-            return meaning;
-        }
-        self.contracted_meaning(bids, the_name)
-            .or_else(|| {
-                let (&bid, history) = bids.split_last()?;
-                let ask = [Some(Suit::Clubs), None]
-                    .iter()
-                    .copied()
-                    .find_map(|strain| self.ace_ask(history, strain))
-                    .filter(|ask| ask.bid(false) == bid)?;
-                self.asked(history)
-                    .is_none()
-                    .then(|| self.asking(history, ask, false))?
-            })
-            .or_else(|| self.explored_meaning(bids))
+        self.rules_meaning(bids, the_name).flatten()
     }
 
     /// Do the contract rules decide what the last of `bids` means, even if it
     /// means nothing, as when partner has asked for aces?  Then no natural
     /// bid of the table does.
     pub(crate) fn rules_decide(&self, bids: &[Bid]) -> bool {
-        let Some(&bid) = bids.last() else {
-            return false;
-        };
-        bid.is_contract()
-            && uncontested(&bids_string(bids))
-            && (self.slam_meaning(bids).is_some() || self.contract_meaning(bids, "").is_some())
+        self.rules_meaning(bids, "").is_some()
+    }
+
+    /// What the contract rules make of the last of `bids`, when they decide
+    /// it: `Some(None)` when it means nothing.
+    fn rules_meaning(&self, bids: &[Bid], the_name: &'static str) -> Option<Option<Convention>> {
+        let (&bid, history) = bids.split_last()?;
+        if !bid.is_contract() || !uncontested(&bids_string(bids)) {
+            return None;
+        }
+        let asked = self.asked(history);
+        if let Some(meaning) = self.slam_meaning(bids, asked.as_ref()) {
+            return Some(meaning);
+        }
+        self.contracted_meaning(bids, the_name, asked.as_ref())
+            .or_else(|| {
+                let ask = self
+                    .ace_ask(history, true)
+                    .filter(|ask| ask.bid(false) == bid)?;
+                asked.is_none().then(|| self.asking(history, ask, None))?
+            })
+            .or_else(|| self.explored_meaning(bids))
+            .map(Some)
     }
 
     /// Has the side making the last of `bids` forced to game, and not yet
@@ -783,13 +804,13 @@ impl Convention {
     }
 
     /// The contract that the last of `bids` places or invites, if any.
-    fn contracted_meaning(&self, bids: &[Bid], the_name: &'static str) -> Option<Convention> {
+    fn contracted_meaning(
+        &self,
+        bids: &[Bid],
+        the_name: &'static str,
+        asked: Option<&Asked>,
+    ) -> Option<Convention> {
         let (&bid, history) = bids.split_last()?;
-        // Once partner has asked for aces, they place the contract.
-        let asked = self.asked(history);
-        if asked.as_ref().is_some_and(|a| !a.by_me) {
-            return None;
-        }
         let partner = self.promise(bids, 2);
         let mine = self.promise(bids, 4);
         let (lo, hi) = partner.points();
@@ -865,7 +886,7 @@ impl Convention {
         // the contract itself.
         let most = if rule == Rule::Invite {
             needs.checked_sub(lo + 1)?
-        } else if rule == Rule::Forced || asked.as_ref().is_some_and(|a| a.aces.is_some()) {
+        } else if rule == Rule::Forced || asked.is_some_and(|a| a.aces.is_some()) {
             // Short of the fit that a slam needs, a game force still bids
             // game, and short of the aces a grand slam needs, a small slam
             // is bid; with them, the higher contract is the higher bid.
@@ -917,13 +938,17 @@ impl Convention {
         // A slam waits for the aces, and a grand slam for the kings, if there
         // is a way to ask for them.
         let mut ask_first = None;
-        let king_ask = asked.as_ref().is_some_and(|a| {
+        let king_ask = asked.is_some_and(|a| {
             a.aces.is_some() && a.kings.is_none() && legal_bids(history).contains(&a.ask.bid(true))
         });
         let slam = Kind::of(contract);
         if slam >= Kind::SmallSlam && rule != Rule::Invite {
-            match &asked {
-                None => ask_first = self.ace_ask(history, strain.strain).map(|_| false),
+            match asked {
+                None => {
+                    ask_first = self
+                        .ace_ask(history, strain.strain.is_some())
+                        .map(|_| false)
+                }
                 Some(asked) => {
                     let all = if slam == Kind::GrandSlam { 4 } else { 3 };
                     min.aces = all - asked.aces.unwrap_or(0).min(all);
@@ -936,6 +961,15 @@ impl Convention {
                 }
             }
         }
+        // A small slam that might be a grand slam asks first, if the hand can.
+        let asks = (slam == Kind::SmallSlam && rule != Rule::Invite)
+            .then(|| ask_first.or(king_ask.then_some(true)))
+            .flatten()
+            .map(|kings| {
+                let mut uncapped = max;
+                points.set(&mut uncapped, points.of(&HandValuation::MAX));
+                (kings, uncapped)
+            });
 
         // The strains the hand could play the same kind of contract in.
         let rival = |s: Option<Suit>, contract: Bid, available: bool| {
@@ -1035,6 +1069,7 @@ impl Convention {
                 rivals,
                 slam,
                 ask_first,
+                asks,
             },
         })
     }
