@@ -2007,7 +2007,7 @@ impl Convention {
                 all_unbid[o] = 4;
             }
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([&format!(r"^(P )?[123]{:?} X$", bid)]).unwrap(),
+                regex: RegexSet::new([&format!(r"^(P )*[123]{:?} X$", bid)]).unwrap(),
                 max,
                 min: HandValuation {
                     lhcp: 9,
@@ -2025,9 +2025,9 @@ impl Convention {
                     length[response] = 4;
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
-                            &format!(r"^(P )?1{:?} X P {}{:?}$", bid, level, response),
-                            &format!(r"^(P )?2{:?} X P {}{:?}$", bid, level + 1, response),
-                            &format!(r"^(P )?3{:?} X P {}{:?}$", bid, level + 2, response),
+                            &format!(r"^(P )*1{:?} X P {}{:?}$", bid, level, response),
+                            &format!(r"^(P )*2{:?} X P {}{:?}$", bid, level + 1, response),
+                            &format!(r"^(P )*3{:?} X P {}{:?}$", bid, level + 2, response),
                         ])
                         .unwrap(),
                         max,
@@ -2048,7 +2048,7 @@ impl Convention {
                 }
                 sheets.add(Convention::Simple {
                     regex: RegexSet::new([&format!(
-                        r"^(P )?[123]{:?} P [123]{:?} X$",
+                        r"^(P )*[123]{:?} P [123]{:?} X$",
                         bid, response
                     )])
                     .unwrap(),
@@ -2074,18 +2074,18 @@ impl Convention {
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
                             &format!(
-                                r"^(P )?1{:?} P 1{:?} X P {}{:?}$",
+                                r"^(P )*1{:?} P 1{:?} X P {}{:?}$",
                                 bid, response, level, takeout_response
                             ),
                             &format!(
-                                r"^(P )?.{:?} P 2{:?} X P {}{:?}$",
+                                r"^(P )*.{:?} P 2{:?} X P {}{:?}$",
                                 bid,
                                 response,
                                 level + 1,
                                 takeout_response,
                             ),
                             &format!(
-                                r"^(P )?.{:?} P 3{:?} X P {}{:?}$",
+                                r"^(P )*.{:?} P 3{:?} X P {}{:?}$",
                                 bid,
                                 response,
                                 level + 2,
@@ -3758,6 +3758,50 @@ fn sheets_stayman_needs_a_four_card_major() {
     assert_eq!(Suit(2, Clubs), over("S KJ32 H 52 D AK42 C J63"));
     assert_ne!(Suit(2, Clubs), over("S 8 H AJ9 D QJ842 C Q975"));
     assert_ne!(Suit(2, Clubs), over("S 432 H 432 D 5432 C 432"));
+}
+
+/// Sheets competes over an opening made in any seat: with shortness in the
+/// opened suit and support for the others, a hand makes a takeout double of
+/// a third or fourth seat opening just as it does of a first or second seat
+/// one, and partner answers the double.
+#[test]
+fn sheets_makes_a_takeout_double_in_any_seat() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let hand = "S KJ97 H K762 D 9 C KQ63";
+    for opened in [
+        vec![Suit(1, Diamonds)],
+        vec![Pass, Suit(1, Diamonds)],
+        vec![Pass, Pass, Suit(1, Diamonds)],
+        vec![Pass, Pass, Pass, Suit(1, Diamonds)],
+    ] {
+        assert_eq!(
+            Double,
+            system_bid(BiddingSystem::Sheets, &opened, hand),
+            "{:?}",
+            opened
+        );
+    }
+    // Partner, with four spades and a weak hand, answers the double in the
+    // same way after a third seat opening.
+    assert_eq!(
+        Suit(1, Spades),
+        system_bid(
+            BiddingSystem::Sheets,
+            &[Pass, Pass, Suit(1, Diamonds), Double, Pass],
+            "S 8632 H J84 D K75 C J97"
+        )
+    );
+    // The same double of the response to a third seat opening.
+    assert_eq!(
+        Double,
+        system_bid(
+            BiddingSystem::Sheets,
+            &[Pass, Pass, Suit(1, Diamonds), Pass, Suit(1, Hearts)],
+            "S KJ97 H 9 D K76 C KQ632"
+        )
+    );
 }
 
 #[test]
