@@ -241,6 +241,11 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let explore = std::mem::replace(&mut s.1, Convention::new(""));
     s.0.append(explore);
     s.add_block(|t| t.add_natural_bids());
+    // This comes after everything, even the natural bids, because it is a
+    // last resort: the robot bids the first entry that fits, and this one
+    // fits every hand, so anywhere earlier in the table it would hide the
+    // bids and passes that describe the hand better.
+    must_double_when_passed_out(&mut s);
     s.0
 }
 
@@ -1080,7 +1085,9 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
 /// raise or better and a jump raise is preemptive.  A redouble shows 10+
 /// points, after the bids that describe the hand better, and so the single
 /// raise, a new suit at the two level and 1NT show less.  Then opener
-/// passes, and a double of the opponents' escape is for penalty.
+/// passes, and a double of the opponents' escape is for penalty, with four
+/// of their trumps, or with any hand if the escape would be passed out (see
+/// `must_double_when_passed_out`).
 fn after_takeout_double(s: &mut Sheet) {
     use Suit::*;
     for opening in Suit::ALL.iter().cloned() {
@@ -1226,6 +1233,22 @@ fn after_takeout_double(s: &mut Sheet) {
             );
         }
     }
+}
+
+/// After a redouble our side holds the balance of the points, so the
+/// opponents may not play their escape undoubled.  When it is about to be
+/// passed out (`1D X XX 2C P P` with responder to call, or `1D X XX P P 2C P
+/// P` with opener to call) any hand doubles it, not only one with four cards
+/// in their suit.  The caller puts this last in the table, so that it is
+/// used only when nothing else fits.
+fn must_double_when_passed_out(s: &mut Sheet) {
+    s.add(
+        "Penalty double",
+        &format!("^{OPEN}1[CDHS] X XX (P P )?[1-4][CDHS] P P X$"),
+        "They may not play undoubled",
+        Forcing::Passable,
+        [fit(MIN, MAX)],
+    );
 }
 
 /// The opponent's call between the opening and a new suit response at

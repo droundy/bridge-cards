@@ -4147,3 +4147,98 @@ fn sayc_answers_a_takeout_double_as_the_booklet_says() {
         sayc(&[Suit(2, Clubs), Double], "S 2 H K32 D AQJ32 C 5432")
     );
 }
+
+/// After our side redoubles a takeout double, the opponents may not play
+/// their escape undoubled: with four cards in their suit a hand doubles it
+/// at once, and when it is about to be passed out any hand does, but only as
+/// a last resort, so that a bid that fits better is still preferred.
+#[test]
+fn sayc_does_not_let_them_play_an_escape_undoubled_after_a_redouble() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let bid = |bids: &[Bid], hand| system_bid(system, bids, hand);
+        // Responder redoubled and 2C is about to be passed out: with three
+        // clubs and 10 points responder doubles it.
+        assert_eq!(
+            Double,
+            bid(
+                &[
+                    Suit(1, Diamonds),
+                    Double,
+                    Redouble,
+                    Suit(2, Clubs),
+                    Pass,
+                    Pass
+                ],
+                "S AK32 H Q432 D 32 C J32"
+            ),
+            "{system:?}"
+        );
+        // Opener passed the redouble, and now 2C is about to be passed out:
+        // opener doubles it with three clubs and a minimum.
+        assert_eq!(
+            Double,
+            bid(
+                &[
+                    Suit(1, Diamonds),
+                    Double,
+                    Redouble,
+                    Pass,
+                    Pass,
+                    Suit(2, Clubs),
+                    Pass,
+                    Pass
+                ],
+                "S Q32 H K2 D KJ932 C A32"
+            ),
+            "{system:?}"
+        );
+        // The double is a last resort, so a bid that fits better is chosen
+        // instead.  Responder has the strength for game and three clubs, and
+        // bids 3NT rather than doubling.
+        assert_eq!(
+            NT(3),
+            bid(
+                &[
+                    Suit(1, Diamonds),
+                    Double,
+                    Redouble,
+                    Suit(2, Clubs),
+                    Pass,
+                    Pass
+                ],
+                "S AKJ2 H KQ32 D 32 C Q32"
+            ),
+            "{system:?}"
+        );
+        // Opener has five good diamonds and 14 points, and with three clubs
+        // too bids 3D, as it would without the double.
+        assert_eq!(
+            Suit(3, Diamonds),
+            bid(
+                &[
+                    Suit(1, Diamonds),
+                    Double,
+                    Redouble,
+                    Pass,
+                    Pass,
+                    Suit(2, Clubs),
+                    Pass,
+                    Pass
+                ],
+                "S K32 H A2 D AQ932 C J32"
+            ),
+            "{system:?}"
+        );
+        // With four clubs opener doubles directly, before it is passed out.
+        assert_eq!(
+            Double,
+            bid(
+                &[Suit(1, Diamonds), Double, Redouble, Suit(2, Clubs)],
+                "S A2 H K32 D AQ32 C QJ32"
+            ),
+            "{system:?}"
+        );
+    }
+}
