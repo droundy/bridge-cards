@@ -39,6 +39,10 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "two-over-one",
         }
     }
+    /// The system that `slug` names, as [`BiddingSystem::slug`] gives it.
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|system| system.slug() == slug)
+    }
     /// The conventions this system bids by.
     pub fn convention(self) -> Convention {
         match self {
@@ -127,7 +131,18 @@ fn all_bids() -> Vec<Bid> {
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        if let Some((b, c)) = self.0.robot_bid(history, &hand.values()) {
+        let hand = hand.values();
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        let mut best: Option<(usize, Bid, Convention)> = None;
+        for b in legal_bids(history).into_iter().rev() {
+            *bids.last_mut().unwrap() = b;
+            let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
+            if let Some((i, c)) = self.0.first_fit(&bids, &hand, before) {
+                best = Some((i, b, c));
+            }
+        }
+        if let Some((_, b, c)) = best {
             println!(
                 "Bidding {:?} with convention {}",
                 b,
@@ -141,121 +156,6 @@ impl BidAI for ConventionalBid {
 }
 
 impl Convention {
-    /// The bid the robot makes with `hand` after `history`, with what the
-    /// entry that it goes by says about it, or `None` when nothing fits and
-    /// it passes.  It is the legal bid whose entry comes first in the table,
-    /// and the highest of the bids when one entry describes several.
-    pub(crate) fn robot_bid(
-        &self,
-        history: &[Bid],
-        hand: &HandValuation,
-    ) -> Option<(Bid, Convention)> {
-        let mut bids = history.to_vec();
-        bids.push(Bid::Pass);
-        let mut best: Option<(usize, Bid, Convention)> = None;
-        for b in legal_bids(history).into_iter().rev() {
-            *bids.last_mut().unwrap() = b;
-            let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
-            if let Some((i, c)) = self.first_fit(&bids, hand, before) {
-                best = Some((i, b, c));
-            }
-        }
-        best.map(|(_, b, c)| (b, c))
-    }
-}
-
-/// A legal bid that a table understands: what it means, and the entries that
-/// say so, which are what the robot chooses among.
-pub(crate) struct Described {
-    pub(crate) bid: Bid,
-    /// What the bid means, as `Convention::refine` says.
-    pub(crate) meaning: Convention,
-    /// The entries that describe the bid, as in `first_fit`, with the index of
-    /// each in the table.
-    entries: Vec<(usize, Convention)>,
-}
-
-impl Described {
-    /// A bid with the entries that describe it, as `Convention::described_bids`
-    /// makes them.
-    #[cfg(test)]
-    pub(crate) fn new(bid: Bid, meaning: Convention, entries: Vec<(usize, Convention)>) -> Self {
-        Described {
-            bid,
-            meaning,
-            entries,
-        }
-    }
-    /// The entries that describe this bid, each with its index in the table.
-    pub(crate) fn entries(&self) -> &[(usize, Convention)] {
-        &self.entries
-    }
-    /// The position in the table of the entry the robot goes by for `hand`: the
-    /// first of the entries that describes this bid and fits it.
-    fn rank(&self, hand: &HandValuation) -> Option<usize> {
-        self.entries
-            .iter()
-            .find(|(_, c)| c.fits(hand))
-            .map(|&(i, _)| i)
-    }
-    /// The position in the table of the first entry, which is where the robot
-    /// considers this bid.
-    pub(crate) fn position(&self) -> usize {
-        self.entries[0].0
-    }
-}
-
-/// The bid the robot makes with `hand` among `described`, as `ConventionalBid`
-/// does: the fitting entry that comes first in the table, and the highest of
-/// the bids when one entry describes several.  `described` has the highest
-/// bid first, as `Convention::described_bids` gives it.
-pub(crate) fn robot_choice(described: &[Described], hand: &HandValuation) -> Option<Bid> {
-    choose(&fitting_calls(described, hand))
-}
-
-/// The bids among `described` that fit `hand`, each with the position in the
-/// table of the entry that makes it fit, in the order of `described`.
-pub(crate) fn fitting_calls(described: &[Described], hand: &HandValuation) -> Vec<(usize, Bid)> {
-    described
-        .iter()
-        .filter_map(|d| d.rank(hand).map(|i| (i, d.bid)))
-        .collect()
-}
-
-/// The bid the robot makes of `fitting`, as `fitting_calls` gives them: the
-/// one whose entry comes first, and the earlier of those in `fitting` (the
-/// higher bid) when it is the same entry.
-pub(crate) fn choose(fitting: &[(usize, Bid)]) -> Option<Bid> {
-    fitting.iter().min_by_key(|&&(i, _)| i).map(|&(_, bid)| bid)
-}
-
-impl Convention {
-    /// The legal bids after `history` that this table understands, highest
-    /// first, each with the entries that describe it.  Unlike `first_fit` it
-    /// does not need a hand, so it can be kept for every hand that reaches the
-    /// auction.
-    pub(crate) fn described_bids(&self, history: &[Bid]) -> Vec<Described> {
-        let mut bids = history.to_vec();
-        bids.push(Bid::Pass);
-        let mut described = Vec::new();
-        for bid in legal_bids(history).into_iter().rev() {
-            *bids.last_mut().unwrap() = bid;
-            let auction = bids_string(&bids);
-            let entries: Vec<(usize, Convention)> = self.describing(&auction, &bids).collect();
-            let found = entries.iter().map(|(_, c)| c.clone()).collect();
-            let meaning = match Convention::either(found) {
-                Some(meaning) => meaning,
-                None => continue,
-            };
-            described.push(Described {
-                bid,
-                meaning,
-                entries,
-            });
-        }
-        described
-    }
-
     /// The first entry of this table before the one at `before` that
     /// describes the last of `bids` and fits `hand`, with its index and what it
     /// says about that bid.  The robot bids the legal bid whose entry comes
@@ -267,11 +167,21 @@ impl Convention {
         before: usize,
     ) -> Option<(usize, Convention)> {
         let auction = bids_string(bids);
-        let first = self
-            .describing(&auction, bids)
-            .take_while(|&(i, _)| i < before)
-            .find(|(_, c)| c.fits(hand));
-        first
+        let default = self.default_for(&auction);
+        for i in self.candidates(&auction) {
+            if before <= i {
+                break;
+            }
+            if !self.entries()[i].matches(&auction, bids) {
+                continue;
+            }
+            if let Some(c) = self.resolve(i, &auction, bids, default) {
+                if c.fits(hand) {
+                    return Some((i, c));
+                }
+            }
+        }
+        None
     }
 }
 
@@ -459,10 +369,9 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 mod booklet;
 mod sayc;
-
 pub use booklet::Booklet;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Forcing {
     Forced,
     Passable,
@@ -474,7 +383,7 @@ pub enum Forcing {
 impl DisplayAs<HTML> for Forcing {}
 
 /// A rule about the shape of a hand that bounds on each suit cannot say.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShapeRule {
     /// The first suit is at least as long as the second.
     AtLeastAsLong(Suit, Suit),
@@ -511,7 +420,7 @@ const OR: &str = "<br/><em>or</em><br/>";
 
 /// One way that a hand can fit a bid: bounds on its values, and rules about
 /// its shape that the bounds cannot say.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct Fit {
     min: HandValuation,
     max: HandValuation,
@@ -823,31 +732,13 @@ impl Convention {
     /// `Either` of them when several do.
     pub fn refine(&self, actual_bids: &[Bid]) -> Option<Convention> {
         let auction = bids_string(actual_bids);
-        let found = self
-            .describing(&auction, actual_bids)
-            .map(|(_, c)| c)
-            .collect();
-        Convention::either(found)
-    }
-    /// The entries of this table that describe the last of `bids`, whose
-    /// `bids_string` is `auction`, each with its index in the table, in table
-    /// order.  They are found as they are asked for, so a caller that stops at
-    /// the first one it wants goes no further.
-    fn describing<'a>(
-        &'a self,
-        auction: &'a str,
-        bids: &'a [Bid],
-    ) -> impl Iterator<Item = (usize, Convention)> + 'a {
-        let default = self.default_for(auction);
-        self.candidates(auction)
+        let default = self.default_for(&auction);
+        let mut found: Vec<Convention> = self
+            .candidates(&auction)
             .into_iter()
-            .filter(move |&i| self.entries()[i].matches(auction, bids))
-            .filter_map(move |i| self.resolve(i, auction, bids, default).map(|c| (i, c)))
-    }
-    /// What a bid means given the entries `found` that describe it: that
-    /// entry, or `Either` of them when there are several.  `None` if there are
-    /// none.
-    fn either(mut found: Vec<Convention>) -> Option<Convention> {
+            .filter(|&i| self.entries()[i].matches(&auction, actual_bids))
+            .filter_map(|i| self.resolve(i, &auction, actual_bids, default))
+            .collect();
         match found.len() {
             0 => None,
             1 => found.pop(),
@@ -2536,27 +2427,21 @@ fn test_sheets() {
     );
 }
 
-/// The four hands of the deal numbered `seed`, dealer first.
-fn seeded_hands(seed: u64) -> Vec<Cards> {
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let mut deck = Cards::ALL;
-    let mut hands = Vec::new();
-    for _ in 0..3 {
-        hands.push(deck.pick_rng(&mut rng, 13).unwrap());
-    }
-    hands.push(deck);
-    hands
-}
-
 /// Bid `deals` seeded deals with the robot in all four seats.  Each result is
 /// the seed, the hands (dealer first) and the auction.
 #[cfg(test)]
 fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
+    use rand::SeedableRng;
     let mut bidder = ConventionalBid(convention);
     let mut out = Vec::new();
     for seed in 0..deals {
-        let hands = seeded_hands(seed);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut deck = Cards::ALL;
+        let mut hands = Vec::new();
+        for _ in 0..3 {
+            hands.push(deck.pick_rng(&mut rng, 13).unwrap());
+        }
+        hands.push(deck);
         let mut bids = Vec::new();
         while bids.len() < 4 || bids[bids.len() - 3..] != [Bid::Pass, Bid::Pass, Bid::Pass] {
             let bid = bidder.bid(&bids, hands[bids.len() % 4]);

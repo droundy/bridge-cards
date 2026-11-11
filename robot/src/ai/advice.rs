@@ -15,7 +15,6 @@
 //! counts, lists and verbs agree wherever a phrase ends up, and the advice
 //! reads the same as HTML or plain text.
 use super::{bids_string, legal_bids, Convention, Fit, Forcing, ShapeRule};
-use crate::utils::plain;
 use crate::Bid;
 use bridge_deck::{Cards, HandValuation, Suit};
 #[cfg(test)]
@@ -34,6 +33,7 @@ const HCP: Word = Word::noun("high card point", "high card points");
 const LHCP: Word = Word::noun("long high card point", "long high card points");
 const SHCP: Word = Word::noun("short high card point", "short high card points");
 const LOSER: Word = Word::noun("loser", "losers");
+const CARD: Word = Word::noun("card", "cards");
 const KNOW: Word = Word::verb("knows", "know");
 
 fn partner_text() -> Text {
@@ -51,6 +51,30 @@ fn they() -> Text {
 /// HTML that a table entry wrote out, which plain text and LaTeX show as the
 /// text in it.
 struct Raw(FormattedString<HTML>);
+
+/// HTML as plain text: without its tags, and with its escapes undone.
+fn plain(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    [
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&#x27;", "'"),
+        ("&#x2f;", "/"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(text, |text, (escaped, c)| text.replace(escaped, c))
+}
 
 impl Markup for Raw {
     fn html(&self, _: Form, f: &mut Formatter) -> fmt::Result {
@@ -569,7 +593,7 @@ impl Strain {
 
 /// One of the bounds in a `HandValuation`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Measure {
+pub(super) enum Measure {
     Length(Suit),
     Hcp,
     Lhcp,
@@ -623,14 +647,23 @@ impl Measure {
     }
     /// What this measure counts, as in "high card points in spades".
     fn noun(self) -> Text {
+        self.noun_calling(&|_| None)
+    }
+    /// What this measure counts, where `called` has other words for some
+    /// suits, as in "cards in partner's suit".
+    fn noun_calling(self, called: Called) -> Text {
+        let suit = |suit: Suit| called(suit).map_or(Text::from(suit), Text::from);
         match self {
-            Measure::Length(suit) => suit.into(),
+            Measure::Length(s) => match called(s) {
+                Some(name) => Text::from(CARD) + "in" + name,
+                None => s.into(),
+            },
             Measure::Hcp => HCP.into(),
             Measure::Lhcp => LHCP.into(),
             Measure::Shcp => SHCP.into(),
             Measure::Losers => LOSER.into(),
-            Measure::HcpIn(suit) => Text::from(HCP) + "in" + suit,
-            Measure::HcpOutside(suit) => Text::from(HCP) + "outside" + suit,
+            Measure::HcpIn(s) => Text::from(HCP) + "in" + suit(s),
+            Measure::HcpOutside(s) => Text::from(HCP) + "outside" + suit(s),
         }
     }
     /// Is this one of the ways of counting the strength of the whole hand?
@@ -649,7 +682,7 @@ impl Measure {
 
 /// The bounds on one measure, as in "5+ spades" or "6–9 high card points".
 #[derive(Clone, Copy)]
-struct Bound {
+pub(super) struct Bound {
     m: Measure,
     min: u8,
     max: u8,
@@ -670,11 +703,18 @@ impl Bound {
     }
     /// The bounds in words, as in "5+ spades" or "at most 1 loser".
     fn text(self) -> Text {
+        self.text_calling(&|_| None)
+    }
+    /// The bounds in words, where `called` has other words for some suits.
+    fn text_calling(self, called: Called) -> Text {
         let Bound { m, min, max } = self;
-        if max >= m.limit() && min != max {
-            at_least(m.quantity(min), m.noun())
+        let noun = || m.noun_calling(called);
+        // Every hand has exactly 13 cards, but there are more points than the
+        // most that a bound can ask for.
+        if max >= m.limit() && (min != max || m.is_points()) {
+            at_least(m.quantity(min), noun())
         } else {
-            between(m.quantity(min), m.quantity(max), m.noun())
+            between(m.quantity(min), m.quantity(max), noun())
         }
     }
     /// Just the amounts, as in "6–9" or "5+".
@@ -696,26 +736,35 @@ impl Bound {
 
 /// Something a bid's bounds ask for.
 #[derive(Clone, Copy)]
-enum Feature {
+pub(super) enum Feature {
     Bound(Bound),
     Shape(ShapeRule),
 }
 
 impl Feature {
-    fn text(self) -> Text {
+    pub(super) fn text(self) -> Text {
+        self.text_calling(&|_| None)
+    }
+    /// The feature in words, where `called` has other words for some suits,
+    /// as in "the suit bid", so that one text can be about several auctions.
+    pub(super) fn text_calling(self, called: Called) -> Text {
+        let suit = |suit: Suit| called(suit).map_or(Text::from(suit), Text::from);
         match self {
             Feature::Shape(ShapeRule::Balanced) => Text::from("a balanced hand"),
-            Feature::Bound(b) => b.text(),
+            Feature::Bound(b) => b.text_calling(called),
             Feature::Shape(ShapeRule::AtLeastAsLong(a, b)) => {
-                Text::from(a) + "at least as long as" + b
+                suit(a) + "at least as long as" + suit(b)
             }
-            Feature::Shape(ShapeRule::Longer(a, b)) => Text::from(a) + "longer than" + b,
+            Feature::Shape(ShapeRule::Longer(a, b)) => suit(a) + "longer than" + suit(b),
         }
     }
 }
 
+/// Other words for a suit, for those that have them.
+pub(super) type Called<'a> = &'a dyn Fn(Suit) -> Option<&'static str>;
+
 /// The features as a list, as in "a balanced hand and 18–19 high card points".
-fn phrases(features: Vec<Feature>) -> Text {
+pub(super) fn phrases(features: Vec<Feature>) -> Text {
     and(features.into_iter().map(Feature::text))
 }
 
@@ -753,7 +802,7 @@ fn beyond_balanced(min: u8, max: u8) -> (u8, u8) {
 }
 
 /// What the bounds `min..=max` ask for that is worth mentioning.
-fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Feature> {
+pub(super) fn describe(min: &HandValuation, max: &HandValuation) -> Vec<Feature> {
     let balanced = is_balanced(min, max);
     let mut features = Vec::new();
     if balanced {

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 mod ai;
 mod utils;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Bid {
     Pass,
     Double,

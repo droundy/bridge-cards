@@ -12,14 +12,14 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::CookieJar;
-use display_as::{display, DisplayAs, HTML};
+use display_as::{display, format_as, DisplayAs, HTML};
 use futures::StreamExt;
 use robot::{PlayerName, Seat};
 use rustls_acme::caches::DirCache;
 use rustls_acme::AcmeConfig;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast::Sender;
 
 /// The configuration for running the server
@@ -141,22 +141,19 @@ async fn style_css() -> impl IntoResponse {
     )
 }
 
-/// The booklet of the bidding system that `system` names, which is one HTML
-/// page that `write_booklets` in the robot crate makes.
-async fn booklet(Path(system): Path<String>) -> Response {
-    use robot::BiddingSystem::*;
-    let Some(system) = robot::BiddingSystem::ALL
-        .iter()
-        .find(|s| s.slug() == system)
-    else {
-        return NotFound.into_response();
+/// The booklet on the bidding system that `system` names.  It is written from
+/// the system's table the first time someone asks for it, and kept.  Writing
+/// it takes about a second, so that is done off the threads that serve pages.
+async fn booklet(Path(system): Path<String>) -> Result<Html<&'static str>, NotFound> {
+    static PAGES: [OnceLock<String>; 3] = [const { OnceLock::new() }; 3];
+    let system = robot::BiddingSystem::from_slug(&system).ok_or(NotFound)?;
+    let write = move || {
+        PAGES[system as usize]
+            .get_or_init(|| format_as!(HTML, robot::Booklet::new(system)).into_string())
+            .as_str()
     };
-    let html = match system {
-        Sheets => include_str!("../../robot/booklets/sheets.html"),
-        Sayc => include_str!("../../robot/booklets/sayc.html"),
-        TwoOverOne => include_str!("../../robot/booklets/two-over-one.html"),
-    };
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+    let page = tokio::task::spawn_blocking(write).await;
+    Ok(Html(page.expect("the booklet could not be written")))
 }
 
 async fn audio() -> impl IntoResponse {
