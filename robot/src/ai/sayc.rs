@@ -273,7 +273,7 @@ fn notrump(s: &mut Sheet) {
     ] {
         // Over a double the booklet keeps the conventions on after 1NT, but
         // not after the others.
-        let auction = |calls: &[&str]| {
+        let answering = |calls: &[&str]| {
             if nt == "1N" {
                 auction(calls)
             } else {
@@ -287,7 +287,7 @@ fn notrump(s: &mut Sheet) {
         };
         s.add(
             name,
-            &auction(&[nt]),
+            &answering(&[nt]),
             "",
             Forcing::Passable,
             [balanced_hcp(lo, hi)],
@@ -305,14 +305,14 @@ fn notrump(s: &mut Sheet) {
             let slam_interest = MIN.with_lhcp(33 - hi);
             s.add(
                 "Response",
-                &auction(&[nt, "3S"]),
+                &answering(&[nt, "3S"]),
                 "6+ spades, slam interest",
                 Forcing::GameForcing,
                 [fit(slam_interest.min_len(Spades, 6), MAX).with(AtLeastAsLong(Spades, Hearts))],
             );
             s.add(
                 "Response",
-                &auction(&[nt, "3H"]),
+                &answering(&[nt, "3H"]),
                 "6+ hearts, slam interest",
                 Forcing::GameForcing,
                 [fit(slam_interest.min_len(Hearts, 6), MAX)],
@@ -320,21 +320,21 @@ fn notrump(s: &mut Sheet) {
         }
         s.add(
             "Jacoby transfer",
-            &auction(&[nt, &to_spades]),
+            &answering(&[nt, &to_spades]),
             "5+ spades",
             Forcing::Forcing,
             [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
         );
         s.add(
             "Jacoby transfer",
-            &auction(&[nt, &to_hearts]),
+            &answering(&[nt, &to_hearts]),
             "5+ hearts",
             Forcing::Forcing,
             [fit(MIN.min_len(Hearts, 5), MAX)],
         );
         s.add(
             "Stayman",
-            &auction(&[nt, &stayman]),
+            &answering(&[nt, &stayman]),
             "Asks for a 4 card major",
             Forcing::Forcing,
             [
@@ -346,7 +346,7 @@ fn notrump(s: &mut Sheet) {
             let weak = MAX.with_hcp(invite_lo - 1);
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S"]),
+                &answering(&[nt, "2S"]),
                 "Weak, with a 6+ card minor",
                 Forcing::Forcing,
                 [
@@ -357,7 +357,7 @@ fn notrump(s: &mut Sheet) {
             for minor in [Diamonds, Clubs] {
                 s.add(
                     "Response",
-                    &auction(&[nt, &format!("3{}", minor.latin())]),
+                    &answering(&[nt, &format!("3{}", minor.latin())]),
                     "6+ cards, invitational",
                     Forcing::Passable,
                     [fit(
@@ -369,7 +369,7 @@ fn notrump(s: &mut Sheet) {
         }
         s.add(
             "Response pass",
-            &auction(&[nt, "P"]),
+            &answering(&[nt, "P"]),
             "Too weak to invite",
             Forcing::Passable,
             [fit(MIN, MAX.with_hcp(stayman_min - 1))],
@@ -378,21 +378,21 @@ fn notrump(s: &mut Sheet) {
         // Opener's replies.
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('H')]),
+            &answering(&[nt, &stayman, &call('H')]),
             "4+ hearts",
             Forcing::Passable,
             [fit(MIN.min_len(Hearts, 4), MAX)],
         );
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('S')]),
+            &answering(&[nt, &stayman, &call('S')]),
             "4+ spades, not 4 hearts",
             Forcing::Passable,
             [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
         );
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('D')]),
+            &answering(&[nt, &stayman, &call('D')]),
             "No 4 card major",
             Forcing::Passable,
             [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
@@ -402,7 +402,7 @@ fn notrump(s: &mut Sheet) {
             if nt == "1N" {
                 s.add(
                     "Transfer accepted",
-                    &auction(&[nt, transfer, &format!("3{}", major.latin())]),
+                    &answering(&[nt, transfer, &format!("3{}", major.latin())]),
                     "17 points and 4 card support",
                     Forcing::Passable,
                     [fit(MIN.with_hcp(17).min_len(major, 4), MAX)],
@@ -410,7 +410,7 @@ fn notrump(s: &mut Sheet) {
             }
             s.add(
                 "Transfer accepted",
-                &auction(&[nt, transfer, &accept]),
+                &answering(&[nt, transfer, &accept]),
                 "",
                 Forcing::Passable,
                 [fit(MIN, MAX)],
@@ -419,7 +419,7 @@ fn notrump(s: &mut Sheet) {
         if invite.is_some() {
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S", "3C"]),
+                &answering(&[nt, "2S", "3C"]),
                 "Forced",
                 Forcing::Passable,
                 [fit(MIN, MAX)],
@@ -432,7 +432,7 @@ fn notrump(s: &mut Sheet) {
         if invite.is_some() {
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S", "3C", "3D"]),
+                &answering(&[nt, "2S", "3C", "3D"]),
                 "Diamonds",
                 Forcing::Passable,
                 [fit(MIN.min_len(Diamonds, 6), MAX)],
@@ -445,7 +445,7 @@ fn notrump(s: &mut Sheet) {
                 b'S' => Some(Spades),
                 _ => None,
             };
-            let after = |bid: &str| auction(&[nt, &stayman, &reply, bid]);
+            let after = |bid: &str| answering(&[nt, &stayman, &reply, bid]);
             if let Some(major) = fit_in {
                 let m = major.latin();
                 s.add(
@@ -485,7 +485,7 @@ fn notrump(s: &mut Sheet) {
         for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
             let m = major.latin();
             let accept = call(m);
-            let after = |bid: &str| auction(&[nt, transfer, &accept, bid]);
+            let after = |bid: &str| answering(&[nt, transfer, &accept, bid]);
             s.add(
                 "Game",
                 &after(&format!("4{m}")),
@@ -525,7 +525,7 @@ fn notrump(s: &mut Sheet) {
             if invite.is_some() {
                 s.add(
                     "Game",
-                    &auction(&[nt, &stayman, &reply, &format!("3{m}"), &format!("4{m}")]),
+                    &answering(&[nt, &stayman, &reply, &format!("3{m}"), &format!("4{m}")]),
                     "Maximum",
                     Forcing::Passable,
                     [fit(maximum, MAX)],
@@ -536,13 +536,13 @@ fn notrump(s: &mut Sheet) {
         // four of them bids them.
         s.add(
             "Game",
-            &auction(&[nt, &stayman, &call('H'), "3N", "4S"]),
+            &answering(&[nt, &stayman, &call('H'), "3N", "4S"]),
             "4 spades",
             Forcing::Passable,
             [fit(MIN.min_len(Spades, 4), MAX)],
         );
         if invite.is_some() {
-            let after_invite = |bid: &str| auction(&[nt, &stayman, &call('H'), "2N", bid]);
+            let after_invite = |bid: &str| answering(&[nt, &stayman, &call('H'), "2N", bid]);
             s.add(
                 "Game",
                 &after_invite("4S"),
@@ -567,7 +567,7 @@ fn notrump(s: &mut Sheet) {
             for reply in ['D', 'S'] {
                 s.add(
                     "Game",
-                    &auction(&[nt, &stayman, &call(reply), "2N", "3N"]),
+                    &answering(&[nt, &stayman, &call(reply), "2N", "3N"]),
                     "Maximum",
                     Forcing::Passable,
                     [fit(maximum, MAX)],
@@ -576,7 +576,7 @@ fn notrump(s: &mut Sheet) {
         }
         for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
             let m = major.latin();
-            let accepted = |bid: &str, then: &str| auction(&[nt, transfer, &call(m), bid, then]);
+            let accepted = |bid: &str, then: &str| answering(&[nt, transfer, &call(m), bid, then]);
             s.add(
                 "Game",
                 &accepted("3N", &format!("4{m}")),
