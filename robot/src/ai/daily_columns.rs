@@ -318,14 +318,12 @@ fn daily_column_puzzles() {
             );
         }
     }
-    let mut counts = Vec::new();
     for system in BiddingSystem::ALL {
         let passed = PUZZLES
             .iter()
             .filter(|puzzle| bid_and_solves(system, puzzle).1)
             .count();
         println!("{}: {} of {} columns", system.name(), passed, PUZZLES.len());
-        counts.push(passed);
     }
     let mut wrong = Vec::new();
     for puzzle in PUZZLES {
