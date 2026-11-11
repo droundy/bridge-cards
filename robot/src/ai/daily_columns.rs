@@ -219,7 +219,7 @@ const PUZZLES: &[Puzzle] = &[
         hand: "S KQJ74 H K7 D J4 C AKJ3",
         auction: "1H P",
         answers: &["2S"],
-        solved_by: &[],
+        solved_by: &[BiddingSystem::Sayc, BiddingSystem::TwoOverOne],
     },
     Puzzle {
         // Three clubs, forcing: a sound opener makes game certain; 2NT only if partner opens light.
