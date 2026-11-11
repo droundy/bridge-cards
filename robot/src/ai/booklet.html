@@ -56,7 +56,7 @@ dl.words dd { margin: 0; }
 <a href="#reading">How to read this</a>
 [% for part in self.parts.iter() { %]<a href="#[% part.id %]">[% part.title %]</a>
 [% for page in part.pages.iter() { if part.pages.len() > 1 { %]<a class="page" href="#[% page.id %]">[% page.title %]</a>
-[% } } } %]<a href="#natural">Natural bids</a>
+[% } } } %]<a href="#natural">Bids that no page describes</a>
 </nav>
 <main>
 <h1 id="top">[% self.system.name() %]: the bidding system</h1>
@@ -95,7 +95,7 @@ passes came before.</dd>
 <dd>The suit of the call in bold. "Your suit" and "partner's suit" are the suits you and
 partner bid earlier in the auction, and "their suit" is the opponents'.</dd>
 </dl>
-<p>A call that is on no page is a natural bid: see <a href="#natural">Natural bids</a>.</p>
+<p>For a call that is on no page, see <a href="#natural">Bids that no page describes</a>.</p>
 <dl class="words">
 <dt>High card points</dt>
 <dd>Ace 4, king 3, queen 2, jack 1.</dd>
@@ -134,42 +134,13 @@ has. Fewer losers is a stronger hand.</dd>
 </table>
 </section>
 [% } } %]
-<h2 id="natural">Natural bids</h2>
-[% if !self.contracts.is_empty() { %]<h3 id="contracts">When the opponents have only passed</h3>
-<p>A bid that no page above describes is about the contract your side can make. Each game
-and slam needs points between the two hands, and a suit contract needs eight trumps as
-well:</p>
-<table>
-<thead><tr><th>Contract</th><th>Points between you</th></tr></thead>
-<tbody>[% for needed in self.contracts.iter() { %]
-<tr><th>[% needed.kind %]</th>
-<td>[% needed.points %]</td></tr>[% } %]
-</tbody>
-</table>
-<p>Count high card points for notrump, short high card points for a suit that partner has
-shown, and long high card points for a suit of your own. Partner has shown a range of
-points, and what you bid goes by the fewest of them:</p>
-<ol>
-<li><strong>Bid the contract</strong> when your side has the points even if partner has the
-fewest they have shown.</li>
-<li><strong>Invite it</strong> when your side has them if partner has two more than that.
-The invitation is the lowest bid in the same strain, below the contract, that no entry of
-the pages above describes. Games in notrump and the majors are invited, and a slam only
-in notrump, with 4NT. The pages of responses show these invitations, and later in the
-auction they are left to this rule.</li>
-<li>With no bid left to invite with, as when partner has just invited,
-<strong>bid the contract</strong> when your side has the points if partner has one more
-than the fewest.</li>
-</ol>
-<p>A slam in a suit is bid only when it is sure, and nothing is bid for a part-score: that
-is a call from the pages above, or a pass. When partner's last bid was a limit bid, one that
-is not forcing and shows a range of at most four points, you are the captain: placing the
-contract shows nothing more about your hand.</p>
-<h3>When the opponents have bid or doubled</h3>
-[% } %]<p>A bid that nothing above describes is natural: it says that your side has what the
-contract needs. Count what your hand has together with the least that partner has
-shown.</p>
-<table>
+<h2 id="natural">Bids that no page describes</h2>
+<p>The system has no entry for these bids, and this is what it says of them.[% if self.invitations { %]
+The pages of responses do show the invitations that its rules make, and later in the auction
+they are left to the rules.[% } %]</p>
+[% for explanation in self.explanations.iter() { %]<h3>[% explanation.title %]</h3>
+[% for paragraph in explanation.paragraphs.iter() { %]<p>[% paragraph %]</p>
+[% } } %]<table>
 <thead><tr><th>Bid</th><th>Meaning</th><th>Your side has</th></tr></thead>
 <tbody>[% for n in self.natural.iter() { %]
 <tr><th>[% for (i, bid) in n.bids.iter().enumerate() { if i > 0 { %], [% } bid } %]</th><td class="meaning">[% n.name %]</td><td>[% n.needs %]</td></tr>[% } %]

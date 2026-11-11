@@ -589,10 +589,35 @@ pub enum Convention {
         /// What auctions have been found to mean, since the contract rules
         /// ask about partner's calls again and again.
         meanings: Meanings,
+        /// What the table says about how it bids: see `Convention::explain`.
+        explanations: Vec<Explanation>,
     },
     /// Several entries that describe the same bid, of which the bidder may
     /// have used any.
     Either(Vec<Convention>),
+}
+
+/// Something a table says in words about how it bids, which its entries
+/// cannot say of one bid at a time, such as the rules that natural bids go
+/// by.  The booklet prints it.
+#[derive(Clone, Debug)]
+pub struct Explanation {
+    /// What it is about, as a heading.
+    pub title: &'static str,
+    pub paragraphs: Vec<wording::Text>,
+}
+
+impl Explanation {
+    /// An explanation that says each of `paragraphs` under `title`.
+    pub fn new(
+        title: &'static str,
+        paragraphs: impl IntoIterator<Item = impl Into<wording::Text>>,
+    ) -> Self {
+        Explanation {
+            title,
+            paragraphs: paragraphs.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 fn bids_string(bids: &[Bid]) -> String {
@@ -1238,6 +1263,22 @@ impl Convention {
             conventions: Vec::new(),
             by_bid: Default::default(),
             meanings: Meanings::default(),
+            explanations: Vec::new(),
+        }
+    }
+    /// Have this table say `explanation` of how it bids, after what it
+    /// already says.
+    fn explain(&mut self, explanation: Explanation) {
+        match self {
+            Convention::Ordered { explanations, .. } => explanations.push(explanation),
+            _ => panic!("only a table explains how it bids"),
+        }
+    }
+    /// What this table says about how it bids, in the order it was told.
+    pub fn explanations(&self) -> &[Explanation] {
+        match self {
+            Convention::Ordered { explanations, .. } => explanations,
+            _ => &[],
         }
     }
     /// Add another possibility to the OrderedConvention
@@ -1301,10 +1342,14 @@ impl Convention {
             _ => vec![0],
         }
     }
-    /// Add the entries of `table` after those already here.
+    /// Add the entries of `table` after those already here, and likewise
+    /// what it says about how it bids.
     fn append(&mut self, table: Convention) {
         for entry in table.entries().iter().cloned() {
             self.add(entry);
+        }
+        for explanation in table.explanations().iter().cloned() {
+            self.explain(explanation);
         }
     }
     /// The regex of an entry.
@@ -1360,6 +1405,9 @@ impl Convention {
         });
         for (_, entry) in keyed {
             sorted.add(entry);
+        }
+        for explanation in self.explanations().iter().cloned() {
+            sorted.explain(explanation);
         }
         sorted
     }
@@ -1727,6 +1775,14 @@ impl Convention {
     /// Natural fallbacks for competitive and slam auctions.
     fn add_natural_bids(&mut self) {
         let sheets = self;
+        sheets.explain(Explanation::new(
+            "Natural bids",
+            [
+                "A bid that nothing else describes is natural: it says that your side has what \
+              the contract needs. Count what your hand has together with the least that \
+              partner has shown.",
+            ],
+        ));
         use bridge_deck::Suit::*;
         let max = HandValuation::MAX;
         let min = HandValuation::MIN;

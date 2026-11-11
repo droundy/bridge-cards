@@ -12,9 +12,10 @@
 //! one, as in "1X – 1Y – 2Y".
 
 use super::advice::{describe, Feature};
-use super::rules::{contract_points, Kind, Points, Rule};
+use super::rules::{Kind, Points, Rule};
 use super::{
-    bids_string, final_bid, legal_bids, BiddingSystem, Convention, Fit, Forcing, ShapeRule,
+    bids_string, final_bid, legal_bids, BiddingSystem, Convention, Explanation, Fit, Forcing,
+    ShapeRule,
 };
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
@@ -1057,42 +1058,15 @@ struct Natural {
     needs: Text,
 }
 
-/// A kind of contract, and the points the contract rules need between the
-/// two hands to bid it.
-struct Needed {
-    kind: &'static str,
-    points: u8,
-}
-
-/// What the contract rules need for each kind of contract, or nothing when
-/// `table` does not bid by them.
-fn contracts(table: &Convention) -> Vec<Needed> {
-    let entries = table.entries().iter();
-    let kinds = [
-        ("Game in notrump or a major", Bid::NT(3)),
-        ("Game in a minor", Bid::Suit(5, Suit::Clubs)),
-        ("Small slam", Bid::NT(6)),
-        ("Grand slam", Bid::NT(7)),
-    ];
-    let needed = |(kind, bid)| Needed {
-        kind,
-        points: contract_points(bid).expect("a game or a slam"),
-    };
-    match entries
-        .into_iter()
-        .any(|entry| matches!(entry, Convention::Contract { .. }))
-    {
-        true => kinds.into_iter().map(needed).collect(),
-        false => Vec::new(),
-    }
-}
-
 /// A booklet on a bidding system.
 pub struct Booklet {
     system: BiddingSystem,
     parts: Vec<Part>,
-    /// What the contract rules need, if the system bids by them.
-    contracts: Vec<Needed>,
+    /// Whether the pages of responses show invitations that the contract
+    /// rules make.
+    invitations: bool,
+    /// What the table says about how it bids.
+    explanations: Vec<Explanation>,
     natural: Vec<Natural>,
 }
 
@@ -1131,7 +1105,8 @@ impl Booklet {
         Booklet {
             system,
             parts,
-            contracts: contracts(&table),
+            invitations: !meanings.ruled.is_empty(),
+            explanations: table.explanations().to_vec(),
             natural: naturals(&table),
         }
     }
@@ -1315,17 +1290,21 @@ mod tests {
         assert!(responses.contains("\n1M – 2M\n"), "{responses}");
     }
 
-    /// Only the systems that bid by the contract rules explain them.
+    /// The booklet prints what a table says about how it bids, so only the
+    /// systems that bid by the contract rules explain them.
     #[test]
-    fn the_contract_rules_are_explained() {
-        let rules = "<h3 id=\"contracts\">";
-        assert!(!html(BiddingSystem::Sheets).contains(rules));
+    fn a_table_explains_how_it_bids() {
+        let rules = "<h3>When the opponents have only passed</h3>";
+        let sheets = html(BiddingSystem::Sheets);
+        assert!(!sheets.contains(rules));
+        assert!(sheets.contains("<h3>Natural bids</h3>"));
         let html = html(BiddingSystem::Sayc);
-        let rules = words(&html[html.find(rules).expect("no contract rules")..]);
+        let explained = words(&html[html.find(rules).expect("no contract rules")..]);
         assert!(
-            rules.contains("Game in notrump or a major\n25\n"),
-            "{rules}"
+            explained.contains("a game in notrump or a major needs 25 points"),
+            "{explained}"
         );
+        assert!(explained.contains("Natural bids\n"), "{explained}");
     }
 
     #[test]
