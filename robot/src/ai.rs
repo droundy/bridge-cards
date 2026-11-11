@@ -2700,7 +2700,8 @@ fn test_sayc_openings() {
         ("S AK3 H Q42 D KJ54 C 432", Suit(1, Diamonds)),
         ("S AK3 H Q42 D 543 C KJ54", Suit(1, Clubs)),
         ("S KQJ876 H 32 D 876 C 32", Suit(2, Spades)),
-        ("S AK3 H AK4 D KQ5 C AQJ2", Suit(2, Clubs)),
+        ("S AK3 H AK4 D KQ5 C AQJ2", NT(3)),
+        ("S AKQJ32 H AK4 D K5 C A2", Suit(2, Clubs)),
         ("S 432 H K32 D Q32 C KJ32", Pass),
     ] {
         let hand = Cards::from_str(hand).unwrap();
@@ -3675,6 +3676,89 @@ fn sayc_answers_2nt_after_2c_and_a_weak_two_as_the_booklet_says() {
                 bid,
                 system_bid(system, auction, hand),
                 "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_responds_to_3nt_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let stayman = [NT(3), Pass, Suit(4, Clubs), Pass];
+    let no_major = [NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Diamonds), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // 25-27 balanced opens 3NT rather than 2C.
+            (&[][..], "S AKQ2 H AK3 D AQ2 C KJ3", NT(3)),
+            // Responder transfers with a five card major, and passes with
+            // too little for a slam.
+            (
+                &[NT(3), Pass][..],
+                "S 32 H KJ432 D A32 C 432",
+                Suit(4, Diamonds),
+            ),
+            (&[NT(3), Pass], "S 65432 H 432 D 432 C 32", Suit(4, Hearts)),
+            (&[NT(3), Pass], "S 5432 H 432 D 432 C 432", Pass),
+            // Stayman takes a four card major and the 6 points that make a
+            // slam possible opposite 27, or 5-5 in the majors at any
+            // strength.  Without a major the rules invite with 4NT.
+            (&[NT(3), Pass], "S Q432 H K32 D 432 C Q32", Suit(4, Clubs)),
+            (&[NT(3), Pass], "S J8765 H 98765 D 32 C 3", Suit(4, Clubs)),
+            (&[NT(3), Pass], "S 532 H 432 D K432 C QJ2", NT(4)),
+            (&stayman, "S AKQ H AK32 D AQ2 C K32", Suit(4, Hearts)),
+            (&stayman, "S AKQ H AK3 D AQ32 C K32", Suit(4, Diamonds)),
+            // After 4D, 4NT is quantitative, and 5-5 lets opener choose.
+            (&no_major, "S Q432 H K32 D 432 C Q32", NT(4)),
+            (&no_major, "S Q432 H K32 D K32 C Q32", NT(6)),
+            (&no_major, "S J8765 H 98765 D 32 C 3", Suit(4, Hearts)),
+            (
+                &[
+                    NT(3),
+                    Pass,
+                    Suit(4, Clubs),
+                    Pass,
+                    Suit(4, Diamonds),
+                    Pass,
+                    Suit(4, Hearts),
+                    Pass,
+                ],
+                "S AK H AQ3 D AKJ4 C KQJ2",
+                Pass,
+            ),
+            (
+                &[
+                    NT(3),
+                    Pass,
+                    Suit(4, Clubs),
+                    Pass,
+                    Suit(4, Diamonds),
+                    Pass,
+                    Suit(4, Hearts),
+                    Pass,
+                ],
+                "S AKQ H A3 D AKJ4 C KQJ2",
+                Suit(4, Spades),
+            ),
+            // A fit found by Stayman, and slam when it is sure.
+            (
+                &[NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S Q432 H K432 D 432 C Q2",
+                Pass,
+            ),
+            (
+                &[NT(3), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S Q432 H K432 D K32 C Q2",
+                Suit(6, Hearts),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{:?} {}",
+                auction,
+                hand
             );
         }
     }
