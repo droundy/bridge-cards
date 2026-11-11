@@ -4309,6 +4309,24 @@ fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
         }
         bids
     };
+    // Hearts agreed after 1C-1H-4H, and a hand without an ace, or with one.
+    let no_ace = |calls: &[Bid]| {
+        let mut bids = vec![
+            Suit(1, Clubs),
+            Pass,
+            Suit(1, Hearts),
+            Pass,
+            Suit(4, Hearts),
+            Pass,
+        ];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let no_ace_hand = "S Q6 H KQJ1086 D KJ9 C 96";
+    let one_ace_hand = "S A6 H KQJ1086 D KJ9 C 96";
     // Three aces, and two.
     let asker = "S A2 H K2 D A32 C AKJ432";
     let short = "S K2 H K2 D AQ2 C AKJ432";
@@ -4337,19 +4355,34 @@ fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
                 "S K2 H AQJ1032 D K32 C K2",
                 Pass,
             ),
-            // Without an ace there is no asking, so the slam is bid on
-            // points.
+            // Before a slam in a suit a hand asks whether or not it has an
+            // ace (it used to bid the slam on its points).  Without one it
+            // reads the first step as all four aces, and bids the slam;
+            // with one or two aces missing it signs off, and with three it
+            // bids the slam.
+            (no_ace(&[]), no_ace_hand, NT(4)),
             (
-                vec![
-                    Suit(1, Clubs),
-                    Pass,
-                    Suit(1, Hearts),
-                    Pass,
-                    Suit(4, Hearts),
-                    Pass,
-                ],
-                "S Q6 H KQJ1086 D KJ9 C 96",
+                no_ace(&[NT(4), Suit(5, Clubs)]),
+                no_ace_hand,
                 Suit(6, Hearts),
+            ),
+            (
+                no_ace(&[NT(4), Suit(5, Diamonds)]),
+                no_ace_hand,
+                Suit(5, Hearts),
+            ),
+            (no_ace(&[NT(4), Suit(5, Hearts)]), no_ace_hand, Pass),
+            (
+                no_ace(&[NT(4), Suit(5, Spades)]),
+                no_ace_hand,
+                Suit(6, Hearts),
+            ),
+            // With one ace the same first step means none, so the hand
+            // signs off.
+            (
+                no_ace(&[NT(4), Suit(5, Clubs)]),
+                one_ace_hand,
+                Suit(5, Hearts),
             ),
             // Gerber over 1NT, before a slam in a suit or in notrump.
             (
@@ -4389,8 +4422,8 @@ fn sayc_slam_asks_need_the_cards_to_ask_with() {
     let gerber = [NT(1), Pass, Suit(4, Clubs), Pass];
     for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
         for (auction, hand, bid) in [
-            // Without an ace there is nothing to ask with, and no grand slam
-            // without asking, so the hand bids the small slam.
+            // In notrump a hand without an ace bids the small slam on its
+            // points, and no grand slam without asking.
             (&[NT(1), Pass][..], "S KQJ H KQ5 D KQ10 C KQ32", NT(6)),
             (
                 &[Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass, NT(2), Pass],
@@ -4429,10 +4462,11 @@ fn sayc_slam_asks_need_the_cards_to_ask_with() {
                 "{system:?} {auction:?} {hand}"
             );
         }
-        // An ask holds what it asks with: an ace for aces, a king for kings
-        // and every ace that partner did not show.
+        // An ask holds what it asks with, as far as partner can tell: for
+        // kings a king and every ace that partner did not show, and for aces
+        // none, since a hand without an ace asks before a slam in a suit.
         let convention = system.convention();
-        assert_eq!(1, convention.refine(&gerber[..3]).unwrap().bounds().0.aces);
+        assert_eq!(0, convention.refine(&gerber[..3]).unwrap().bounds().0.aces);
         let kings = [
             Suit(1, Hearts),
             Pass,
@@ -4448,5 +4482,11 @@ fn sayc_slam_asks_need_the_cards_to_ask_with() {
         ];
         let (min, _) = convention.refine(&kings).unwrap().bounds();
         assert_eq!((3, 1), (min.aces, min.kings));
+        // After the first step the asker may hold all four aces, or none,
+        // when partner has all four.
+        let mut first_step = kings.to_vec();
+        first_step[8] = Suit(5, Clubs);
+        let (min, _) = convention.refine(&first_step).unwrap().bounds();
+        assert_eq!((0, 1), (min.aces, min.kings));
     }
 }

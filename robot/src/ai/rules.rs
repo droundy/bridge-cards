@@ -112,11 +112,15 @@ pub(crate) fn explanation() -> Explanation {
                  contract when your side has the points if partner has {LAST_CHANCE} more \
                  than the fewest."
             ),
-            "A slam in a suit is bid only when it is sure. A hand with an ace that would bid \
-             one asks first, with Blackwood's 4NT, or Gerber's 4C directly over partner's \
-             notrump, and bids the slam only if no more than one ace is missing, and a \
-             grand slam only after asking for kings as well. A hand without the card to \
-             ask with bids the small slam."
+            "A slam in a suit is bid only when it is sure. A hand that would bid one asks \
+             for aces first, whether or not it has an ace, with Blackwood's 4NT, or \
+             Gerber's 4C directly over partner's notrump. The first step of the answer \
+             shows none or all four, and your own aces tell which: with one you know \
+             partner has none, and with none you know partner has all four. The slam is \
+             bid only if no more than one ace is missing, and a grand slam only after \
+             asking for kings as well, which needs a king. A slam in notrump is different, \
+             since its points are high card points: a hand without an ace bids the small \
+             slam without asking."
                 .to_string(),
             format!(
                 "When your side has forced to game, nothing is invited, and the cheapest bid \
@@ -380,14 +384,22 @@ pub struct Choice {
     /// make one explores instead.
     slam: Option<u8>,
     /// Is this a slam that waits for an ask for aces (`Some(false)`) or for
-    /// kings (`Some(true)`)?  See `slam`.  A hand without an ace cannot ask,
-    /// so it bids a small slam on its points, but not a grand slam.
+    /// kings (`Some(true)`)?  See `slam`.  A slam in a suit always waits.  In
+    /// notrump a hand without an ace cannot ask, so it bids a small slam on
+    /// its points, but not a grand slam.
     ask_first: Option<bool>,
     /// For a small slam, the ask that a hand which might make a grand slam
     /// explores with, for kings (`true`) or aces (`false`), and the most it
     /// may have without that cap on its points.  A hand that lacks the card
-    /// to ask with bids the small slam instead.
+    /// to ask with (a king, or an ace before a slam in notrump) bids the
+    /// small slam instead.
     asks: Option<(bool, HandValuation)>,
+    /// For a slam bid once the aces are known, with the first step of the
+    /// answer ("none or four") given: the aces a hand needs, unless it has
+    /// none at all.  A hand with an ace knows that step means none, and a
+    /// hand with none knows that partner has all four, so only a hand in
+    /// between lacks the aces for the slam.
+    aces_or_none: Option<u8>,
 }
 
 /// A strain the hand might bid in instead, to choose among them.
@@ -451,11 +463,14 @@ pub(crate) fn contracted_fits(
     hand: &HandValuation,
     unsure_explores: bool,
 ) -> bool {
-    // A hand without an ace cannot ask, and bids a small slam on its points,
-    // but a grand slam waits for the ask even then: it is never bid unasked.
+    // A slam in a suit waits for the ask for aces, whether or not the hand
+    // has an ace to ask with.  A slam in notrump waits only for a hand with an
+    // ace: one without bids a small slam on its points, but a grand slam
+    // waits for the ask even then, since it is never bid unasked.
     let grand = Kind::of(reason.contract) == Kind::GrandSlam;
+    let in_suit = trump(reason.contract).is_some();
     let waits = match choice.ask_first {
-        Some(false) => !hand_lacks(hand, false) || grand,
+        Some(false) => in_suit || !hand_lacks(hand, false) || grand,
         Some(true) => true,
         None => false,
     };
@@ -463,7 +478,10 @@ pub(crate) fn contracted_fits(
         Some((kings, uncapped)) if hand_lacks(hand, *kings) => (false, uncapped),
         _ => (true, max),
     };
-    if waits || hand.exceeds(*max) || min.exceeds(*hand) {
+    let short_of_aces = choice
+        .aces_or_none
+        .is_some_and(|aces| hand.aces != 0 && hand.aces < aces);
+    if waits || short_of_aces || hand.exceeds(*max) || min.exceeds(*hand) {
         return false;
     }
     let (lo, hi) = reason.promised;
@@ -1037,6 +1055,7 @@ impl Convention {
         // A slam waits for the aces, and a grand slam for the kings, if there
         // is a way to ask for them.
         let mut ask_first = None;
+        let mut aces_or_none = None;
         let king_ask = asked.is_some_and(|a| {
             a.aces.is_some() && a.kings.is_none() && legal_bids(history).contains(&a.ask.bid(true))
         });
@@ -1050,7 +1069,10 @@ impl Convention {
                 }
                 Some(asked) => {
                     let all = if slam == Kind::GrandSlam { 4 } else { 3 };
-                    min.aces = all - asked.aces.unwrap_or(0).min(all);
+                    match asked.aces {
+                        Some(0) => aces_or_none = Some(all),
+                        shown => min.aces = all - shown.unwrap_or(0).min(all),
+                    }
                     if slam == Kind::GrandSlam {
                         match asked.kings {
                             Some(kings) => min.kings = 4 - kings.min(4),
@@ -1169,6 +1191,7 @@ impl Convention {
                 slam,
                 ask_first,
                 asks,
+                aces_or_none,
             },
         })
     }
