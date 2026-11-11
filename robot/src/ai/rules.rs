@@ -414,7 +414,7 @@ impl Strain<'_> {
             Some(suit) => Bid::Suit(level, suit),
             None => Bid::NT(level),
         };
-        self.legal().any(|b| b == bid).then(|| bid)
+        self.legal().any(|b| b == bid).then_some(bid)
     }
     /// The bid that places a contract of `kind`, unless this side already
     /// plays one in this strain, when passing places it.
