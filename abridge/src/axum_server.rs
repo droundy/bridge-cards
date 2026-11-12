@@ -67,13 +67,17 @@ impl<T: DisplayAs<HTML> + Sync> IntoResponse for Page<T> {
 }
 
 /// Redirect (temporarily) to a path on this site, in which `segments` are
-/// percent-encoded, since a table's name can be anything.
+/// percent-encoded, since a table's name can be anything.  No segments are
+/// the home page.
 fn redirect_to(segments: &[&str]) -> Response {
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
     let mut uri = String::new();
     for s in segments {
         uri.push('/');
         uri.extend(utf8_percent_encode(s, NON_ALPHANUMERIC));
+    }
+    if uri.is_empty() {
+        uri.push('/');
     }
     let location = HeaderValue::try_from(uri).expect("a percent-encoded path is a valid header");
     (
