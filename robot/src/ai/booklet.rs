@@ -281,7 +281,11 @@ mod tests {
         let html = html(BiddingSystem::Sayc);
         let responses = words(page(html, "opened-1c-responses"));
         assert!(responses.contains("\n1X – Pass\n"), "{responses}");
-        assert!(responses.contains("\n1M – 2M\n"), "{responses}");
+        // A single raise is the same over a double, which the auction says.
+        assert!(
+            responses.contains("\n1M – 2M or over (Dbl)\n"),
+            "{responses}"
+        );
     }
 
     /// The booklet prints what a table says about how it bids, so only the

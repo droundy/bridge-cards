@@ -64,13 +64,19 @@ pub fn bid_follows(history: &[Bid], bid: Bid) -> bool {
     let n = history.len();
     match bid {
         Bid::Pass => true,
-        Bid::Double => {
-            (n >= 1 && history[n - 1].is_contract())
-                || (n >= 3
-                    && history[n - 2..] == [Bid::Pass, Bid::Pass]
-                    && history[n - 3].is_contract())
+        // A double needs a contract by the opponents, and a redouble their
+        // double, either just made or followed by two passes.
+        Bid::Double | Bid::Redouble => {
+            let doubles = |b: Bid| {
+                if bid == Bid::Double {
+                    b.is_contract()
+                } else {
+                    b == Bid::Double
+                }
+            };
+            (n >= 1 && doubles(history[n - 1]))
+                || (n >= 3 && history[n - 2..] == [Bid::Pass, Bid::Pass] && doubles(history[n - 3]))
         }
-        Bid::Redouble => false,
         Bid::Suit(level, _) | Bid::NT(level) if !(1..=7).contains(&level) => false,
         _ => {
             if let Some(hb) = history.iter().rev().find(|x| x.is_contract()) {

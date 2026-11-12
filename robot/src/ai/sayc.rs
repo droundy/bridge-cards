@@ -46,11 +46,20 @@
 //!
 //! Blackwood and Gerber come from the contract rules (see `rules::slam`).
 //!
+//! As the booklet has it, a double by the opponents turns off the
+//! conventions that answer the doubled bid, except over 1NT (see
+//! `undoubled`), so that over a double of 2C, 2D is natural and positive.
+//! Bids after a one-level response mean the same over a double, and the
+//! contract rules take a double for a pass.  Responder answers a takeout
+//! double of a one-level opening as the booklet does (see
+//! `after_takeout_double`), with a weak jump shift, 2NT as a limit raise or
+//! better, a preemptive jump raise and a redouble that shows 10+ points.
+//!
 //! Not covered, though the booklet has them: negative doubles, the feature
 //! that opener shows over a weak two's 2NT with a maximum, and Michaels over
 //! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
 //! mention fall back on the natural bids shared with the other conventions.
-use super::{Convention, Fit, Forcing, ShapeRule};
+use super::{Convention, Fit, Forcing, ShapeRule, StrongTwo};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
 use regex::RegexSet;
@@ -207,17 +216,24 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     // than 3NT.
     notrump(&mut s);
     three_notrump(&mut s);
-    s.add_block(|t| t.add_strong_two_clubs(22, false));
+    s.add_block(|t| {
+        t.add_strong_two_clubs(StrongTwo {
+            base: 22,
+            two_notrump_rebid: false,
+            natural_after_double: true,
+        })
+    });
     s.add_block(|t| t.add_preempts());
     weak_two_rebids(&mut s);
     openings(&mut s);
     responses(&mut s, two_over_one);
+    after_takeout_double(&mut s);
     opener_rebids(&mut s, two_over_one);
     responder_rebids(&mut s);
     competition(&mut s);
     // Natural invitations, games and slams when the opponents have only
-    // passed, by the contract rules, then the bids that explore, and the
-    // shared natural bids for when they have bid or doubled.
+    // passed or doubled, by the contract rules, then the bids that explore,
+    // and the shared natural bids for when they have bid.
     s.0.add(Convention::Contract {
         the_name: "Natural",
         regex: RegexSet::new(["[1-7][CDHSN]$"]).unwrap(),
@@ -226,12 +242,29 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let explore = std::mem::replace(&mut s.1, Convention::new(""));
     s.0.append(explore);
     s.add_block(|t| t.add_natural_bids());
+    // This comes after everything, even the natural bids, because it is a
+    // last resort: the robot bids the first entry that fits, and this one
+    // fits every hand, so anywhere earlier in the table it would hide the
+    // bids and passes that describe the hand better.
+    must_double_when_passed_out(&mut s);
     s.0
 }
 
 /// `calls` separated by passes or doubles, after any passes, as a regex.
 fn auction(calls: &[&str]) -> String {
     format!("^{OPEN}{}$", calls.join(" [PX] "))
+}
+
+/// `calls` as `auction` writes them, except that the opponent passes the
+/// first: as the booklet has it, a double cancels a convention that
+/// answers it, though not one that answers a doubled convention.
+fn undoubled(calls: &[&str]) -> String {
+    match calls.split_first() {
+        Some((first, rest)) if !rest.is_empty() => {
+            format!("^{OPEN}{first} P {}$", rest.join(" [PX] "))
+        }
+        _ => auction(calls),
+    }
 }
 
 /// The notrump openings, and the booklet's responses to them in the order
@@ -247,9 +280,18 @@ fn notrump(s: &mut Sheet) {
     // which shows 22-24, as it answers a 2NT opening.
     for (nt, (lo, hi), invite, game) in [
         ("2N", (20, 21), None, 4),
-        ("2C [PX] 2D [PX] 2N", (22, 24), None, 3),
+        ("2C (P 2D|X P) [PX] 2N", (22, 24), None, 3),
         ("1N", (15, 17), Some((8, 9)), 10),
     ] {
+        // Over a double the booklet keeps the conventions on after 1NT, but
+        // not after the others.
+        let answering = |calls: &[&str]| {
+            if nt == "1N" {
+                auction(calls)
+            } else {
+                undoubled(calls)
+            }
+        };
         let name = match nt {
             "1N" => "Opening 1NT",
             "2N" => "Opening 2NT",
@@ -257,7 +299,7 @@ fn notrump(s: &mut Sheet) {
         };
         s.add(
             name,
-            &auction(&[nt]),
+            &answering(&[nt]),
             "",
             Forcing::Passable,
             [balanced_hcp(lo, hi)],
@@ -275,14 +317,14 @@ fn notrump(s: &mut Sheet) {
             let slam_interest = MIN.with_lhcp(33 - hi);
             s.add(
                 "Response",
-                &auction(&[nt, "3S"]),
+                &answering(&[nt, "3S"]),
                 "6+ spades, slam interest",
                 Forcing::GameForcing,
                 [fit(slam_interest.min_len(Spades, 6), MAX).with(AtLeastAsLong(Spades, Hearts))],
             );
             s.add(
                 "Response",
-                &auction(&[nt, "3H"]),
+                &answering(&[nt, "3H"]),
                 "6+ hearts, slam interest",
                 Forcing::GameForcing,
                 [fit(slam_interest.min_len(Hearts, 6), MAX)],
@@ -290,21 +332,21 @@ fn notrump(s: &mut Sheet) {
         }
         s.add(
             "Jacoby transfer",
-            &auction(&[nt, &to_spades]),
+            &answering(&[nt, &to_spades]),
             "5+ spades",
             Forcing::Forcing,
             [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
         );
         s.add(
             "Jacoby transfer",
-            &auction(&[nt, &to_hearts]),
+            &answering(&[nt, &to_hearts]),
             "5+ hearts",
             Forcing::Forcing,
             [fit(MIN.min_len(Hearts, 5), MAX)],
         );
         s.add(
             "Stayman",
-            &auction(&[nt, &stayman]),
+            &answering(&[nt, &stayman]),
             "Asks for a 4 card major",
             Forcing::Forcing,
             [
@@ -316,7 +358,7 @@ fn notrump(s: &mut Sheet) {
             let weak = MAX.with_hcp(invite_lo - 1);
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S"]),
+                &answering(&[nt, "2S"]),
                 "Weak, with a 6+ card minor",
                 Forcing::Forcing,
                 [
@@ -327,7 +369,7 @@ fn notrump(s: &mut Sheet) {
             for minor in [Diamonds, Clubs] {
                 s.add(
                     "Response",
-                    &auction(&[nt, &format!("3{}", minor.latin())]),
+                    &answering(&[nt, &format!("3{}", minor.latin())]),
                     "6+ cards, invitational",
                     Forcing::Passable,
                     [fit(
@@ -339,7 +381,7 @@ fn notrump(s: &mut Sheet) {
         }
         s.add(
             "Response pass",
-            &auction(&[nt, "P"]),
+            &answering(&[nt, "P"]),
             "Too weak to invite",
             Forcing::Passable,
             [fit(MIN, MAX.with_hcp(stayman_min - 1))],
@@ -348,21 +390,21 @@ fn notrump(s: &mut Sheet) {
         // Opener's replies.
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('H')]),
+            &answering(&[nt, &stayman, &call('H')]),
             "4+ hearts",
             Forcing::Passable,
             [fit(MIN.min_len(Hearts, 4), MAX)],
         );
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('S')]),
+            &answering(&[nt, &stayman, &call('S')]),
             "4+ spades, not 4 hearts",
             Forcing::Passable,
             [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
         );
         s.add(
             "Stayman response",
-            &auction(&[nt, &stayman, &call('D')]),
+            &answering(&[nt, &stayman, &call('D')]),
             "No 4 card major",
             Forcing::Passable,
             [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
@@ -372,7 +414,7 @@ fn notrump(s: &mut Sheet) {
             if nt == "1N" {
                 s.add(
                     "Transfer accepted",
-                    &auction(&[nt, transfer, &format!("3{}", major.latin())]),
+                    &answering(&[nt, transfer, &format!("3{}", major.latin())]),
                     "17 points and 4 card support",
                     Forcing::Passable,
                     [fit(MIN.with_hcp(17).min_len(major, 4), MAX)],
@@ -380,7 +422,7 @@ fn notrump(s: &mut Sheet) {
             }
             s.add(
                 "Transfer accepted",
-                &auction(&[nt, transfer, &accept]),
+                &answering(&[nt, transfer, &accept]),
                 "",
                 Forcing::Passable,
                 [fit(MIN, MAX)],
@@ -389,7 +431,7 @@ fn notrump(s: &mut Sheet) {
         if invite.is_some() {
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S", "3C"]),
+                &answering(&[nt, "2S", "3C"]),
                 "Forced",
                 Forcing::Passable,
                 [fit(MIN, MAX)],
@@ -402,7 +444,7 @@ fn notrump(s: &mut Sheet) {
         if invite.is_some() {
             s.add(
                 "Minor relay",
-                &auction(&[nt, "2S", "3C", "3D"]),
+                &answering(&[nt, "2S", "3C", "3D"]),
                 "Diamonds",
                 Forcing::Passable,
                 [fit(MIN.min_len(Diamonds, 6), MAX)],
@@ -415,7 +457,7 @@ fn notrump(s: &mut Sheet) {
                 b'S' => Some(Spades),
                 _ => None,
             };
-            let after = |bid: &str| auction(&[nt, &stayman, &reply, bid]);
+            let after = |bid: &str| answering(&[nt, &stayman, &reply, bid]);
             if let Some(major) = fit_in {
                 let m = major.latin();
                 s.add(
@@ -455,7 +497,7 @@ fn notrump(s: &mut Sheet) {
         for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
             let m = major.latin();
             let accept = call(m);
-            let after = |bid: &str| auction(&[nt, transfer, &accept, bid]);
+            let after = |bid: &str| answering(&[nt, transfer, &accept, bid]);
             s.add(
                 "Game",
                 &after(&format!("4{m}")),
@@ -495,7 +537,7 @@ fn notrump(s: &mut Sheet) {
             if invite.is_some() {
                 s.add(
                     "Game",
-                    &auction(&[nt, &stayman, &reply, &format!("3{m}"), &format!("4{m}")]),
+                    &answering(&[nt, &stayman, &reply, &format!("3{m}"), &format!("4{m}")]),
                     "Maximum",
                     Forcing::Passable,
                     [fit(maximum, MAX)],
@@ -506,13 +548,13 @@ fn notrump(s: &mut Sheet) {
         // four of them bids them.
         s.add(
             "Game",
-            &auction(&[nt, &stayman, &call('H'), "3N", "4S"]),
+            &answering(&[nt, &stayman, &call('H'), "3N", "4S"]),
             "4 spades",
             Forcing::Passable,
             [fit(MIN.min_len(Spades, 4), MAX)],
         );
         if invite.is_some() {
-            let after_invite = |bid: &str| auction(&[nt, &stayman, &call('H'), "2N", bid]);
+            let after_invite = |bid: &str| answering(&[nt, &stayman, &call('H'), "2N", bid]);
             s.add(
                 "Game",
                 &after_invite("4S"),
@@ -537,7 +579,7 @@ fn notrump(s: &mut Sheet) {
             for reply in ['D', 'S'] {
                 s.add(
                     "Game",
-                    &auction(&[nt, &stayman, &call(reply), "2N", "3N"]),
+                    &answering(&[nt, &stayman, &call(reply), "2N", "3N"]),
                     "Maximum",
                     Forcing::Passable,
                     [fit(maximum, MAX)],
@@ -546,7 +588,7 @@ fn notrump(s: &mut Sheet) {
         }
         for (transfer, major) in [(&to_hearts, Hearts), (&to_spades, Spades)] {
             let m = major.latin();
-            let accepted = |bid: &str, then: &str| auction(&[nt, transfer, &call(m), bid, then]);
+            let accepted = |bid: &str, then: &str| answering(&[nt, transfer, &call(m), bid, then]);
             s.add(
                 "Game",
                 &accepted("3N", &format!("4{m}")),
@@ -605,14 +647,15 @@ fn weak_two_rebids(s: &mut Sheet) {
 }
 
 /// The 3NT opening, which comes before the strong 2C that its hands also
-/// fit, with the booklet's Stayman and transfers at the four level.  The
+/// fit, with the booklet's Stayman and transfers at the four level, which a
+/// double turns off.  The
 /// quantitative 4NT and the slams come from the contract rules.
 fn three_notrump(s: &mut Sheet) {
     use Suit::*;
     let (lo, hi) = (25, 27);
     s.add(
         "Opening 3NT",
-        &auction(&["3N"]),
+        &undoubled(&["3N"]),
         "",
         Forcing::Passable,
         [balanced_hcp(lo, hi)],
@@ -625,21 +668,21 @@ fn three_notrump(s: &mut Sheet) {
     let five_five = MIN.min_len(Hearts, 5).min_len(Spades, 5);
     s.add(
         "Stayman",
-        &auction(&["3N", "4C"]),
+        &undoubled(&["3N", "4C"]),
         "Asks for a 4 card major",
         Forcing::Forcing,
         [fit(five_five, MAX).asks()],
     );
     s.add(
         "Jacoby transfer",
-        &auction(&["3N", "4H"]),
+        &undoubled(&["3N", "4H"]),
         "5+ spades",
         Forcing::Forcing,
         [fit(MIN.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts))],
     );
     s.add(
         "Jacoby transfer",
-        &auction(&["3N", "4D"]),
+        &undoubled(&["3N", "4D"]),
         "5+ hearts",
         Forcing::Forcing,
         [fit(MIN.min_len(Hearts, 5), MAX)],
@@ -647,7 +690,7 @@ fn three_notrump(s: &mut Sheet) {
     let slam_possible = MIN.with_hcp(33 - hi);
     s.add(
         "Stayman",
-        &auction(&["3N", "4C"]),
+        &undoubled(&["3N", "4C"]),
         "Asks for a 4 card major",
         Forcing::Forcing,
         [
@@ -657,7 +700,7 @@ fn three_notrump(s: &mut Sheet) {
     );
     s.add(
         "Response pass",
-        &auction(&["3N", "P"]),
+        &undoubled(&["3N", "P"]),
         "No slam interest",
         Forcing::Passable,
         [fit(MIN, MAX.with_hcp(33 - hi - 1))],
@@ -666,21 +709,21 @@ fn three_notrump(s: &mut Sheet) {
     // Opener's replies.
     s.add(
         "Stayman response",
-        &auction(&["3N", "4C", "4H"]),
+        &undoubled(&["3N", "4C", "4H"]),
         "4+ hearts",
         Forcing::Passable,
         [fit(MIN.min_len(Hearts, 4), MAX)],
     );
     s.add(
         "Stayman response",
-        &auction(&["3N", "4C", "4S"]),
+        &undoubled(&["3N", "4C", "4S"]),
         "4+ spades, not 4 hearts",
         Forcing::Passable,
         [fit(MIN.min_len(Spades, 4), MAX.max_len(Hearts, 3))],
     );
     s.add(
         "Stayman response",
-        &auction(&["3N", "4C", "4D"]),
+        &undoubled(&["3N", "4C", "4D"]),
         "No 4 card major",
         Forcing::Passable,
         [fit(MIN, MAX.max_len(Hearts, 3).max_len(Spades, 3))],
@@ -688,7 +731,7 @@ fn three_notrump(s: &mut Sheet) {
     for (transfer, accept) in [("4D", "4H"), ("4H", "4S")] {
         s.add(
             "Transfer accepted",
-            &auction(&["3N", transfer, accept]),
+            &undoubled(&["3N", transfer, accept]),
             "",
             Forcing::Passable,
             [fit(MIN, MAX)],
@@ -699,21 +742,21 @@ fn three_notrump(s: &mut Sheet) {
     // booklet does not say.
     s.add(
         "Pass or correct",
-        &auction(&["3N", "4C", "4D", "4H"]),
+        &undoubled(&["3N", "4C", "4D", "4H"]),
         "5-5 in the majors",
         Forcing::Passable,
         [fit(five_five, MAX)],
     );
     s.add(
         "Choice of games",
-        &auction(&["3N", "4C", "4D", "4H", "P"]),
+        &undoubled(&["3N", "4C", "4D", "4H", "P"]),
         "3 hearts",
         Forcing::Passable,
         [fit(MIN.min_len(Hearts, 3), MAX)],
     );
     s.add(
         "Choice of games",
-        &auction(&["3N", "4C", "4D", "4H", "4S"]),
+        &undoubled(&["3N", "4C", "4D", "4H", "4S"]),
         "2 hearts, so 3 spades",
         Forcing::Passable,
         [fit(MIN.min_len(Spades, 3), MAX.max_len(Hearts, 2))],
@@ -781,15 +824,36 @@ fn openings(s: &mut Sheet) {
     );
 }
 
-/// Responder's bids after a one-level opening, when the opponents pass or
-/// double.
+/// Responder's new suit at the one level, `response` over 1`opening`,
+/// which forces: up the line with 4-4, the longer with 5-4, and spades
+/// with 5-5.
+fn one_level_response(after: &str, opening: Suit, response: Suit) -> Convention {
+    use Suit::*;
+    let four = MIN.with_hcp(6).min_len(response, 4);
+    let (shown, fits) = match response {
+        Spades if !is_major(opening) => (
+            "4+ spades",
+            vec![
+                fit(four, MAX).with(Longer(Spades, Hearts)),
+                fit(four.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts)),
+            ],
+        ),
+        Spades => ("4+ spades", vec![fit(four, MAX)]),
+        Hearts => ("4+ hearts", vec![fit(four, MAX)]),
+        _ => ("4+ diamonds", vec![fit(four, MAX)]),
+    };
+    let regex = format!("{after}1{}$", response.latin());
+    rule("Response", &regex, shown, Forcing::Forcing, fits)
+}
+
+/// Responder's bids after a one-level opening, when the opponents pass.
 fn responses(s: &mut Sheet, two_over_one: bool) {
     use Suit::*;
     let weak = MIN.with_hcp(6);
     let no_major = MAX.max_len(Hearts, 3).max_len(Spades, 3);
     for opening in Suit::ALL.iter().cloned() {
         let o = opening.latin();
-        let after = format!("^{OPEN}1{o} [PX] ");
+        let after = format!("^{OPEN}1{o} P ");
         // New suits at the two level, the longest first, which explore if
         // `explore`.
         let two_level = |s: &mut Sheet, explore: bool| {
@@ -892,13 +956,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
             }
             // New suits explore, after the raises and the contract rules.
             if opening == Hearts {
-                s.explore(
-                    "Response",
-                    &format!("{after}1S$"),
-                    "4+ spades",
-                    Forcing::Forcing,
-                    [fit(weak.min_len(Spades, 4), MAX)],
-                );
+                s.1.add(one_level_response(&after, opening, Spades));
             }
             two_level(s, true);
             s.add(
@@ -948,31 +1006,8 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
             jump_shifts(s);
             // A major before a raise of the minor: up the line with 4-4, the
             // longer with 5-4, and spades with 5-5.
-            s.add(
-                "Response",
-                &format!("{after}1S$"),
-                "4+ spades",
-                Forcing::Forcing,
-                [
-                    fit(weak.min_len(Spades, 4), MAX).with(Longer(Spades, Hearts)),
-                    fit(weak.min_len(Spades, 5), MAX).with(AtLeastAsLong(Spades, Hearts)),
-                ],
-            );
-            s.add(
-                "Response",
-                &format!("{after}1H$"),
-                "4+ hearts",
-                Forcing::Forcing,
-                [fit(weak.min_len(Hearts, 4), MAX)],
-            );
-            if opening == Clubs {
-                s.add(
-                    "Response",
-                    &format!("{after}1D$"),
-                    "4+ diamonds",
-                    Forcing::Forcing,
-                    [fit(weak.min_len(Diamonds, 4), MAX)],
-                );
+            for response in suits_except(&[opening]).filter(|&r| r > opening) {
+                s.0.add(one_level_response(&after, opening, response));
             }
             two_level(s, false);
             // Four trumps raise 1D, but five raise 1C.
@@ -1013,7 +1048,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
     // fits, after the contract rules too, there is a forcing bid that may be
     // short.  With less than its strength, 1NT has already fit.
     for opening in Suit::ALL.iter().cloned() {
-        let after = format!("^{OPEN}1{} [PX] ", opening.latin());
+        let after = format!("^{OPEN}1{} P ", opening.latin());
         if opening == Clubs {
             s.explore(
                 "Response",
@@ -1045,6 +1080,189 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
     );
 }
 
+/// Responder's bids after the opponents double a one-level opening for
+/// takeout, as the booklet gives them over 1D, in two over one too: a jump
+/// shift is weak, a new suit at the one level forces, 2NT is a limit
+/// raise or better and a jump raise is preemptive.  A redouble shows 10+
+/// points, after the bids that describe the hand better, and so the single
+/// raise, a new suit at the two level and 1NT show less.  Then opener
+/// passes, and a double of the opponents' escape is for penalty, with four
+/// of their trumps, or with any hand if the escape would be passed out (see
+/// `must_double_when_passed_out`).
+fn after_takeout_double(s: &mut Sheet) {
+    use Suit::*;
+    for opening in Suit::ALL.iter().cloned() {
+        let o = opening.latin();
+        let after = format!("^{OPEN}1{o} X ");
+        // The trumps that raise: three for a major, four for 1D, five for 1C.
+        let support = match opening {
+            Clubs => 5,
+            Diamonds => 4,
+            _ => 3,
+        };
+        let (shown, more) = match support {
+            3 => ("3+ card support", "4+ card support"),
+            4 => ("4+ card support", "5+ card support"),
+            _ => ("5+ card support", "6+ card support"),
+        };
+        let weak = MAX.with_hcp(9);
+        let jump_shifts = |s: &mut Sheet| {
+            for response in suits_except(&[opening]) {
+                let level = cheapest_level(response, opening) + 1;
+                s.add(
+                    "Weak jump shift",
+                    &format!("{after}{level}{}$", response.latin()),
+                    if level == 2 {
+                        "6+ cards, to play"
+                    } else {
+                        "7+ cards, to play"
+                    },
+                    Forcing::Passable,
+                    [longest(
+                        fit(
+                            MIN.with_hcp(5).min_len(response, level as u8 + 4),
+                            weak.max_len(opening, support - 1),
+                        ),
+                        response,
+                        suits_except(&[opening]),
+                    )],
+                );
+            }
+        };
+        let raises = |s: &mut Sheet| {
+            s.add(
+                "Limit raise or better",
+                &format!("{after}2N$"),
+                shown,
+                Forcing::Forcing,
+                [fit(MIN.with_shcp(10).min_len(opening, support), MAX)],
+            );
+            if is_major(opening) {
+                let preempt = MAX.with_hcp(9).with_shcp(12);
+                s.add(
+                    "Preemptive raise",
+                    &format!("{after}4{o}$"),
+                    "5+ card support, a singleton or void",
+                    Forcing::Passable,
+                    suits_except(&[opening])
+                        .map(|short| fit(MIN.min_len(opening, 5), preempt.max_len(short, 1))),
+                );
+            }
+            s.add(
+                "Preemptive raise",
+                &format!("{after}3{o}$"),
+                more,
+                Forcing::Passable,
+                [fit(MIN.min_len(opening, support + 1), MAX.with_shcp(9))],
+            );
+        };
+        let single_raise = |s: &mut Sheet| {
+            s.add(
+                "Single raise",
+                &format!("{after}2{o}$"),
+                shown,
+                Forcing::Passable,
+                [fit(MIN.with_shcp(6).min_len(opening, support), MAX).limit()],
+            );
+        };
+        // As without the double, a major is raised before a new suit, but a
+        // minor after a major.
+        jump_shifts(s);
+        if is_major(opening) {
+            raises(s);
+            single_raise(s);
+        }
+        for response in suits_except(&[opening]).filter(|&r| r > opening) {
+            s.0.add(one_level_response(&after, opening, response));
+        }
+        if !is_major(opening) {
+            raises(s);
+        }
+        s.add(
+            "Redouble",
+            &format!("{after}XX$"),
+            "10+ points",
+            Forcing::Passable,
+            [fit(MIN.with_hcp(10), MAX)],
+        );
+        if !is_major(opening) {
+            single_raise(s);
+        }
+        for response in suits_except(&[opening]).filter(|&r| r < opening) {
+            s.add(
+                "Two-level response",
+                &format!("{after}2{}$", response.latin()),
+                "6+ cards, not forcing",
+                Forcing::Passable,
+                [fit(MIN.with_hcp(6).min_len(response, 6), MAX.with_hcp(10))],
+            );
+        }
+        s.add(
+            "Response",
+            &format!("{after}1N$"),
+            "No fit and no suit to bid",
+            Forcing::Passable,
+            [fit(
+                MIN.with_hcp(6),
+                weak.max_len(Spades, if opening == Hearts { 3 } else { 13 }),
+            )],
+        );
+        s.add(
+            "Response pass",
+            &format!("{after}P$"),
+            "Nothing else fits",
+            Forcing::Passable,
+            [fit(MIN, weak)],
+        );
+        // After the redouble opener passes, to defend if they do not escape,
+        // and their escape is doubled for penalty, by either of us, holding
+        // four of their trumps.
+        s.add(
+            "Pass",
+            &format!("{after}XX P P$"),
+            "Defends",
+            Forcing::Passable,
+            [fit(MIN, MAX)],
+        );
+        for escape in Suit::ALL.iter().cloned() {
+            s.add(
+                "Penalty double",
+                &format!("{after}XX (P P )?[1-4]{}( P P)? X$", escape.latin()),
+                "4+ cards in their suit",
+                Forcing::Passable,
+                [fit(MIN.min_len(escape, 4), MAX)],
+            );
+        }
+    }
+}
+
+/// After a redouble our side holds the balance of the points, so the
+/// opponents may not play their escape undoubled.  When it is about to be
+/// passed out (`1D X XX 2C P P` with responder to call, or `1D X XX P P 2C P
+/// P` with opener to call) any hand doubles it, not only one with four cards
+/// in their suit.  The caller puts this last in the table, so that it is
+/// used only when nothing else fits.
+fn must_double_when_passed_out(s: &mut Sheet) {
+    s.add(
+        "Penalty double",
+        &format!("^{OPEN}1[CDHS] X XX (P P )?[1-4][CDHS] P P X$"),
+        "They may not play undoubled",
+        Forcing::Passable,
+        [fit(MIN, MAX)],
+    );
+}
+
+/// The opponent's call between the opening and a new suit response at
+/// `level`, for the bids after it: a one-level response means the same
+/// over a double, but a two-level one does not.
+fn over_double(level: usize) -> &'static str {
+    if level == 1 {
+        "[PX]"
+    } else {
+        "P"
+    }
+}
+
 /// Opener's second bid.
 ///
 /// The booklet's ranges are a minimum of 13-15, a medium hand of 16-18
@@ -1058,7 +1276,7 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
         for response in suits_except(&[opening]) {
             let level = cheapest_level(response, opening);
             let r = response.latin();
-            let after = format!("^{OPEN}1{o} P {level}{r} P ");
+            let after = format!("^{OPEN}1{o} {} {level}{r} P ", over_double(level));
             let rebid_forcing = if level == 2 {
                 Forcing::Forcing
             } else {
@@ -1250,9 +1468,10 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
         }
 
         // After a 1NT response to a major, where opener's bids are not
-        // forcing, though two over one's 1NT forces opener to make one.
+        // forcing, though two over one's 1NT forces opener to make one
+        // unless it answered a double.
         if is_major(opening) {
-            let after = format!("^{OPEN}1{o} P 1N P ");
+            let after = format!("^{OPEN}1{o} [PX] 1N P ");
             s.add(
                 "Jump rebid",
                 &format!("{after}3{o}$"),
@@ -1303,7 +1522,7 @@ fn opener_rebids(s: &mut Sheet, two_over_one: bool) {
                 // left when nothing else fits, and may be short.
                 s.add(
                     "New suit",
-                    &format!("{after}2C$"),
+                    &format!("^{OPEN}1{o} P 1N P 2C$"),
                     "Nothing else fits, may be short",
                     Forcing::Passable,
                     [fit(MIN, MAX)],
@@ -1398,8 +1617,9 @@ fn responder_rebids(s: &mut Sheet) {
         for response in suits_except(&[opening]) {
             let level = cheapest_level(response, opening);
             let first = format!(
-                "^{OPEN}1{} P {level}{} P ",
+                "^{OPEN}1{} {} {level}{} P ",
                 opening.latin(),
+                over_double(level),
                 response.latin()
             );
             for x in opener_rebids_shown(opening, response) {
