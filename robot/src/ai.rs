@@ -2241,7 +2241,7 @@ impl Convention {
                 {
                     let level = if takeout_response > response { 1 } else { 2 };
                     let mut length = min.length;
-                    length[response] = 4;
+                    length[takeout_response] = 4;
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
                             &format!(
@@ -4007,6 +4007,27 @@ fn sheets_makes_a_takeout_double_in_any_seat() {
             &[Pass, Pass, Suit(1, Diamonds), Pass, Suit(1, Hearts)],
             "S KJ97 H 9 D K76 C KQ632"
         )
+    );
+}
+
+/// The answer to a takeout double of a response takes four cards in the suit
+/// it bids, and says nothing about the opponents' suits.
+#[test]
+fn sheets_answers_a_double_of_a_response_in_its_own_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let doubled = [Suit(1, Diamonds), Pass, Suit(1, Hearts), Double, Pass];
+    let answers = |hand: &str| system_bid(BiddingSystem::Sheets, &doubled, hand);
+    assert_eq!(Suit(2, Clubs), answers("S 432 H 32 D 432 C 65432"));
+    assert_eq!(Suit(1, Spades), answers("S 5432 H 32 D 5432 C 432"));
+
+    let mut answered = doubled.to_vec();
+    answered.push(Suit(2, Clubs));
+    let (shown, _) = Convention::sheets().valuation(&answered);
+    assert_eq!(
+        [4, 0, 0, 0],
+        [Clubs, Diamonds, Hearts, Spades].map(|s| shown.length[s])
     );
 }
 
