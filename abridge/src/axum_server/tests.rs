@@ -161,6 +161,18 @@ async fn random_seats_redirect_to_a_free_seat() {
 }
 
 #[tokio::test]
+async fn a_full_table_sends_a_random_sitter_home() {
+    let (addr, _app) = serve().await;
+    let mut players = Vec::new();
+    for seat in ["south", "west", "north", "east"] {
+        players.push(connect(addr, &format!("t/{seat}/ws")).await);
+    }
+    let (head, _) = get(addr, "/t/random").await;
+    assert!(head.starts_with("HTTP/1.1 307"), "{head}");
+    assert_eq!(Some("/"), header(&head, "location"));
+}
+
+#[tokio::test]
 async fn the_index_long_poll_waits_for_a_change() {
     let (addr, _app) = serve().await;
     let poll = tokio::spawn(async move { get(addr, "/index.html?update=true").await });
