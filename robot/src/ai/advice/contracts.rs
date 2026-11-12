@@ -31,9 +31,11 @@ impl Convention {
     /// The contracts worth bidding toward after `history`, in words, each
     /// with its strain.  In each strain where the partnership is likely to
     /// have a fit, it takes one contract within reach of each kind
-    /// (part-score, game and so on):
-    /// the highest that is sure, or else the cheapest.  It lists the highest
-    /// kind that is sure and the next one up, but no slam until game is sure.
+    /// (part-score, game and so on).  For a part-score that is the highest
+    /// that is sure, or else the cheapest.  For a game it is the cheapest,
+    /// since that is the one played: 3NT, four of a major or five of a
+    /// minor, never 5NT.  It lists the highest kind that is sure and the
+    /// next one up, but no slam until game is sure.
     /// `me` is what the hand's earlier bids have shown and `candidates` are
     /// the bids it could make now.
     pub(super) fn contracts(
@@ -68,7 +70,7 @@ impl Convention {
             }) {
                 match kinds.last_mut() {
                     Some(k) if Kind::of(k.bid) == Kind::of(c.bid) => {
-                        if matches!(c.reach, Reach::Sure) {
+                        if matches!(c.reach, Reach::Sure) && Kind::of(c.bid) != Kind::Game {
                             *k = c;
                         }
                     }

@@ -1221,7 +1221,7 @@ fn advice_on_a_rebid_after_one_notrump() {
             ♥ 3♥ Jump rebid (6+ card suit, invitational): needs 6+ hearts (you have 5) and 16–18 long high card points (you have 20).
             ♦ 2♦ New suit: needs 4+ diamonds (you have 3).
             ♣ 2♣ New suit: needs 4+ clubs (you have 3).
-            NT 5NT game: needs 25+ high card points between you; you have that between you.
+            NT 3NT game: needs 25+ high card points between you; you have that between you.
             NT 4NT Slam invite (invites 6NT): needs 25–26 high card points (you have 19)."#]],
     );
 }
@@ -1285,4 +1285,30 @@ fn advice_html_is_well_formed() {
             }
         }
     }
+}
+
+#[test]
+fn advice_names_four_of_a_major_as_the_game() {
+    use crate::Bid::*;
+    use bridge_deck::Suit::Hearts;
+    // With the points for game and a heart fit, the game is 4♥, not 5♥.
+    check(
+        &[Suit(1, Hearts), Pass],
+        "S A32 H KQ54 D AQ3 C K32",
+        expect![[r#"
+            Partner opened 1♥, showing 5+ hearts and 13–21 long high card points.
+            Your hand: 18 HCP, 18 LHCP and 18 SHCP, with 3♠ 4♥ 3♦ 3♣.
+            Together you have 31+ high card points and 9+ hearts.
+            You should bid, since a pass would show at most 5 high card points (you have 18).
+            Suggested: 2NT Jacoby 2NT (4+ card support). It shows 4+ hearts and 13+ short high card points. It commits you both to game.
+            ♠ 1♠ Response (4+ spades): needs 4+ spades (you have 3).
+            ♥ 4♥ game: needs 8+ hearts and 25+ high card points between you; you have that between you.
+            ♥ 6♥ small slam: needs 8+ hearts and 33+ high card points between you; that works if partner has 15+ high card points (they have shown 13–21). After 2NT, partner knows you have 4+ hearts and 13+ high card points, so they can bid it with 20+ high card points.
+            ♥ 3♥ Limit raise (invites 4♥): needs 10–11 short high card points (you have 18).
+            ♦ 2♦ Two-level response (New suit): needs 4+ diamonds (you have 3).
+            NT 3NT game: needs 25+ high card points between you; you have that between you.
+            NT 6NT small slam: needs 33+ high card points between you; that works if partner has 15+ high card points (they have shown 13–21). After 2NT, partner knows you have 13+ high card points, so they can bid it with 20+ high card points.
+            NT 3NT Response (Balanced, two card support): needs at most 2 hearts (you have 4) and 15–17 high card points (you have 18).
+            Other 2♣ Two-level response: also fits, but the system prefers 2NT."#]],
+    );
 }
