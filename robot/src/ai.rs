@@ -2610,10 +2610,9 @@ impl Convention {
         for opening in [Hearts, Spades].iter().cloned() {
             let mut min_support = min;
             min_support.length[opening] = 3;
-            let max = HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            };
+            // No five card suit in the other major.
+            let mut max = max_no_5_major;
+            max.length[opening] = 13;
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
                 regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
@@ -4029,6 +4028,21 @@ fn sheets_answers_a_double_of_a_response_in_its_own_suit() {
         [4, 0, 0, 0],
         [Clubs, Diamonds, Hearts, Spades].map(|s| shown.length[s])
     );
+}
+
+/// A raise of partner's major may have any number of trumps from three up.
+#[test]
+fn sheets_raises_a_major_with_five_trumps() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    let hearts = [Suit(1, Hearts), Pass];
+    assert_eq!(Suit(2, Hearts), sheets(&hearts, "S 32 H K9652 D Q43 C J54"));
+    assert_eq!(Suit(3, Hearts), sheets(&hearts, "S 32 H K9652 D AQ3 C Q54"));
+    let spades = [Suit(1, Spades), Pass];
+    assert_eq!(Suit(2, Spades), sheets(&spades, "S K9652 H 32 D Q43 C J54"));
+    assert_eq!(Suit(3, Spades), sheets(&spades, "S K9652 H 32 D AQ3 C Q54"));
 }
 
 #[test]
