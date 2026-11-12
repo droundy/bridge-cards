@@ -54,9 +54,11 @@
 //! needs no points for game and invites none, and leaves rule 3 to
 //! answering partner's invitations.  It must reach some game, so a suit of
 //! six cards, or as many as the hand has shown, may be played as the game
-//! with no eight-card fit known; but that is a last resort, bid only when
-//! no other bid fits, so that the hand explores for a fit first, and
-//! when it bids what it knows, any other game, such as 3NT, comes before it.
+//! with no eight-card fit known.  That is a last resort: the hand explores
+//! for a fit first, if a bid that explores fits.  When none does and it bids
+//! what it knows, a suit it has not yet shown comes after any other game,
+//! such as 3NT, since partner has had no chance to say what they have there;
+//! a suit it has shown, it may insist on.
 //!
 //! A bid opposite a limit bid places the contract: its bidder is captain,
 //! so it shows nothing more.  A limit bid is one that does not force and
@@ -142,9 +144,10 @@ pub(crate) fn explanation() -> Explanation {
                  that is true explores, with a raise of partner's suit that makes {TRUMPS} \
                  trumps, a suit of your own one longer than shown, or a new suit of {A_SUIT} \
                  cards, so that skipping a bid denies it. A suit of {OWN_SUIT} cards, or as \
-                 many as you have shown, is played as the game without a fit only when no \
-                 other bid fits: you explore first, and prefer any other game, such as \
-                 3NT."
+                 many as you have shown, may be played as the game without a fit, but you \
+                 explore first if you can. When you cannot, a suit you have shown you may \
+                 insist on, and one you have not shown comes after any other game, such \
+                 as 3NT."
             ),
             format!(
                 "Nothing is bid for a \
@@ -417,11 +420,12 @@ pub struct Choice {
     /// between lacks the aces for the slam.
     aces_or_none: Option<u8>,
     /// For a game in a game force that is allowed with fewer trumps than
-    /// make eight, because it must reach some game: the suit and the trumps
-    /// that would make a fit.  A hand with fewer is a last resort, which does
-    /// not stop another bid from exploring, and bids the game only when
-    /// nothing else fits.
-    unsupported: Option<(Suit, u8)>,
+    /// make eight, because it must reach some game: the suit, the trumps
+    /// that would make a fit, and whether the hand has shown the suit.  A
+    /// hand with fewer trumps explores first if it can (see `last_resort`),
+    /// and in a suit it has not shown it also prefers any other game (see
+    /// `comes_last`).
+    unsupported: Option<(Suit, u8, bool)>,
 }
 
 /// The ask that comes before a slam, and what a hand without the cards to ask
@@ -562,12 +566,20 @@ pub(crate) fn contracted_fits(
 
 /// Is the bid a last resort for `hand`: a game in a game force that has no
 /// eight-card fit known, played in a suit that the hand has only the cards
-/// for that the force allows?  Nothing else is bid with it, if anything else
-/// fits.
-pub(crate) fn last_resort(choice: &Choice, hand: &HandValuation) -> bool {
+/// for that the force allows?  The hand explores instead, if a bid that
+/// explores fits.
+fn last_resort(choice: &Choice, hand: &HandValuation) -> bool {
     choice
         .unsupported
-        .is_some_and(|(suit, trumps)| hand.length[suit] < trumps)
+        .is_some_and(|(suit, trumps, _)| hand.length[suit] < trumps)
+}
+
+/// When nothing explores and `hand` bids what it knows, does this bid come
+/// after every other contract that fits?  That is a last resort in a suit the
+/// hand has not shown, where partner has had no chance to say what they have.
+/// A suit it has shown, the hand may insist on.
+pub(crate) fn comes_last(choice: &Choice, hand: &HandValuation) -> bool {
+    last_resort(choice, hand) && choice.unsupported.is_some_and(|(_, _, shown)| !shown)
 }
 
 /// The most points partner might have, for a slam: the most they promised,
@@ -1105,9 +1117,10 @@ impl Convention {
             // played in a suit of this hand's own with six cards, or as many
             // as it has shown.
             if rule == Rule::Forced {
-                let own = mine.min.length[suit].max(OWN_SUIT);
+                let shown = mine.min.length[suit];
+                let own = shown.max(OWN_SUIT);
                 if own < min.length[suit] {
-                    unsupported = Some((suit, min.length[suit]));
+                    unsupported = Some((suit, min.length[suit], shown >= A_SUIT));
                     min.length[suit] = own;
                 }
             }

@@ -157,8 +157,9 @@ impl BidAI for ConventionalBid {
 impl Convention {
     /// When no entry fits `hand` after `history`, the contract the rules know
     /// for it, though they would rather have explored: the highest bid of
-    /// the rules that fits it, if any.  A game that is a last resort for the
-    /// hand (see `rules::last_resort`) is bid only if no other contract fits.
+    /// the rules that fits it, if any.  A game with no fit, in a suit the hand
+    /// has not shown (see `rules::comes_last`), is bid only if no other
+    /// contract fits.
     pub(crate) fn contract_known(
         &self,
         history: &[Bid],
@@ -172,16 +173,16 @@ impl Convention {
                 .filter(|c| c.fits_when_nothing_explores(hand))
                 .map(|c| (b, c))
         });
-        let mut last_resort_found = None;
+        let mut last = None;
         for (b, c) in fitting {
             match &c {
-                Convention::Contracted { choice, .. } if last_resort(choice, hand) => {
-                    last_resort_found = last_resort_found.or(Some((b, c)));
+                Convention::Contracted { choice, .. } if comes_last(choice, hand) => {
+                    last = last.or(Some((b, c)));
                 }
                 _ => return Some((b, c)),
             }
         }
-        last_resort_found
+        last
     }
     /// The first entry of this table before the one at `before` that
     /// describes the last of `bids` and fits `hand`, with its index and what it
@@ -401,7 +402,7 @@ pub(crate) mod rules;
 mod sayc;
 pub use booklet::Booklet;
 use rules::{
-    asking_fits, contracted_fits, explored_fits, last_resort, Asking, Choice, Exploration, Reason,
+    asking_fits, comes_last, contracted_fits, explored_fits, Asking, Choice, Exploration, Reason,
 };
 
 #[expect(
@@ -4323,12 +4324,26 @@ fn sayc_game_force_explores_before_an_unsupported_game() {
             ),
             // A hand that suits neither the waiting nor the positive response
             // to 2C has no bid that explores.  It used to jump to 4S; the game
-            // with no fit is a last resort, and 3NT, which also fits, comes
-            // before it.
+            // with no fit, in a suit it has not shown, is a last resort, and
+            // 3NT, which also fits, comes before it.
             (
                 &[Pass, Suit(2, Clubs), Pass],
                 "S AK9865 H 73 D 865 C 42",
                 NT(3),
+            ),
+            // A hand that has shown its suit, here with a jump shift, may
+            // insist on it when nothing explores, rather than bid 3NT.
+            (
+                &[
+                    Suit(1, Spades),
+                    Pass,
+                    Suit(3, Hearts),
+                    Pass,
+                    Suit(3, Spades),
+                    Pass,
+                ],
+                "S 2 H AKJ763 D 95 C AK97",
+                Suit(4, Hearts),
             ),
         ] {
             assert_eq!(
