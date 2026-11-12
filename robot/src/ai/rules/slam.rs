@@ -4,20 +4,32 @@
 //! answers in steps, the first for none or all four, and then 5NT (after
 //! Gerber, 5C) asks for kings.
 //!
-//! The robot asks when the contract rules would bid a slam on its points,
-//! and needs an ace to ask for aces and a king to ask for kings, so that
-//! the first step means none.  Once the aces are known it bids a small slam
-//! with no more than one missing, and otherwise signs off at the five level
-//! in a suit with a fit (after Gerber, also in 4NT); with all four, and the
-//! points for a grand slam,
-//! it asks for kings, and bids the grand only with all of them.  Partner
+//! The robot asks when the contract rules would bid a slam on its points.
+//! Before a slam in a suit it asks whether or not it holds an ace: the first
+//! step shows none or all four, and the asker's own aces tell which, since a
+//! hand with an ace knows partner cannot have all four, and a hand with none
+//! knows that partner, who must have them all if this side has the points for
+//! a slam, does.  A slam in notrump is different, since its points are high
+//! card points, with which at most one ace is likely to be missing, so a hand
+//! with an ace asks and a hand without one bids it unasked.  Asking for kings
+//! needs a king.  A hand asks with Blackwood only if it can stop after every
+//! answer that leaves two aces missing, in five of the suit it would play in,
+//! so the answer must not be above that: asking before a slam in clubs takes
+//! two aces, in diamonds one, and in a major none (see `aces_to_ask`).  A hand
+//! that cannot ask bids the game in the suit instead, whatever its points,
+//! unless it can explore instead.  Once the aces are known the robot bids a
+//! small slam with no more than one missing, and otherwise signs off at the
+//! five level in a suit with a fit (after Gerber, also in 4NT); with all
+//! four, and the points for a grand slam, it asks for kings, and bids the
+//! grand only with all of them.  A grand slam is never bid unasked.  Partner
 //! answers and leaves the contract to the one who asked.
 use super::super::{all_bids, Convention, Fit, Forcing};
-use super::{trump, uncontested, Kind};
+use super::{trump, uncontested, Kind, TRUMPS};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
 use regex::RegexSet;
+use std::sync::Arc;
 use wording::Text;
 
 /// The two ways of asking for aces.
@@ -64,7 +76,10 @@ fn steps(ask: Bid) -> Vec<Bid> {
 pub struct Asking {
     pub(crate) ask: Ask,
     pub(crate) kings: bool,
-    slams: Vec<Convention>,
+    /// What the asker holds: an ace to ask for aces, a king to ask for kings,
+    /// and for kings all the aces that partner did not show.
+    pub(crate) min: HandValuation,
+    slams: Arc<Vec<Convention>>,
 }
 
 impl Asking {
@@ -86,15 +101,59 @@ impl Asking {
     }
 }
 
-/// Does a hand ask?  It must hold an ace (for kings, a king), so that the
-/// first step means none, and the rules must know a slam it looks for.
+/// The aces a hand needs to ask for aces with `ask` before the slam `slam`.
+///
+/// Before a slam in notrump one, since a hand without an ace bids it unasked.
+/// Before a slam in a suit, enough to stop short of it: whenever the answer
+/// leaves two aces missing, the asker signs off in five of the suit, so it
+/// must be able to, and an answer above five of the suit leaves it nothing to
+/// sign off in.  A hand reads the first step as none if it has an ace and as
+/// all four if it has none, so it never has to stop after that.  Blackwood's
+/// answers are 5C, 5D, 5H and 5S, so asking before a slam in clubs needs two
+/// aces, in diamonds one, and in a major none.  Gerber signs off in 4NT, which
+/// is always there, so it needs none.
+pub(super) fn aces_to_ask(ask: Ask, slam: Bid) -> u8 {
+    match (ask, slam) {
+        (_, Bid::NT(_)) => 1,
+        (Ask::Blackwood, Bid::Suit(_, suit)) => {
+            let answers = steps(ask.bid(false));
+            let stop = Bid::Suit(5, suit);
+            (0..=4)
+                .find(|&aces: &u8| {
+                    answers.iter().enumerate().all(|(step, &answer)| {
+                        let partner = if step == 0 && aces == 0 {
+                            4
+                        } else {
+                            step as u8
+                        };
+                        aces + partner > 2 || answer <= stop
+                    })
+                })
+                .unwrap_or(4)
+        }
+        _ => 0,
+    }
+}
+
+/// The contract that a slam entry of an ask places.
+fn slam_contract(slam: &Convention) -> Option<Bid> {
+    match slam {
+        Convention::Contracted { reason, .. } => Some(reason.contract),
+        _ => None,
+    }
+}
+
+/// Does a hand ask?  For kings it must hold a king, and for aces the aces
+/// that `aces_to_ask` says, and the rules must know a slam it looks for.
 pub(crate) fn asking_fits(asking: &Asking, hand: &HandValuation) -> bool {
-    let held = if asking.kings { hand.kings } else { hand.aces };
-    held >= 1
-        && asking
-            .slams
-            .iter()
-            .any(|s| s.fits_when_nothing_explores(hand))
+    asking.slams.iter().any(|s| {
+        let can_ask = if asking.kings {
+            hand.kings >= 1
+        } else {
+            slam_contract(s).is_some_and(|slam| hand.aces >= aces_to_ask(asking.ask, slam))
+        };
+        can_ask && s.fits_when_nothing_explores(hand)
+    })
 }
 
 /// What this side has asked, and what partner has answered.
@@ -131,7 +190,7 @@ impl Convention {
             let Some(Convention::SlamAsk { asking, .. }) = self.refine(&history[..=i]) else {
                 continue;
             };
-            let answer = (history.get(i + 1) == Some(&Bid::Pass))
+            let answer = matches!(history.get(i + 1), Some(Bid::Pass | Bid::Double))
                 .then(|| history.get(i + 2))
                 .flatten()
                 .and_then(|a| steps(history[i]).iter().position(|b| b == a))
@@ -148,18 +207,18 @@ impl Convention {
             } else {
                 state.aces = answer;
             }
-            if i + 2 == n && history[n - 1] == Bid::Pass {
+            if i + 2 == n && matches!(history[n - 1], Bid::Pass | Bid::Double) {
                 state.pending = Some(history[i]);
             }
         }
         asked
     }
 
-    /// The bid that would ask for aces before a slam in `strain`, if there
-    /// is one: Gerber directly over partner's balanced 1NT or 2NT, and
-    /// otherwise Blackwood for a slam in a suit, unless this side has bid
-    /// notrump, when 4NT invites one.
-    pub(super) fn ace_ask(&self, history: &[Bid], strain: Option<Suit>) -> Option<Ask> {
+    /// The bid that would ask for aces before a slam, if there is one:
+    /// Gerber directly over partner's balanced 1NT or 2NT, and otherwise
+    /// Blackwood for a slam `in_suit`, unless this side has bid notrump, when
+    /// 4NT invites one.
+    pub(super) fn ace_ask(&self, history: &[Bid], in_suit: bool) -> Option<Ask> {
         let n = history.len();
         let over_notrump = n >= 2
             && matches!(history[n - 2], Bid::NT(1) | Bid::NT(2))
@@ -169,7 +228,7 @@ impl Convention {
                 .is_some_and(|m| m.bounds().0.length.iter().all(|&l| l >= 2));
         let ask = if over_notrump {
             Ask::Gerber
-        } else if strain.is_none() {
+        } else if !in_suit {
             return None;
         } else {
             let notrump = history
@@ -189,9 +248,13 @@ impl Convention {
     /// What the slam asks make of the last of `bids`, when they decide it:
     /// `Some(None)` when the bid means nothing, as any bid but an answer
     /// does once partner has asked.
-    pub(super) fn slam_meaning(&self, bids: &[Bid]) -> Option<Option<Convention>> {
+    pub(super) fn slam_meaning(
+        &self,
+        bids: &[Bid],
+        asked: Option<&Asked>,
+    ) -> Option<Option<Convention>> {
         let (&bid, history) = bids.split_last()?;
-        let asked = self.asked(history)?;
+        let asked = asked?;
         if let Some(ask) = asked.pending {
             let kings = ask == asked.ask.bid(true);
             let Some(step) = steps(ask).iter().position(|&b| b == bid) else {
@@ -199,19 +262,14 @@ impl Convention {
             };
             let step = step as u8;
             let what = if kings { "king" } else { "ace" };
-            let count = |n: u8| {
-                let held = if kings {
-                    HandValuation::MIN.with_kings(n)
+            let with = |v: HandValuation, n| {
+                if kings {
+                    v.with_kings(n)
                 } else {
-                    HandValuation::MIN.with_aces(n)
-                };
-                let most = if kings {
-                    HandValuation::MAX.with_kings(n)
-                } else {
-                    HandValuation::MAX.with_aces(n)
-                };
-                Fit::new(held, most)
+                    v.with_aces(n)
+                }
             };
+            let count = |n: u8| Fit::new(with(HandValuation::MIN, n), with(HandValuation::MAX, n));
             let (description, fits) = match step {
                 0 => (format!("No {what}s or four"), vec![count(0), count(4)]),
                 1 => (format!("One {what}"), vec![count(1)]),
@@ -226,16 +284,25 @@ impl Convention {
         }
         let aces = asked.aces?;
         if asked.kings.is_none() && bid == asked.ask.bid(true) {
-            return Some(self.asking(history, asked.ask, true));
+            return Some(self.asking(history, asked.ask, Some(aces)));
         }
-        // With two aces missing, the asker signs off below the slam.
-        let missing = HandValuation::MAX.with_aces(2u8.checked_sub(aces)?);
+        // With two aces missing, the asker signs off below the slam.  After
+        // the first step that is a hand with one ace or two, since a hand
+        // with none knows that partner has all four.
+        let (held, most) = match aces {
+            0 => (1, 2),
+            n => (0, 2u8.checked_sub(n)?),
+        };
+        let (least, missing) = (
+            HandValuation::MIN.with_aces(held),
+            HandValuation::MAX.with_aces(most),
+        );
         let partner = self.promise(bids, 2);
         let sign_off = match (asked.ask, bid) {
-            (Ask::Gerber, Bid::NT(4)) => Some(Fit::new(HandValuation::MIN, missing)),
+            (Ask::Gerber, Bid::NT(4)) => Some(Fit::new(least, missing)),
             (_, Bid::Suit(5, suit)) => {
-                let mut fit = HandValuation::MIN;
-                fit.length[suit] = 8u8.saturating_sub(partner.min.length[suit]);
+                let mut fit = least;
+                fit.length[suit] = TRUMPS.saturating_sub(partner.min.length[suit]);
                 Some(Fit::new(fit, missing))
             }
             _ => None,
@@ -243,9 +310,11 @@ impl Convention {
         sign_off.map(|fit| Some(entry("Sign-off", "Two aces are missing", vec![fit])))
     }
 
-    /// The ask for aces (or kings) after `history` with `ask`, which looks
-    /// for the slams the rules would bid without it.
-    pub(super) fn asking(&self, history: &[Bid], ask: Ask, kings: bool) -> Option<Convention> {
+    /// The ask for aces after `history` with `ask`, or for kings if `aces`
+    /// says how many aces partner showed, which looks for the slams the rules
+    /// would bid without it.
+    pub(super) fn asking(&self, history: &[Bid], ask: Ask, aces: Option<u8>) -> Option<Convention> {
+        let kings = aces.is_some();
         let mut bids = history.to_vec();
         bids.push(ask.bid(kings));
         if !uncontested(&super::bids_string(&bids)) {
@@ -265,29 +334,40 @@ impl Convention {
                 };
                 let mut auction = history.to_vec();
                 auction.push(slam);
-                if let Some(Convention::Contracted {
-                    the_name,
-                    min,
-                    max,
-                    reason,
-                    mut choice,
-                }) = self.refine(&auction)
-                {
+                if let Some(mut meaning @ Convention::Contracted { .. }) = self.refine(&auction) {
                     debug_assert!(trump(slam) == strain && Kind::of(slam) >= Kind::SmallSlam);
-                    choice.ask_first = None;
-                    slams.push(Convention::Contracted {
-                        the_name,
-                        min,
-                        max,
-                        reason,
-                        choice,
-                    });
+                    if let Convention::Contracted { choice, .. } = &mut meaning {
+                        choice.ask_first = None;
+                    }
+                    slams.push(meaning);
                 }
             }
         }
+        // What the ask holds, as far as partner can tell: for aces, the
+        // fewest that any of its slams needs to ask with, and for kings a
+        // king and the aces partner did not show, or none of them if the
+        // first step showed none or all four.
+        let min = match aces {
+            None => {
+                let fewest = slams
+                    .iter()
+                    .filter_map(slam_contract)
+                    .map(|slam| aces_to_ask(ask, slam));
+                HandValuation::MIN.with_aces(fewest.min().unwrap_or(1))
+            }
+            Some(0) => HandValuation::MIN.with_kings(1),
+            Some(shown) => HandValuation::MIN
+                .with_kings(1)
+                .with_aces(4u8.saturating_sub(shown)),
+        };
         Some(Convention::SlamAsk {
             the_name: if kings { "King ask" } else { ask.name() },
-            asking: Asking { ask, kings, slams },
+            asking: Asking {
+                ask,
+                kings,
+                min,
+                slams: Arc::new(slams),
+            },
         })
     }
 }

@@ -264,6 +264,12 @@ button:disabled {
     margin: 0.3em 0;
 }
 
+/* The link to the booklet on the bidding system, next to its name. */
+.systems a {
+    font-size: small;
+    margin-left: 0.5em;
+}
+
 .advice th {
     vertical-align: top;
     padding-right: 0.5em;

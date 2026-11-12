@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[% self.system.name() %] bidding booklet</title>
+<style>
+:root { --text: #222; --background: #fff; --faint: #777; --line: #ddd; --shade: #f4f3ef;
+        --link: #05c; --mark: #fff3bf; --forcing: #a40;
+        --clubs: #181; --diamonds: #c60; --hearts: #c00; --spades: #222; }
+@media (prefers-color-scheme: dark) {
+  :root { --text: #eee; --background: #1e1a18; --faint: #aaa; --line: #443f3b; --shade: #2a2522;
+          --link: #8bf; --mark: #4a4020; --forcing: #fa5;
+          --clubs: #7d7; --diamonds: #fa5; --hearts: #f66; --spades: #eee; }
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 0.5em; }
+body { font-family: sans-serif; line-height: 1.4; color: var(--text);
+       background: var(--background); margin: 0; }
+.clubs { color: var(--clubs); } .diamonds { color: var(--diamonds); }
+.hearts { color: var(--hearts); } .spades { color: var(--spades); }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+main { max-width: 56em; padding: 0 1em 4em; }
+nav { padding: 1em; font-size: 0.9em; }
+nav a { display: block; font-weight: bold; padding: 0.15em 0; }
+nav a.page { font-weight: normal; padding: 0.05em 0 0.05em 1em; }
+@media (min-width: 60em) {
+  body { display: grid; grid-template-columns: 17em 1fr; }
+  nav { position: sticky; top: 0; height: 100vh; overflow-y: auto;
+        border-right: 1px solid var(--line); }
+}
+h1 { font-size: 1.6em; margin: 0.8em 0 0.2em; }
+h2 { font-size: 1.3em; margin: 2.2em 0 0; padding-top: 0.4em; border-top: 2px solid var(--text); }
+h3 { font-size: 1.1em; margin: 0; }
+section.page { margin: 1.6em 0; }
+section.page:target h3 { background: var(--mark); }
+table { border-collapse: collapse; width: 100%; margin: 0.4em 0; }
+th, td { padding: 0.25em 0.6em; text-align: left; vertical-align: top;
+         border-top: 1px solid var(--line); }
+thead th { font-size: 0.8em; color: var(--faint); font-weight: normal; border-top: none; }
+tbody th { white-space: nowrap; font-weight: normal; }
+.note { color: var(--faint); font-size: 0.9em; }
+td.meaning { width: 28%; }
+.forcing { color: var(--forcing); font-size: 0.8em; white-space: nowrap; }
+.says { display: block; color: var(--faint); font-size: 0.9em; }
+.alt { color: var(--faint); font-style: italic; }
+dl.words dt { font-weight: bold; margin-top: 0.6em; }
+dl.words dd { margin: 0; }
+@media print { nav { display: none; } body { display: block; } }
+</style>
+</head>
+<body>
+<nav>
+<a href="#top">[% self.system.name() %]</a>
+<a href="#reading">How to read this</a>
+[% for part in self.parts.iter() { %]<a href="#[% part.id %]">[% part.title %]</a>
+[% for page in part.pages.iter() { if part.pages.len() > 1 { %]<a class="page" href="#[% page.id %]">[% page.title %]</a>
+[% } } } %]<a href="#natural">Bids that no page describes</a>
+</nav>
+<main>
+<h1 id="top">[% self.system.name() %]: the bidding system</h1>
+<p>What each call means in every auction the system has an agreement about, starting from the
+opening bid. This is written from the same table the robots bid by, so it is exactly what
+they will do and what they will take your bids to mean.</p>
+
+<h2 id="reading">How to read this</h2>
+<p>There is a chapter for each kind of opening bid, with a page for each stage of the auction
+after it: the responses, opener's rebid and so on. A page is a table of auctions, lowest
+first. The last call of each auction is in bold, and the rest of the line is what that call
+means and the hand it shows.</p>
+<p>Auctions that mean the same are written together:</p>
+<dl class="words">
+<dt>X, Y, Z, W</dt>
+<dd>Any suit that can be bid there. Different letters are different suits, and a letter is
+never a suit that the same auction names. <strong>1X – 1Y – 2Y</strong> is
+1♣ – 1♥ – 2♥, or 1♦ – 1♠ – 2♠, and so on, and in <strong>1X – 2♣</strong> the opening is
+anything but 1♣.</dd>
+<dt>M, m</dt>
+<dd>A major suit (♥ or ♠), and a minor suit (♣ or ♦).</dd>
+<dt>2♦/♥/♠</dt>
+<dd>2♦, 2♥ or 2♠.</dd>
+<dt>1X – 1Y – 1NT/2X – 2NT</dt>
+<dd>Either call: this is 1X – 1Y – 1NT – 2NT and 1X – 1Y – 2X – 2NT.</dd>
+<dt>(1♠), (Dbl), (Pass)</dt>
+<dd>A call in parentheses is an opponent's. When the opponents have only passed, their passes
+are left out.</dd>
+<dt><span class="note">or over (Dbl)</span></dt>
+<dd>The call means the same when the opponent before you doubles instead of passing.</dd>
+<dt><span class="note">(2Z: Reverse)</span></dt>
+<dd>A note after an auction says which of its auctions are meant: here, only those where 2Z
+was a reverse. <span class="note">(opened in third seat)</span> is for auctions that two
+passes came before.</dd>
+<dt>The suit bid</dt>
+<dd>The suit of the call in bold. "Your suit" and "partner's suit" are the suits you and
+partner bid earlier in the auction, and "their suit" is the opponents'.</dd>
+</dl>
+<p>For a call that is on no page, see <a href="#natural">Bids that no page describes</a>.</p>
+<dl class="words">
+<dt>High card points</dt>
+<dd>Ace 4, king 3, queen 2, jack 1.</dd>
+<dt>Long high card points</dt>
+<dd>High card points, plus one for each card beyond four in a suit.</dd>
+<dt>Short high card points, or dummy points</dt>
+<dd>For a hand that will be dummy in a suit contract. Add 3 for a void, 2 for a singleton
+and 1 for a doubleton, but count less for honours in short suits: a singleton king is 1 and
+a singleton queen 0, a king or queen in a doubleton is one less than usual, and a jack
+counts only in a suit of three or more.</dd>
+<dt>Losers</dt>
+<dd>The New Losing Trick Count. In the top three cards of each suit, a missing ace is
+1½ losers, a missing king 1 and a missing queen ½, counting no more cards than the suit
+has. Fewer losers is a stronger hand.</dd>
+<dt><span class="forcing">forcing</span></dt>
+<dd>Partner may not pass.</dd>
+<dt><span class="forcing">game forcing</span></dt>
+<dd>Neither partner may pass until game is reached.</dd>
+</dl>
+[% for part in self.parts.iter() { %]
+<h2 id="[% part.id %]">[% part.title %]</h2>
+[% for page in part.pages.iter() { %]
+<section class="page" id="[% page.id %]">
+[% if part.pages.len() > 1 { %]<h3>[% page.title %]</h3>
+[% } %]<table>
+<thead><tr><th>Auction</th><th>Meaning</th><th>Shows</th></tr></thead>
+<tbody>[% for row in page.rows.iter() { %]
+<tr><th>[% for (i, auction) in row.auctions.iter().enumerate() { if i > 0 { %]<br>[% } auction } %]</th>
+<td class="meaning">[% row.name %][%
+  if row.forcing == Forcing::Forcing { %] <span class="forcing">forcing</span>[% }
+  if row.forcing == Forcing::GameForcing { %] <span class="forcing">game forcing</span>[% }
+  if let Some(d) = &row.description { %]<span class="says">[% d %]</span>[% } %]</td>
+<td>[% if row.hands.is_empty() { %]any hand[% } for (j, hand) in row.hands.iter().enumerate() { if j > 0 { %]<br><span class="alt">or</span> [% } hand } %]</td>
+</tr>[% } %]
+</tbody>
+</table>
+</section>
+[% } } %]
+<h2 id="natural">Bids that no page describes</h2>
+<p>The system has no entry for these bids, and this is what it says of them.[% if self.invitations { %]
+The pages of responses do show the invitations that its rules make, and later in the auction
+they are left to the rules.[% } %]</p>
+[% for explanation in self.explanations.iter() { %]<h3>[% explanation.title %]</h3>
+[% for paragraph in explanation.paragraphs.iter() { %]<p>[% paragraph %]</p>
+[% } } %]<table>
+<thead><tr><th>Bid</th><th>Meaning</th><th>Your side has</th></tr></thead>
+<tbody>[% for n in self.natural.iter() { %]
+<tr><th>[% for (i, bid) in n.bids.iter().enumerate() { if i > 0 { %], [% } bid } %]</th><td class="meaning">[% n.name %]</td><td>[% n.needs %]</td></tr>[% } %]
+</tbody>
+</table>
+</main>
+</body>
+</html>

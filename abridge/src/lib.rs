@@ -269,17 +269,18 @@ async fn ws_connected(
                     }
                     Action::Play(seat, card) => {
                         if let (Some(turn), Some(playing)) = (g.turn(), g.hand_playing()) {
-                            if may_act_for(&g, myseat, turn) && [turn, playing].contains(&seat) {
-                                if g.playable_cards(playing, turn).playable.contains(card) {
-                                    if g.played.len() == 4 {
-                                        g.played.clear();
-                                    }
-                                    g.played.push(card);
-                                    g.hands[playing] -= Cards::singleton(card);
-                                    g.trick_finish();
-                                    if g.ns_tricks + g.ew_tricks == 13 {
-                                        g.hand_done = true;
-                                    }
+                            if may_act_for(&g, myseat, turn)
+                                && [turn, playing].contains(&seat)
+                                && g.playable_cards(playing, turn).playable.contains(card)
+                            {
+                                if g.played.len() == 4 {
+                                    g.played.clear();
+                                }
+                                g.played.push(card);
+                                g.hands[playing] -= Cards::singleton(card);
+                                g.trick_finish();
+                                if g.ns_tricks + g.ew_tricks == 13 {
+                                    g.hand_done = true;
                                 }
                             }
                         }
@@ -345,7 +346,7 @@ fn may_act_for(g: &GameState<WsSender>, myseat: Option<Seat>, seat: Seat) -> boo
 fn send_player_updates(g: &GameState<WsSender>) {
     for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
         if let Some(s) = &g.connections[seat] {
-            let pp = Player { seat, game: &g };
+            let pp = Player { seat, game: g };
             let msg = format_as!(HTML, "" pp);
             s.send(Message::Text(msg.into_string().into())).ok();
         }
@@ -353,7 +354,7 @@ fn send_player_updates(g: &GameState<WsSender>) {
     if let Some(seat) = g.turn() {
         if g.connections[seat].is_none() {
             if let Some(s) = &g.ai {
-                s.send(Message::Text(serde_json::to_string(&*g).unwrap().into()))
+                s.send(Message::Text(serde_json::to_string(g).unwrap().into()))
                     .ok();
             }
         }
