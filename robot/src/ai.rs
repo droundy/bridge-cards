@@ -2274,20 +2274,34 @@ impl Convention {
             }
         }
 
+        // In fourth seat a hand opens when its long points and its spades
+        // come to 15, with at least 11 points: one fit for each number of
+        // spades up to four, which needs 11.
+        let rule_of_15 = |lo: HandValuation, hi: HandValuation, shape: &[ShapeRule]| {
+            (0..=4)
+                .map(|spades| {
+                    let (mut lo, mut hi) = (lo, hi);
+                    lo.length[Spades] = spades;
+                    if spades < 4 {
+                        hi.length[Spades] = spades;
+                    }
+                    lo.lhcp = 15 - spades;
+                    shape
+                        .iter()
+                        .fold(Fit::new(lo, hi), |fit, &rule| fit.with(rule))
+                })
+                .collect::<Vec<_>>()
+        };
         {
-            let (lo, hi) = (
-                HandValuation {
-                    lhcp: 12,
-                    length: [0, 0, 5, 4].into(),
-                    ..min
-                },
-                max,
-            );
+            let lo = HandValuation {
+                length: [0, 0, 5, 0].into(),
+                ..min
+            };
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1H$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                fits: rule_of_15(lo, max, &[ShapeRule::Longer(Hearts, Spades)]),
                 forcing: Forcing::Passable,
             });
         }
@@ -2312,44 +2326,48 @@ impl Convention {
         {
             let (lo, hi) = (
                 HandValuation {
-                    lhcp: 12,
-                    length: [3, 0, 0, 3].into(),
+                    length: [3, 0, 0, 0].into(),
                     ..min
                 },
-                max,
+                max_no_5_major,
             );
             let mut three = hi;
             three.length[Diamonds] = 3;
+            let mut fits = rule_of_15(lo, hi, &[ShapeRule::Longer(Clubs, Diamonds)]);
+            fits.extend(rule_of_15(
+                lo,
+                three,
+                &[ShapeRule::AtLeastAsLong(Clubs, Diamonds)],
+            ));
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1C$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![
-                    Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds)),
-                    Fit::new(lo, three).with(ShapeRule::AtLeastAsLong(Clubs, Diamonds)),
-                ],
+                fits,
                 forcing: Forcing::Passable,
             });
         }
         {
             let (lo, hi) = (
                 HandValuation {
-                    lhcp: 12,
-                    length: [0, 3, 0, 3].into(),
+                    length: [0, 3, 0, 0].into(),
                     ..min
                 },
-                max,
+                max_no_5_major,
             );
             let mut four = lo;
             four.length[Diamonds] = 4;
+            let mut fits = rule_of_15(lo, hi, &[ShapeRule::Longer(Diamonds, Clubs)]);
+            fits.extend(rule_of_15(
+                four,
+                hi,
+                &[ShapeRule::AtLeastAsLong(Diamonds, Clubs)],
+            ));
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1D$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![
-                    Fit::new(lo, hi).with(ShapeRule::Longer(Diamonds, Clubs)),
-                    Fit::new(four, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs)),
-                ],
+                fits,
                 forcing: Forcing::Passable,
             });
         }
@@ -4009,6 +4027,24 @@ fn sheets_makes_a_takeout_double_in_any_seat() {
             "S KJ97 H 9 D K76 C KQ632"
         )
     );
+}
+
+/// In fourth seat a hand opens when its points and its spades come to 15,
+/// and opens a five card major as in the other seats.
+#[test]
+fn sheets_opens_by_the_rule_of_15_in_fourth_seat() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let opens = |hand: &str| system_bid(BiddingSystem::Sheets, &[Pass, Pass, Pass], hand);
+    // 15 long points and two spades, or 13 and three.
+    assert_eq!(Suit(1, Hearts), opens("S K2 H AQJ54 D 432 C A53"));
+    assert_eq!(Suit(1, Hearts), opens("S K32 H AQJ54 D 432 C A5"));
+    assert_eq!(Suit(1, Clubs), opens("S K32 H K32 D 432 C AQJ4"));
+    // 11 long points and three spades is not enough.
+    assert_eq!(Pass, opens("S K32 H QJ32 D 432 C AJ4"));
+    // 11 and four spades is.
+    assert_eq!(Suit(1, Diamonds), opens("S K432 H 32 D AQ32 C Q43"));
 }
 
 /// The answer to a takeout double of a response takes four cards in the suit
