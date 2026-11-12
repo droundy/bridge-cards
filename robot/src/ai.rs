@@ -2671,6 +2671,8 @@ impl Convention {
                 max_splinter.length[response] = 1;
                 max_splinter.hcp_in_suit[response] = 1;
                 max_splinter.hcp_outside_suit[response] = 12;
+                // The points are counted outside the short suit alone.
+                let mut min_splinter = min_splinter;
                 min_splinter.hcp_outside_suit[response] = 10;
                 let splinterbid = if response > opening { 3 } else { 4 };
                 sheets.add(Convention::Simple {
@@ -4043,6 +4045,30 @@ fn sheets_raises_a_major_with_five_trumps() {
     let spades = [Suit(1, Spades), Pass];
     assert_eq!(Suit(2, Spades), sheets(&spades, "S K9652 H 32 D Q43 C J54"));
     assert_eq!(Suit(3, Spades), sheets(&spades, "S K9652 H 32 D AQ3 C Q54"));
+}
+
+/// A splinter takes 10 to 12 points outside its short suit, wherever among
+/// the other suits they are.
+#[test]
+fn sheets_splinters_in_any_short_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    let hearts = [Suit(1, Hearts), Pass];
+    assert_eq!(Suit(4, Clubs), sheets(&hearts, "S K32 H KJ32 D AJ432 C 2"));
+    assert_eq!(
+        Suit(4, Diamonds),
+        sheets(&hearts, "S K32 H KJ32 D 2 C AJ432")
+    );
+    assert_eq!(Suit(3, Spades), sheets(&hearts, "S 2 H KJ32 D K32 C AJ432"));
+    let spades = [Suit(1, Spades), Pass];
+    assert_eq!(Suit(4, Clubs), sheets(&spades, "S KJ32 H K32 D AJ432 C 2"));
+    assert_eq!(
+        Suit(4, Diamonds),
+        sheets(&spades, "S KJ32 H K32 D 2 C AJ432")
+    );
+    assert_eq!(Suit(4, Hearts), sheets(&spades, "S KJ32 H 2 D K32 C AJ432"));
 }
 
 #[test]
