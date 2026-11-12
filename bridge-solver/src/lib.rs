@@ -488,38 +488,23 @@ fn test_after_known_void() {
     assert_eq!(TrickTaken::Them(after), start.after(plays, None));
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+/// How many tricks the side on lead expects to take.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Score {
-    tot_score: u32,
-    num: u32,
+    tricks: f64,
 }
 
 impl Score {
     pub fn mean(self) -> f64 {
-        if self.num == 0 {
-            -1.0
-        } else {
-            self.tot_score as f64 / self.num as f64
-        }
+        self.tricks
     }
 
     /// You can't score more than this!
-    pub const MAX: Score = Score {
-        tot_score: 14,
-        num: 1,
-    };
+    pub const MAX: Score = Score { tricks: 14.0 };
     /// You can't score less than this!
-    pub const MIN: Score = Score {
-        tot_score: 0,
-        num: 0,
-    };
+    pub const MIN: Score = Score { tricks: -1.0 };
 }
 
-impl PartialEq for Score {
-    fn eq(&self, other: &Self) -> bool {
-        self.mean() == other.mean()
-    }
-}
 impl Eq for Score {}
 
 impl PartialOrd for Score {
@@ -529,45 +514,48 @@ impl PartialOrd for Score {
 }
 impl Ord for Score {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.mean().partial_cmp(&other.mean()).unwrap()
-    }
-}
-
-impl std::ops::Add<Score> for Score {
-    type Output = Score;
-
-    fn add(self, rhs: Score) -> Self::Output {
-        Score {
-            tot_score: self.tot_score + rhs.tot_score,
-            num: self.num + rhs.num,
-        }
-    }
-}
-
-impl std::ops::Add<usize> for Score {
-    type Output = Score;
-
-    fn add(self, rhs: usize) -> Self::Output {
-        Score {
-            tot_score: self.tot_score + rhs as u32,
-            num: self.num + 1,
-        }
+        self.tricks.partial_cmp(&other.tricks).unwrap()
     }
 }
 
 impl std::ops::Add<TrickTaken> for Score {
     type Output = Score;
 
+    /// The score of a position, from this score for what is left of it after
+    /// its first trick.
     fn add(self, rhs: TrickTaken) -> Self::Output {
-        if let TrickTaken::Them(s) = rhs {
-            Score {
-                tot_score: self.num * s.tricks_remaining() as u32 - self.tot_score,
-                num: self.num,
-            }
+        let tricks = if let TrickTaken::Them(s) = rhs {
+            s.tricks_remaining() as f64 - self.tricks
+        } else {
+            self.tricks + 1.0
+        };
+        Score { tricks }
+    }
+}
+
+/// The scores of the deals sampled for a position, which make up its score.
+///
+/// Every deal counts the same, however many deals were sampled further on to
+/// find its score: a deal after which every card is known, as when a defender
+/// shows out, is as likely as one that leaves the rest to be sampled again.
+#[derive(Default, Debug, Clone, Copy)]
+struct Sampled {
+    tricks: f64,
+    deals: u32,
+}
+
+impl Sampled {
+    fn add(&mut self, score: Score) {
+        self.tricks += score.tricks;
+        self.deals += 1;
+    }
+    /// The mean over the deals, or `Score::MIN` when there are none.
+    fn score(self) -> Score {
+        if self.deals == 0 {
+            Score::MIN
         } else {
             Score {
-                tot_score: self.tot_score + self.num,
-                num: self.num,
+                tricks: self.tricks / self.deals as f64,
             }
         }
     }
@@ -655,10 +643,7 @@ impl Naive {
                 hands: [Cards::EMPTY; 4],
                 unknown: Cards::EMPTY,
             },
-            Score {
-                tot_score: 0,
-                num: 1,
-            },
+            Score { tricks: 0.0 },
         );
         Naive {
             cache,
@@ -700,12 +685,12 @@ impl Naive {
     fn score_trick(&mut self, starting: Starting, plays: [Card; 4]) -> Score {
         if self.care == Thoroughness::OneRound {
             // We only count this trick, so all we need is who won it.
-            let tot_score = if trick_winner(plays, self.trump) & 1 == 1 {
-                0
+            let tricks = if trick_winner(plays, self.trump) & 1 == 1 {
+                0.0
             } else {
-                1
+                1.0
             };
-            Score { tot_score, num: 1 }
+            Score { tricks }
         } else {
             let trick_taken = starting.after(plays, self.trump);
             self.score(trick_taken.starting()) + trick_taken
@@ -717,10 +702,7 @@ impl Naive {
             // println!("found score {:?}", score);
             return *score;
         }
-        let mut score = Score {
-            tot_score: 0,
-            num: 0,
-        };
+        let mut sampled = Sampled::default();
         let num_stats = if starting.unknown.is_empty() {
             1
         } else {
@@ -771,9 +753,10 @@ impl Naive {
                         // println!("Move {} gives {}", c0, best0.mean());
                     }
                 }
-                score = score + best0;
+                sampled.add(best0);
             }
         }
+        let score = sampled.score();
         self.cache.insert(starting, score);
         score
     }
@@ -787,16 +770,14 @@ impl Naive {
             starting.unknown -= Cards::singleton(card);
         }
         starting.check();
-        let mut score = Score {
-            tot_score: 0,
-            num: 0,
-        };
+        let mut sampled = Sampled::default();
         let statistics = if starting.unknown.is_empty() {
             1
         } else {
             std::cmp::max(16, self.num_statistics())
         };
-        let mut play_result: std::collections::HashMap<Card, Score> =
+        // What each card that could be played next scores, over the deals.
+        let mut play_result: std::collections::HashMap<Card, Sampled> =
             std::collections::HashMap::new();
         for _ in 0..statistics {
             for hands in starting.random_hands(&mut self.rng).into_iter() {
@@ -821,11 +802,7 @@ impl Naive {
                                 let mysc = self.score_trick(starting, [c0, c1, c2, c3]);
                                 // println!(" {} {} {} {} -> {}", c0, c1, c2, c3, mysc.mean());
                                 if plays.len() == 3 {
-                                    let s = *play_result.get(&c3).unwrap_or(&Score {
-                                        tot_score: 0,
-                                        num: 0,
-                                    });
-                                    play_result.insert(c3, s + mysc);
+                                    play_result.entry(c3).or_default().add(mysc);
                                 }
                                 if mysc <= worst {
                                     worst = mysc;
@@ -835,47 +812,40 @@ impl Naive {
                                 }
                             }
                             if plays.len() == 2 {
-                                let s = *play_result.get(&c2).unwrap_or(&Score {
-                                    tot_score: 0,
-                                    num: 0,
-                                });
-                                play_result.insert(c2, s + worst);
+                                play_result.entry(c2).or_default().add(worst);
                             }
                             if worst >= best {
                                 best = worst;
                             }
                         }
                         if plays.len() == 1 {
-                            let s = *play_result.get(&c1).unwrap_or(&Score {
-                                tot_score: 0,
-                                num: 0,
-                            });
-                            play_result.insert(c1, s + best);
+                            play_result.entry(c1).or_default().add(best);
                         }
                         if worst >= best {
                             worst = best;
                         }
                     }
                     if plays.is_empty() {
-                        let s = *play_result.get(&c0).unwrap_or(&Score {
-                            tot_score: 0,
-                            num: 0,
-                        });
-                        play_result.insert(c0, s + worst);
+                        play_result.entry(c0).or_default().add(worst);
                     }
                     if worst >= best {
                         best = worst;
                         // println!("Move {} gives {}", c0, best.mean());
                     }
                 }
-                score = score + best;
+                sampled.add(best);
             }
         }
+        let score = sampled.score();
         println!("Score: {:?}", score);
         if plays.is_empty() {
             self.cache.insert(starting, score);
         }
         println!("Best plays:");
+        let play_result: std::collections::HashMap<Card, Score> = play_result
+            .into_iter()
+            .map(|(card, sampled)| (card, sampled.score()))
+            .collect();
         for (p, s) in play_result.iter() {
             println!("    {} -> {:.3}", p, s.mean());
         }
@@ -1310,4 +1280,147 @@ fn test_bad_bid() {
     );
     println!("mean score: {}", score.0.mean());
     assert_eq!(Card::CA, score.1);
+}
+
+/// Every choice of `k` of `cards`.
+#[cfg(test)]
+fn subsets(cards: Cards, k: usize) -> Vec<Cards> {
+    if k == 0 {
+        return vec![Cards::EMPTY];
+    }
+    let mut rest = cards;
+    let mut found = Vec::new();
+    while let Some(first) = rest.next() {
+        for others in subsets(rest, k - 1) {
+            found.push(others.insert(first));
+        }
+    }
+    found
+}
+
+/// Every way to deal the unknown cards of `starting` to the hands that are
+/// short of cards.
+#[cfg(test)]
+fn every_deal(starting: Starting) -> Vec<[Cards; 4]> {
+    let n = starting.tricks_remaining();
+    let mut deals = vec![(starting.hands, starting.unknown)];
+    for seat in 0..4 {
+        let mut dealt = Vec::new();
+        for (hands, unknown) in deals {
+            for extra in subsets(unknown, n - hands[seat].len()) {
+                let mut hands = hands;
+                hands[seat] += extra;
+                dealt.push((hands, unknown - extra));
+            }
+        }
+        deals = dealt;
+    }
+    deals.into_iter().map(|(hands, _)| hands).collect()
+}
+
+/// The tricks the side on lead expects from `starting` when every deal of the
+/// unknown cards is equally likely, which is what `Naive::score` estimates
+/// from a sample of the deals.
+#[cfg(test)]
+fn expected_tricks(
+    starting: Starting,
+    trump: Option<Suit>,
+    known: &mut std::collections::HashMap<Starting, f64>,
+) -> f64 {
+    if starting.tricks_remaining() == 0 {
+        return 0.0;
+    }
+    if let Some(&tricks) = known.get(&starting) {
+        return tricks;
+    }
+    let deals = every_deal(starting);
+    let mut total = 0.0;
+    for hands in deals.iter() {
+        let mut best0 = f64::MIN;
+        for c0 in hands[0] {
+            let mut worst1 = f64::MAX;
+            for c1 in hands[1].following_suit(c0.suit()) {
+                let mut best2 = f64::MIN;
+                for c2 in hands[2].following_suit(c0.suit()) {
+                    let mut worst3 = f64::MAX;
+                    for c3 in hands[3].following_suit(c0.suit()) {
+                        let tricks = match starting.after([c0, c1, c2, c3], trump) {
+                            TrickTaken::Us(next) => 1.0 + expected_tricks(next, trump, known),
+                            TrickTaken::Them(next) => {
+                                next.tricks_remaining() as f64 - expected_tricks(next, trump, known)
+                            }
+                        };
+                        worst3 = worst3.min(tricks);
+                    }
+                    best2 = best2.max(worst3);
+                }
+                worst1 = worst1.min(best2);
+            }
+            best0 = best0.max(worst1);
+        }
+        total += best0;
+    }
+    let tricks = total / deals.len() as f64;
+    known.insert(starting, tricks);
+    tricks
+}
+
+/// `naive`, sampling the deals that `seed` gives it.
+#[cfg(test)]
+fn seeded(mut naive: Naive, seed: u64) -> Naive {
+    naive.rng = SmallRng::seed_from_u64(seed);
+    naive
+}
+
+#[test]
+fn every_sampled_deal_counts_the_same() {
+    use std::str::FromStr;
+    // At notrump with two tricks to go, the hand on lead has the ace and
+    // queen of spades.  The queen is a second trick when the king and jack
+    // are in different hands, as in four of the six ways to deal the four
+    // unknown cards.
+    let starting = Starting {
+        hands: [
+            Cards::from_str("S AQ").unwrap(),
+            Cards::EMPTY,
+            Cards::from_str("H 32").unwrap(),
+            Cards::EMPTY,
+        ],
+        unknown: Cards::from_str("S KJ D AK").unwrap(),
+    };
+    let expected = expected_tricks(starting, None, &mut Default::default());
+    assert!((expected - 5.0 / 3.0).abs() < 1e-9, "{}", expected);
+    // In the other two deals a defender shows out on the ace, and then every
+    // card is known.  Those deals count as much as the rest.
+    let score = seeded(Naive::statistical(None, 256), 0).score(starting);
+    assert!((score.mean() - expected).abs() < 0.1, "{}", score.mean());
+}
+
+#[test]
+fn score_estimates_the_expected_tricks() {
+    let mut rng = SmallRng::seed_from_u64(1);
+    for tricks in 2..=3 {
+        for i in 0..24 {
+            // The two hands that are seen, in turn the leader's and their
+            // partner's, the other two, and the leader's with a neighbour's.
+            let seen = [[0, 2], [1, 3], [0, 1], [0, 3]][i % 4];
+            let mut deck = Cards::ALL;
+            let mut hands = [Cards::EMPTY; 4];
+            for seat in seen {
+                hands[seat] = deck.pick_rng(&mut rng, tricks).unwrap();
+            }
+            let unknown = deck.pick_rng(&mut rng, 2 * tricks).unwrap();
+            let starting = Starting { hands, unknown };
+            for trump in [None, Some(Suit::Hearts)] {
+                let expected = expected_tricks(starting, trump, &mut Default::default());
+                let score = seeded(Naive::statistical(trump, 256), i as u64).score(starting);
+                assert!(
+                    (score.mean() - expected).abs() < 0.15,
+                    "{} rather than {expected} for {:?} and {unknown} with {trump:?} trump",
+                    score.mean(),
+                    hands.map(|hand| hand.to_string())
+                );
+            }
+        }
+    }
 }
