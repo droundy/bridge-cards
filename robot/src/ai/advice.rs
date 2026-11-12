@@ -34,6 +34,8 @@ const HCP: Word = Word::noun("high card point", "high card points");
 const LHCP: Word = Word::noun("long high card point", "long high card points");
 const SHCP: Word = Word::noun("short high card point", "short high card points");
 const LOSER: Word = Word::noun("loser", "losers");
+const ACE: Word = Word::noun("ace", "aces");
+const KING: Word = Word::noun("king", "kings");
 const CARD: Word = Word::noun("card", "cards");
 const KNOW: Word = Word::verb("knows", "know");
 
@@ -226,8 +228,10 @@ impl Convention {
         let mut closest: Vec<&Candidate> = others
             .clone()
             // Natural bids, and the contracts the rules place, are said as
-            // contracts, and why not to pass above.
+            // contracts, and why not to pass above.  An ask for aces shows
+            // nothing, so it is mentioned only when it fits.
             .filter(|c| c.needs.is_none() && !c.places() && (c.bid != Bid::Pass || c.fits()))
+            .filter(|c| c.fits() || !matches!(c.meaning, Convention::SlamAsk { .. }))
             .collect();
         closest.sort_by_key(|c| (!c.fits(), c.distance));
         closest.truncate(OTHERS);
@@ -626,6 +630,8 @@ pub(super) enum Measure {
     Lhcp,
     Shcp,
     Losers,
+    Aces,
+    Kings,
     HcpIn(Suit),
     HcpOutside(Suit),
 }
@@ -637,9 +643,16 @@ impl Measure {
         suits()
             .map(Measure::Length)
             .chain(
-                [Measure::Hcp, Measure::Lhcp, Measure::Shcp, Measure::Losers]
-                    .iter()
-                    .copied(),
+                [
+                    Measure::Hcp,
+                    Measure::Lhcp,
+                    Measure::Shcp,
+                    Measure::Losers,
+                    Measure::Aces,
+                    Measure::Kings,
+                ]
+                .iter()
+                .copied(),
             )
             .chain(suits().map(Measure::HcpIn))
             .chain(suits().map(Measure::HcpOutside))
@@ -651,6 +664,8 @@ impl Measure {
             Measure::Lhcp => v.lhcp,
             Measure::Shcp => v.shcp,
             Measure::Losers => v.nltc2,
+            Measure::Aces => v.aces,
+            Measure::Kings => v.kings,
             Measure::HcpIn(suit) => v.hcp_in_suit[suit],
             Measure::HcpOutside(suit) => v.hcp_outside_suit[suit],
         }
@@ -689,6 +704,8 @@ impl Measure {
             Measure::Lhcp => LHCP.into(),
             Measure::Shcp => SHCP.into(),
             Measure::Losers => LOSER.into(),
+            Measure::Aces => ACE.into(),
+            Measure::Kings => KING.into(),
             Measure::HcpIn(s) => Text::from(HCP) + "in" + suit(s),
             Measure::HcpOutside(s) => Text::from(HCP) + "outside" + suit(s),
         }

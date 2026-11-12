@@ -662,6 +662,8 @@ impl Cards {
             hcp,
             shcp: self.protected_high_card_points() as u8 + self.short_card_points() as u8,
             nltc2: (self.new_losing_trick_count() * 2.0) as u8,
+            aces: self.intersection(Cards::ACES).len() as u8,
+            kings: self.intersection(Cards::KINGS).len() as u8,
             lhcp,
             length,
             hcp_in_suit,
@@ -947,6 +949,10 @@ pub struct HandValuation {
     pub shcp: u8,
     /// Twice the New Losing Trick Count
     pub nltc2: u8,
+    /// The number of aces
+    pub aces: u8,
+    /// The number of kings
+    pub kings: u8,
     /// The suit length
     pub length: PerSuit<u8>,
     /// The number of HCP in the suit
@@ -962,6 +968,8 @@ impl HandValuation {
         lhcp: 37,
         shcp: 37,
         nltc2: 28,
+        aces: 4,
+        kings: 4,
         length: PerSuit { internal: [13; 4] },
         hcp_in_suit: PerSuit { internal: [10; 4] },
         hcp_outside_suit: PerSuit { internal: [30; 4] },
@@ -972,6 +980,8 @@ impl HandValuation {
         lhcp: 0,
         shcp: 0,
         nltc2: 0,
+        aces: 0,
+        kings: 0,
         length: PerSuit { internal: [0; 4] },
         hcp_in_suit: PerSuit { internal: [0; 4] },
         hcp_outside_suit: PerSuit { internal: [0; 4] },
@@ -983,6 +993,8 @@ impl HandValuation {
             || self.lhcp > upper.lhcp
             || self.shcp > upper.shcp
             || self.nltc2 > upper.nltc2
+            || self.aces > upper.aces
+            || self.kings > upper.kings
             || self.length.exceeds(upper.length)
             || self.hcp_in_suit.exceeds(upper.hcp_in_suit)
             || self.hcp_outside_suit.exceeds(upper.hcp_outside_suit)
@@ -996,6 +1008,8 @@ impl HandValuation {
             lhcp: min(self.lhcp, other.lhcp),
             shcp: min(self.shcp, other.shcp),
             nltc2: min(self.nltc2, other.nltc2),
+            aces: min(self.aces, other.aces),
+            kings: min(self.kings, other.kings),
             length: self.length.min_with(other.length),
             hcp_in_suit: self.hcp_in_suit.min_with(other.hcp_in_suit),
             hcp_outside_suit: self.hcp_outside_suit.min_with(other.hcp_outside_suit),
@@ -1010,6 +1024,8 @@ impl HandValuation {
             lhcp: max(self.lhcp, other.lhcp),
             shcp: max(self.shcp, other.shcp),
             nltc2: max(self.nltc2, other.nltc2),
+            aces: max(self.aces, other.aces),
+            kings: max(self.kings, other.kings),
             length: self.length.max_with(other.length),
             hcp_in_suit: self.hcp_in_suit.max_with(other.hcp_in_suit),
             hcp_outside_suit: self.hcp_outside_suit.max_with(other.hcp_outside_suit),
@@ -1028,6 +1044,16 @@ impl HandValuation {
     /// Modify self to have lhcp
     pub fn with_lhcp(mut self, lhcp: u8) -> Self {
         self.lhcp = lhcp;
+        self
+    }
+    /// Modify self to have this many aces
+    pub fn with_aces(mut self, aces: u8) -> Self {
+        self.aces = aces;
+        self
+    }
+    /// Modify self to have this many kings
+    pub fn with_kings(mut self, kings: u8) -> Self {
+        self.kings = kings;
         self
     }
 }

@@ -44,12 +44,12 @@
 //! Sheets, though over a weak two's 2NT response opener rebids the suit
 //! with a minimum.
 //!
-//! Not covered, though the booklet has them: slam conventions (Blackwood and
-//! Gerber), negative doubles, responder's strong jump shifts, the feature
+//! Blackwood and Gerber come from the contract rules (see `rules::slam`).
+//!
+//! Not covered, though the booklet has them: negative doubles, the feature
 //! that opener shows over a weak two's 2NT with a maximum, and Michaels over
-//! a major.  (Splinters are not part of
-//! SAYC.)  Auctions the tables do not mention fall back on the natural bids
-//! shared with the other conventions.
+//! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
+//! mention fall back on the natural bids shared with the other conventions.
 use super::{Convention, Fit, Forcing, ShapeRule};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
@@ -820,7 +820,33 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
             }
         };
 
+        // The booklet's strong jump shifts, which invite a slam, and give no
+        // points or shape.  They take the 18 points that make a slam
+        // possible opposite an opening and two more points, a five card
+        // suit, the longest, and at most three cards in opener's suit, since
+        // Jacoby 2NT shows four.  After them the contract rules explore.
+        let jump_shifts = |s: &mut Sheet| {
+            for response in suits_except(&[opening]) {
+                let level = cheapest_level(response, opening) + 1;
+                s.add(
+                    "Jump shift",
+                    &format!("{after}{level}{}$", response.latin()),
+                    "5+ cards, slam interest",
+                    Forcing::GameForcing,
+                    [longest(
+                        fit(
+                            MIN.with_lhcp(18).min_len(response, 5),
+                            MAX.max_len(opening, 3),
+                        ),
+                        response,
+                        suits_except(&[opening]),
+                    )],
+                );
+            }
+        };
+
         if is_major(opening) {
+            jump_shifts(s);
             s.add(
                 "Jacoby 2NT",
                 &format!("{after}2N$"),
@@ -919,6 +945,7 @@ fn responses(s: &mut Sheet, two_over_one: bool) {
                 Forcing::Passable,
                 [balanced(MIN.with_hcp(16), no_major.with_hcp(18))],
             );
+            jump_shifts(s);
             // A major before a raise of the minor: up the line with 4-4, the
             // longer with 5-4, and spades with 5-5.
             s.add(

@@ -157,7 +157,9 @@ impl BidAI for ConventionalBid {
 impl Convention {
     /// When no entry fits `hand` after `history`, the contract the rules know
     /// for it, though they would rather have explored: the highest bid of
-    /// the rules that fits it, if any.
+    /// the rules that fits it, if any.  A game with no fit, in a suit the hand
+    /// has not shown (see `rules::comes_last`), is bid only if no other
+    /// contract fits.
     pub(crate) fn contract_known(
         &self,
         history: &[Bid],
@@ -165,12 +167,22 @@ impl Convention {
     ) -> Option<(Bid, Convention)> {
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
-        legal_bids(history).into_iter().rev().find_map(|b| {
+        let fitting = legal_bids(history).into_iter().rev().filter_map(|b| {
             *bids.last_mut().unwrap() = b;
             self.refine(&bids)
                 .filter(|c| c.fits_when_nothing_explores(hand))
                 .map(|c| (b, c))
-        })
+        });
+        let mut last = None;
+        for (b, c) in fitting {
+            match &c {
+                Convention::Contracted { choice, .. } if comes_last(choice, hand) => {
+                    last = last.or(Some((b, c)));
+                }
+                _ => return Some((b, c)),
+            }
+        }
+        last
     }
     /// The first entry of this table before the one at `before` that
     /// describes the last of `bids` and fits `hand`, with its index and what it
@@ -389,7 +401,9 @@ mod daily_columns;
 pub(crate) mod rules;
 mod sayc;
 pub use booklet::Booklet;
-use rules::{contracted_fits, Choice, Reason};
+use rules::{
+    asking_fits, comes_last, contracted_fits, explored_fits, Asking, Choice, Exploration, Reason,
+};
 
 #[expect(
     clippy::enum_variant_names,
@@ -508,6 +522,8 @@ impl Fit {
             ValueRange::new(self.min.hcp, self.max.hcp, HandValuation::MAX.hcp, "hcp") ""
             ValueRange::new(self.min.shcp, self.max.shcp, HandValuation::MAX.lhcp, "shcp") ""
             ValueRange::new(self.min.lhcp, self.max.lhcp, HandValuation::MAX.lhcp, "lhcp") ""
+            ValueRange::new(self.min.aces, self.max.aces, HandValuation::MAX.aces, "aces") ""
+            ValueRange::new(self.min.kings, self.max.kings, HandValuation::MAX.kings, "kings") ""
             suit_ranges(&self.min, &self.max) ""
             FormattedString::<HTML>::from_formatted(shape)
         )
@@ -573,6 +589,20 @@ pub enum Convention {
         reason: Reason,
         /// What the rules weigh to choose the bid for a hand.
         choice: Choice,
+    },
+    /// What the contract rules make of a bid that explores in a game force:
+    /// the cheapest natural bid that is true of the hand.
+    Explored {
+        the_name: &'static str,
+        min: HandValuation,
+        max: HandValuation,
+        exploration: Exploration,
+    },
+    /// An ask for aces or kings before a slam, which shows nothing (see
+    /// `rules::slam`).
+    SlamAsk {
+        the_name: &'static str,
+        asking: Asking,
     },
     Ordered {
         conventions: Vec<Convention>,
@@ -841,7 +871,10 @@ impl Convention {
             Convention::Contracted { reason, .. } if reason.shows_nothing() => {
                 (HandValuation::MIN, HandValuation::MAX)
             }
-            Convention::Contracted { min, max, .. } => (*min, *max),
+            Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
+                (*min, *max)
+            }
+            Convention::SlamAsk { asking, .. } => (asking.min, HandValuation::MAX),
             Convention::Ordered { .. } | Convention::Contract { .. } => {
                 (HandValuation::MIN, HandValuation::MAX)
             }
@@ -859,6 +892,13 @@ impl Convention {
                 choice,
                 ..
             } => contracted_fits(min, max, reason, choice, hand, true),
+            Convention::Explored {
+                min,
+                max,
+                exploration,
+                ..
+            } => explored_fits(min, max, exploration, hand),
+            Convention::SlamAsk { asking, .. } => asking_fits(asking, hand),
             _ => {
                 let (min, max) = self.bounds();
                 !hand.exceeds(max) && !min.exceeds(*hand)
@@ -871,7 +911,10 @@ impl Convention {
     #[cfg(test)]
     fn describes(&self, hand: &HandValuation) -> bool {
         match self {
-            Convention::Contracted { min, max, .. } => !hand.exceeds(*max) && !min.exceeds(*hand),
+            Convention::Contracted { min, max, .. } | Convention::Explored { min, max, .. } => {
+                !hand.exceeds(*max) && !min.exceeds(*hand)
+            }
+            Convention::SlamAsk { .. } => true,
             Convention::Either(options) => options.iter().any(|c| c.describes(hand)),
             c => c.fits(hand),
         }
@@ -941,9 +984,7 @@ impl Convention {
                     default = Some(i);
                 }
                 Convention::Contract { regex, .. }
-                    if default.is_none()
-                        && regex.is_match(auction)
-                        && self.contract_meaning(bids, "").is_some() =>
+                    if default.is_none() && regex.is_match(auction) && self.rules_decide(bids) =>
                 {
                     default = Some(i);
                 }
@@ -1193,6 +1234,21 @@ impl Convention {
                     reason.text()
                 )
             }
+            Convention::Explored {
+                the_name,
+                min,
+                max,
+                exploration,
+            } => {
+                format_as!(HTML,
+                    "<strong>" the_name "</strong><br/>"
+                    suit_ranges(min, max) ""
+                    exploration.text()
+                )
+            }
+            Convention::SlamAsk { the_name, asking } => {
+                format_as!(HTML, "<strong>" the_name "</strong><br/>" asking.text())
+            }
             Convention::Ordered { the_name, .. } => {
                 FormattedString::from_formatted(the_name.to_string())
             }
@@ -1214,6 +1270,8 @@ impl Convention {
             | Convention::Forced { the_name, .. }
             | Convention::Contract { the_name, .. }
             | Convention::Contracted { the_name, .. }
+            | Convention::Explored { the_name, .. }
+            | Convention::SlamAsk { the_name, .. }
             | Convention::Ordered { the_name, .. } => the_name,
             Convention::Either(options) => options[0].the_name(),
         }
@@ -1225,9 +1283,10 @@ impl Convention {
             Convention::Rule { the_name, .. } => format_as!(HTML, the_name),
             Convention::Natural { the_name, .. } => format_as!(HTML, the_name),
             Convention::Forced { the_name, .. } => format_as!(HTML, the_name),
-            Convention::Contract { the_name, .. } | Convention::Contracted { the_name, .. } => {
-                format_as!(HTML, the_name)
-            }
+            Convention::Contract { the_name, .. }
+            | Convention::Contracted { the_name, .. }
+            | Convention::Explored { the_name, .. }
+            | Convention::SlamAsk { the_name, .. } => format_as!(HTML, the_name),
             Convention::Ordered { the_name, .. } => format_as!(HTML, the_name),
             Convention::Either(options) => options[0].name(),
         }
@@ -1246,6 +1305,8 @@ impl Convention {
             | Convention::Contract { .. }
             | Convention::Contracted { .. } => Forcing::Passable,
             Convention::Forced { .. } => Forcing::Forced,
+            Convention::Explored { .. } => Forcing::GameForcing,
+            Convention::SlamAsk { .. } => Forcing::Forcing,
             Convention::Ordered { .. } => Forcing::Passable,
             Convention::Either(options) => options.iter().map(|c| c.is_forcing()).max().unwrap(),
         }
@@ -4151,5 +4212,461 @@ fn sayc_stayman_asks_and_shows_nothing() {
                 "{system:?} {stayman:?}"
             );
         }
+    }
+}
+
+#[test]
+fn sayc_jump_shifts_and_explores_in_a_game_force() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let jump = [Suit(1, Hearts), Pass, Suit(3, Clubs), Pass];
+    let then = |rebid: Bid| [Suit(1, Hearts), Pass, Suit(3, Clubs), Pass, rebid, Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // A jump shift takes 18 points and a five card suit, the longest,
+            // without four card support for a major, which bids Jacoby 2NT.
+            (
+                &[Suit(1, Hearts), Pass][..],
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(3, Clubs),
+            ),
+            (
+                &[Suit(1, Spades), Pass],
+                "S A2 H AKQ32 D K32 C K32",
+                Suit(3, Hearts),
+            ),
+            (
+                &[Suit(1, Clubs), Pass],
+                "S AKJ32 H A2 D K32 C K32",
+                Suit(2, Spades),
+            ),
+            (&[Suit(1, Spades), Pass], "S KQ32 H AKQ32 D K2 C 32", NT(2)),
+            // Opener explores with the cheapest true bid: a sixth heart, a
+            // new suit, or a raise past 3NT, since a slam is possible
+            // opposite 18 and two more.  With none of them, 3NT.
+            (&jump, "S K2 H AQJ1032 D A32 C 32", Suit(3, Hearts)),
+            (&jump, "S 32 H AKJ32 D KQ32 C 32", Suit(3, Diamonds)),
+            (&jump, "S KJ32 H AQ1032 D A2 C 32", Suit(3, Spades)),
+            (&jump, "S K32 H AQ1032 D A2 C 432", Suit(4, Clubs)),
+            (&jump, "S KQ3 H AQ1032 D QJ2 C 32", NT(3)),
+            // Responder then places the game, or a slam when it is sure.
+            (
+                &then(Suit(3, Hearts)),
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(4, Hearts),
+            ),
+            // With a slam sure, Blackwood checks the aces.
+            (&then(Suit(3, Hearts)), "S A2 H K2 D A32 C AKJ432", NT(4)),
+            (&then(Suit(3, Spades)), "S A2 H 32 D K32 C AKQJ32", NT(3)),
+            (
+                &then(Suit(4, Clubs)),
+                "S A2 H 32 D K32 C AKQJ32",
+                Suit(5, Clubs),
+            ),
+            (&then(Suit(4, Clubs)), "S A2 H K2 D A32 C AKJ432", NT(4)),
+            (&then(NT(3)), "S A2 H 32 D K32 C AKQJ32", Pass),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+        // Skipping a cheaper bid denies it: 3S denies six hearts and four
+        // diamonds, and the raise to 4C denies all three.
+        let convention = system.convention();
+        let max = |rebid| convention.refine(&then(rebid)[..5]).unwrap().bounds().1;
+        let three_spades = max(Suit(3, Spades));
+        assert_eq!(
+            (3, 5),
+            (three_spades.length[Diamonds], three_spades.length[Hearts])
+        );
+        let four_clubs = max(Suit(4, Clubs));
+        assert_eq!(
+            (3, 5, 3),
+            (
+                four_clubs.length[Diamonds],
+                four_clubs.length[Hearts],
+                four_clubs.length[Spades]
+            )
+        );
+    }
+}
+
+#[test]
+fn sayc_game_force_explores_before_an_unsupported_game() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Six hearts opposite a void would be game in hearts with no fit
+            // known (it used to be bid, and the auction ended there), so the
+            // hand explores with its cheapest true bid instead.
+            (
+                &[Suit(2, Clubs), Pass, Suit(3, Clubs), Pass][..],
+                "S A3 H AKQ975 D AK10 C 97",
+                Suit(3, Hearts),
+            ),
+            (
+                &[
+                    Pass,
+                    Suit(2, Clubs),
+                    Pass,
+                    Suit(2, Diamonds),
+                    Pass,
+                    Suit(3, Clubs),
+                    Pass,
+                ],
+                "S 1073 H QJ8642 D 932 C Q",
+                Suit(3, Hearts),
+            ),
+            // A hand that suits neither the waiting nor the positive response
+            // to 2C has no bid that explores.  It used to jump to 4S; the game
+            // with no fit, in a suit it has not shown, is a last resort, and
+            // 3NT, which also fits, comes before it.
+            (
+                &[Pass, Suit(2, Clubs), Pass],
+                "S AK9865 H 73 D 865 C 42",
+                NT(3),
+            ),
+            // A hand that has shown its suit, here with a jump shift, may
+            // insist on it when nothing explores, rather than bid 3NT.
+            (
+                &[
+                    Suit(1, Spades),
+                    Pass,
+                    Suit(3, Hearts),
+                    Pass,
+                    Suit(3, Spades),
+                    Pass,
+                ],
+                "S 2 H AKJ763 D 95 C AK97",
+                Suit(4, Hearts),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_invites_a_notrump_slam_only_with_4nt() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        // Over 1NT the quantitative 4NT invites a slam.
+        assert_eq!(
+            NT(4),
+            system_bid(system, &[NT(1), Pass], "S KQ2 H KQ4 D AJ32 C Q32"),
+            "{system:?}"
+        );
+        // After exploring went past 3NT and 4NT is taken, 5NT was bid as an
+        // invitation to 6NT that partner then passed, needing eleven tricks
+        // for 3NT's score.  Nothing in notrump above 4NT is bid now.
+        let auction = [
+            Pass,
+            Pass,
+            Suit(2, Clubs),
+            Pass,
+            NT(2),
+            Pass,
+            Suit(3, Clubs),
+            Pass,
+            Suit(3, Diamonds),
+            Pass,
+            Suit(3, Spades),
+            Pass,
+            Suit(4, Clubs),
+            Pass,
+            Suit(5, Clubs),
+            Pass,
+        ];
+        assert_eq!(
+            Pass,
+            system_bid(system, &auction, "S K8 H K73 D QJ85 C 7543"),
+            "{system:?}"
+        );
+    }
+}
+
+#[test]
+fn sayc_asks_for_aces_and_kings_as_the_booklet_says() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let jump = [
+        Suit(1, Hearts),
+        Pass,
+        Suit(3, Clubs),
+        Pass,
+        Suit(3, Hearts),
+        Pass,
+    ];
+    let after = |calls: &[Bid]| {
+        let mut bids = jump.to_vec();
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let gerber = |calls: &[Bid]| {
+        let mut bids = vec![NT(1), Pass, Suit(4, Clubs), Pass];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    // Hearts agreed after 1C-1H-4H, and a hand without an ace, or with one.
+    let no_ace = |calls: &[Bid]| {
+        let mut bids = vec![
+            Suit(1, Clubs),
+            Pass,
+            Suit(1, Hearts),
+            Pass,
+            Suit(4, Hearts),
+            Pass,
+        ];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let no_ace_hand = "S Q6 H KQJ1086 D KJ9 C 96";
+    let one_ace_hand = "S A6 H KQJ1086 D KJ9 C 96";
+    // Three aces, and two.
+    let asker = "S A2 H K2 D A32 C AKJ432";
+    let short = "S K2 H K2 D AQ2 C AKJ432";
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Blackwood, answered in steps.
+            (jump.to_vec(), asker, NT(4)),
+            (jump.to_vec(), short, NT(4)),
+            (after(&[NT(4)]), "S K2 H KQJ1032 D KQ2 C K2", Suit(5, Clubs)),
+            (
+                after(&[NT(4)]),
+                "S K2 H AQJ1032 D K32 C K2",
+                Suit(5, Diamonds),
+            ),
+            (
+                after(&[NT(4)]),
+                "S A2 H AQJ1032 D K32 C K2",
+                Suit(5, Hearts),
+            ),
+            // Two aces missing sign off, one missing bids the slam, and the
+            // one who answered passes.
+            (after(&[NT(4), Suit(5, Clubs)]), short, Suit(5, Hearts)),
+            (after(&[NT(4), Suit(5, Clubs)]), asker, Suit(6, Hearts)),
+            (
+                after(&[NT(4), Suit(5, Diamonds), Suit(6, Hearts)]),
+                "S K2 H AQJ1032 D K32 C K2",
+                Pass,
+            ),
+            // Before a slam in a suit a hand asks whether or not it has an
+            // ace (it used to bid the slam on its points).  Without one it
+            // reads the first step as all four aces, and bids the slam;
+            // with one or two aces missing it signs off, and with three it
+            // bids the slam.
+            (no_ace(&[]), no_ace_hand, NT(4)),
+            (
+                no_ace(&[NT(4), Suit(5, Clubs)]),
+                no_ace_hand,
+                Suit(6, Hearts),
+            ),
+            (
+                no_ace(&[NT(4), Suit(5, Diamonds)]),
+                no_ace_hand,
+                Suit(5, Hearts),
+            ),
+            (no_ace(&[NT(4), Suit(5, Hearts)]), no_ace_hand, Pass),
+            (
+                no_ace(&[NT(4), Suit(5, Spades)]),
+                no_ace_hand,
+                Suit(6, Hearts),
+            ),
+            // With one ace the same first step means none, so the hand
+            // signs off.
+            (
+                no_ace(&[NT(4), Suit(5, Clubs)]),
+                one_ace_hand,
+                Suit(5, Hearts),
+            ),
+            // Gerber over 1NT, before a slam in a suit or in notrump.
+            (
+                vec![NT(1), Pass],
+                "S A3 H K4 D AQ2 C AKQJ32",
+                Suit(4, Clubs),
+            ),
+            (gerber(&[]), "S KQ2 H AQJ103 D K32 C 32", Suit(4, Hearts)),
+            (
+                gerber(&[Suit(4, Diamonds)]),
+                "S KQ3 H KQ4 D KQ2 C AKJ2",
+                NT(4),
+            ),
+            // With every ace, and the points for a grand slam, 5C asks for
+            // kings, and the grand slam needs them all.
+            (gerber(&[NT(4)]), "S K3 H K4 D KQ2 C AKQJ32", Suit(5, Clubs)),
+            (
+                gerber(&[NT(4), Suit(5, Clubs), Suit(5, Diamonds)]),
+                "S K3 H K4 D KQ2 C AKQJ32",
+                Suit(7, Clubs),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, &auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_blackwood_asks_only_when_it_can_stop() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    // Blackwood's answers are 5C, 5D, 5H and 5S, so an answer that leaves two
+    // aces missing must not go past five of the suit.  Asking before a slam
+    // in clubs takes two aces, in diamonds one, and in a major none.
+    let after = |suit, calls: &[Bid]| {
+        let mut bids = vec![
+            Suit(1, Hearts),
+            Pass,
+            Suit(3, suit),
+            Pass,
+            Suit(4, suit),
+            Pass,
+        ];
+        for &call in calls {
+            bids.push(call);
+            bids.push(Pass);
+        }
+        bids
+    };
+    let one_ace_clubs = "S KQ H K2 D KQ2 C AKJ432";
+    let two_aces_clubs = "S A2 H K2 D KQ2 C AKJ432";
+    let one_ace_diamonds = "S K2 H K2 D AKJ432 C KQ2";
+    let no_ace_diamonds = "S KQ2 H K2 D KQJ432 C KQ";
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // Partner's 5D would leave a hand with one ace in clubs nothing to
+            // sign off in, so it does not ask, and bids the game instead.
+            (after(Clubs, &[]), one_ace_clubs, Suit(5, Clubs)),
+            // With two aces only 5C leaves two missing (with 5D there are
+            // three), and it passes that, since 5C is the sign-off.
+            (after(Clubs, &[]), two_aces_clubs, NT(4)),
+            (after(Clubs, &[NT(4), Suit(5, Clubs)]), two_aces_clubs, Pass),
+            (
+                after(Clubs, &[NT(4), Suit(5, Diamonds)]),
+                two_aces_clubs,
+                Suit(6, Clubs),
+            ),
+            // In diamonds one ace is enough, and no ace is not.
+            (after(Diamonds, &[]), one_ace_diamonds, NT(4)),
+            (
+                after(Diamonds, &[NT(4), Suit(5, Clubs)]),
+                one_ace_diamonds,
+                Suit(5, Diamonds),
+            ),
+            (
+                after(Diamonds, &[NT(4), Suit(5, Diamonds)]),
+                one_ace_diamonds,
+                Pass,
+            ),
+            (after(Diamonds, &[]), no_ace_diamonds, Suit(5, Diamonds)),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, &auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sayc_slam_asks_need_the_cards_to_ask_with() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let gerber = [NT(1), Pass, Suit(4, Clubs), Pass];
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for (auction, hand, bid) in [
+            // In notrump a hand without an ace bids the small slam on its
+            // points, and no grand slam without asking.
+            (&[NT(1), Pass][..], "S KQJ H KQ5 D KQ10 C KQ32", NT(6)),
+            (
+                &[Suit(2, Clubs), Pass, Suit(2, Diamonds), Pass, NT(2), Pass],
+                "S KQJ H KJ2 D KJ2 C KQJ10",
+                NT(6),
+            ),
+            // With two aces missing, Gerber signs off in notrump.
+            (
+                &[NT(1), Pass, Suit(4, Clubs), Pass, Suit(4, Hearts), Pass],
+                "S KQ2 H KQ3 D AQ2 C KQ32",
+                NT(4),
+            ),
+            // The answer to Blackwood's 5NT counts kings.
+            (
+                &[
+                    Suit(1, Hearts),
+                    Pass,
+                    Suit(3, Clubs),
+                    Pass,
+                    Suit(3, Hearts),
+                    Pass,
+                    NT(4),
+                    Pass,
+                    Suit(5, Clubs),
+                    Pass,
+                    NT(5),
+                    Pass,
+                ],
+                "S K2 H AQJ103 D K32 C K32",
+                Suit(6, Spades),
+            ),
+        ] {
+            assert_eq!(
+                bid,
+                system_bid(system, auction, hand),
+                "{system:?} {auction:?} {hand}"
+            );
+        }
+        // An ask holds what it asks with, as far as partner can tell: for
+        // kings a king and every ace that partner did not show, and for aces
+        // none, since a hand without an ace asks before a slam in a suit.
+        let convention = system.convention();
+        assert_eq!(0, convention.refine(&gerber[..3]).unwrap().bounds().0.aces);
+        let kings = [
+            Suit(1, Hearts),
+            Pass,
+            Suit(3, Clubs),
+            Pass,
+            Suit(3, Hearts),
+            Pass,
+            NT(4),
+            Pass,
+            Suit(5, Diamonds),
+            Pass,
+            NT(5),
+        ];
+        let (min, _) = convention.refine(&kings).unwrap().bounds();
+        assert_eq!((3, 1), (min.aces, min.kings));
+        // After the first step the asker may hold all four aces, or none,
+        // when partner has all four.
+        let mut first_step = kings.to_vec();
+        first_step[8] = Suit(5, Clubs);
+        let (min, _) = convention.refine(&first_step).unwrap().bounds();
+        assert_eq!((0, 1), (min.aces, min.kings));
     }
 }
