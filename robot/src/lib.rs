@@ -204,6 +204,10 @@ pub struct GameState<C> {
     pub played: Vec<Card>,
     pub ns_tricks: usize,
     pub ew_tricks: usize,
+    /// For each seat, every card of the suits that seat has shown out of by
+    /// not following suit.  The robot deals that seat none of them.
+    #[serde(default = "no_cards")]
+    pub shown_out: Seated<Cards>,
 
     #[serde(skip)]
     pub last_action: Option<std::time::Instant>,
@@ -213,6 +217,11 @@ pub struct GameState<C> {
     pub system: BiddingSystem,
     #[serde(skip)]
     conventions: Vec<Convention>,
+}
+
+/// No cards at any seat.
+fn no_cards() -> Seated<Cards> {
+    Seated::new([Cards::EMPTY; 4])
 }
 
 impl<C> Default for GameState<C> {
@@ -255,6 +264,7 @@ impl<C> GameState<C> {
             played: Vec::new(),
             ns_tricks: 0,
             ew_tricks: 0,
+            shown_out: no_cards(),
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
             conventions,
@@ -287,8 +297,10 @@ impl<C> GameState<C> {
             + self.hands[Seat::East]
             + self.hands[Seat::West];
         let mut hands = [Cards::EMPTY, Cards::EMPTY, Cards::EMPTY, Cards::EMPTY];
+        // The solver's hands start with the leader of the trick.
+        let place = |seat: Seat| (seat as usize + 4 - lead as usize) % 4;
         unknown -= self.hands[playing];
-        hands[(playing as usize + 4 - lead as usize) % 4] = self.hands[playing];
+        hands[place(playing)] = self.hands[playing];
         if self.played.len() < 4 {
             for (i, c) in self.played.iter().cloned().enumerate() {
                 hands[i] += Cards::singleton(c);
@@ -297,8 +309,19 @@ impl<C> GameState<C> {
         }
         bridge_solver::Starting { hands, unknown }.check();
         if let Some(dummy) = self.dummy() {
-            hands[(dummy as usize + 4 - lead as usize) % 4] += self.hands[dummy];
+            hands[place(dummy)] += self.hands[dummy];
             unknown -= self.hands[dummy];
+            // Two hands are hidden.  What is left of a suit that one of them
+            // has shown out of is all in the other.
+            let hidden: Vec<Seat> = (1..4)
+                .map(|n| dummy + n)
+                .filter(|&seat| seat != playing)
+                .collect();
+            for (void, other) in [(hidden[0], hidden[1]), (hidden[1], hidden[0])] {
+                let rest = unknown & self.shown_out[void];
+                hands[place(other)] += rest;
+                unknown -= rest;
+            }
             Some(bridge_solver::Starting { hands, unknown })
         } else {
             Some(bridge_solver::Starting { hands, unknown })
@@ -510,6 +533,28 @@ impl<C> GameState<C> {
         }
     }
 
+    /// Play `card` from the hand whose turn it is.  The caller checks that
+    /// the play is legal.
+    pub fn play(&mut self, card: Card) {
+        let Some(seat) = self.hand_playing() else {
+            return;
+        };
+        if self.played.len() == 4 {
+            self.played.clear();
+        }
+        if let Some(led) = self.played.first().map(|c| c.suit()) {
+            if card.suit() != led {
+                self.shown_out[seat] += Cards::ALL.in_suit(led);
+            }
+        }
+        self.played.push(card);
+        self.hands[seat] -= Cards::singleton(card);
+        self.trick_finish();
+        if self.ns_tricks + self.ew_tricks == 13 {
+            self.hand_done = true;
+        }
+    }
+
     pub fn trick_finish(&mut self) {
         if self.played.len() == 4 {
             let led = self.played[0].suit();
@@ -693,4 +738,160 @@ fn test_bidding_system_survives_redeal_and_serialization() {
     json.as_object_mut().unwrap().remove("system");
     let old: GameState<()> = serde_json::from_value(json).unwrap();
     assert_eq!(BiddingSystem::Sheets, old.system);
+}
+
+/// South declares 1NT with four tricks left and leads a spade.  West shows
+/// out, and dummy wins the trick.
+#[cfg(test)]
+fn west_shows_out() -> GameState<()> {
+    let mut game = GameState::<()>::new();
+    game.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+    game.lead = Some(Seat::South);
+    game.hands = ["S AJ82", "D 5432", "S K963", "S Q754"]
+        .map(|hand| hand.parse().unwrap())
+        .into();
+    for card in [Card::S8, Card::D5, Card::S9, Card::S7] {
+        game.play(card);
+    }
+    game
+}
+
+#[test]
+fn test_playing_records_who_shows_out() {
+    let west_has_no_spades = Seated::new([Cards::EMPTY, Cards::SPADES, Cards::EMPTY, Cards::EMPTY]);
+    let mut game = west_shows_out();
+    assert_eq!(west_has_no_spades, game.shown_out);
+    assert_eq!(Some(Seat::North), game.lead);
+    assert_eq!(1, game.ns_tricks);
+
+    // The robot is sent the record, and a table serialized without one has
+    // nothing in it.
+    let mut json = serde_json::to_value(&game).unwrap();
+    let sent: GameState<()> = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(west_has_no_spades, sent.shown_out);
+    json.as_object_mut().unwrap().remove("shown_out");
+    let old: GameState<()> = serde_json::from_value(json).unwrap();
+    assert_eq!(no_cards(), old.shown_out);
+
+    game.redeal();
+    assert_eq!(no_cards(), game.shown_out);
+}
+
+#[test]
+fn test_starting_gives_a_suit_to_the_other_hidden_hand() {
+    let hand = |cards: &str| cards.parse::<Cards>().unwrap();
+    let mut game = west_shows_out();
+    // Declarer leads from dummy, and knows that East has every missing spade.
+    let east_has_the_spades = bridge_solver::Starting {
+        hands: [hand("S K63"), hand("S Q54"), hand("S AJ2"), Cards::EMPTY],
+        unknown: hand("D 432"),
+    };
+    assert_eq!(Some(Seat::South), game.turn());
+    assert_eq!(Some(east_has_the_spades), game.starting());
+
+    // East, a defender, knows that declarer has the spades East cannot see.
+    game.play(Card::S3);
+    assert_eq!(Some(Seat::East), game.turn());
+    assert_eq!(Some(east_has_the_spades), game.starting());
+
+    // West has seen nobody else show out, so learns nothing.
+    game.play(Card::S4);
+    game.play(Card::SJ);
+    assert_eq!(Some(Seat::West), game.turn());
+    assert_eq!(
+        Some(bridge_solver::Starting {
+            hands: [hand("S K63"), hand("S 4"), hand("S J"), hand("D 432")],
+            unknown: hand("S AQ52"),
+        }),
+        game.starting()
+    );
+}
+
+#[test]
+fn test_robot_finesses_a_hand_known_to_hold_the_queen() {
+    use ai::PlayAI;
+    let mut game = west_shows_out();
+    game.play(Card::S3);
+    game.play(Card::S4);
+    // East has the queen, so the jack wins, and then the ace and king.
+    assert_eq!(Card::SJ, ai::RandomPlay.play(&game));
+}
+
+/// The tricks declarer takes when the robot bids and plays `hands` in every
+/// seat, or `None` when the deal is passed out.  Declarer uses what has been
+/// shown out only if `declarer_remembers`, and likewise the defenders.
+#[cfg(test)]
+fn declarer_tricks(
+    game: &mut GameState<()>,
+    ai: &mut BridgeAi,
+    hands: Seated<Cards>,
+    declarer_remembers: bool,
+    defenders_remember: bool,
+) -> Option<usize> {
+    game.redeal();
+    game.dealer = Seat::South;
+    game.hands = hands;
+    game.original_hands = hands;
+    while game.bidder().is_some() {
+        let Action::Bid(_, bid) = ai.play(game) else {
+            unreachable!()
+        };
+        game.bids.push(bid);
+    }
+    let declarer = game.find_declarer()?;
+    game.lead = Some(declarer.next());
+    while let Some(turn) = game.turn() {
+        let remembers = if turn == declarer {
+            declarer_remembers
+        } else {
+            defenders_remember
+        };
+        let shown_out = game.shown_out;
+        if !remembers {
+            game.shown_out = no_cards();
+        }
+        let Action::Play(_, card) = ai.play(game) else {
+            unreachable!()
+        };
+        game.shown_out = shown_out;
+        game.play(card);
+    }
+    Some(match declarer {
+        Seat::North | Seat::South => game.ns_tricks,
+        Seat::East | Seat::West => game.ew_tricks,
+    })
+}
+
+/// Measure what remembering shown-out suits is worth, over the seeded deals
+/// `VOID_FIRST..VOID_FIRST + VOID_DEALS`.  Each deal is played four times, and
+/// the tricks declarer took are written to the file named by `VOID_REPORT`:
+/// twice with nobody remembering, to show the noise, once with only declarer
+/// remembering, and once with only the defenders.
+#[test]
+#[ignore]
+fn measure_remembering_voids() {
+    use rand::SeedableRng;
+    let var =
+        |name: &str, default: u64| std::env::var(name).map_or(default, |n| n.parse().unwrap());
+    let first = var("VOID_FIRST", 0);
+    let mut ai = BridgeAi::new();
+    let mut game = GameState::<()>::new();
+    let mut out = String::new();
+    for seed in first..first + var("VOID_DEALS", 100) {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut deck = Cards::ALL;
+        let mut deal = || deck.pick_rng(&mut rng, 13).unwrap();
+        let hands: Seated<Cards> = [deal(), deal(), deal(), deal()].into();
+        let mut tricks =
+            |declarer, defenders| declarer_tricks(&mut game, &mut ai, hands, declarer, defenders);
+        if let Some(nobody) = tricks(false, false) {
+            out.push_str(&format!(
+                "{seed} {nobody} {} {} {}\n",
+                tricks(false, false).unwrap(),
+                tricks(true, false).unwrap(),
+                tricks(false, true).unwrap(),
+            ));
+        }
+    }
+    std::fs::write(std::env::var("VOID_REPORT").unwrap(), out).unwrap();
 }
