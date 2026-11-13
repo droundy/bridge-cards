@@ -2241,7 +2241,7 @@ impl Convention {
                 {
                     let level = if takeout_response > response { 1 } else { 2 };
                     let mut length = min.length;
-                    length[response] = 4;
+                    length[takeout_response] = 4;
                     sheets.add(Convention::Simple {
                         regex: RegexSet::new([
                             &format!(
@@ -2274,20 +2274,34 @@ impl Convention {
             }
         }
 
+        // In fourth seat a hand opens when its long points and its spades
+        // come to 15, with at least 11 points: one fit for each number of
+        // spades up to four, which needs 11.
+        let rule_of_15 = |lo: HandValuation, hi: HandValuation, shape: &[ShapeRule]| {
+            (0..=4)
+                .map(|spades| {
+                    let (mut lo, mut hi) = (lo, hi);
+                    lo.length[Spades] = spades;
+                    if spades < 4 {
+                        hi.length[Spades] = spades;
+                    }
+                    lo.lhcp = 15 - spades;
+                    shape
+                        .iter()
+                        .fold(Fit::new(lo, hi), |fit, &rule| fit.with(rule))
+                })
+                .collect::<Vec<_>>()
+        };
         {
-            let (lo, hi) = (
-                HandValuation {
-                    lhcp: 12,
-                    length: [0, 0, 5, 4].into(),
-                    ..min
-                },
-                max,
-            );
+            let lo = HandValuation {
+                length: [0, 0, 5, 0].into(),
+                ..min
+            };
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1H$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
+                fits: rule_of_15(lo, max, &[ShapeRule::Longer(Hearts, Spades)]),
                 forcing: Forcing::Passable,
             });
         }
@@ -2312,44 +2326,48 @@ impl Convention {
         {
             let (lo, hi) = (
                 HandValuation {
-                    lhcp: 12,
-                    length: [3, 0, 0, 3].into(),
+                    length: [3, 0, 0, 0].into(),
                     ..min
                 },
-                max,
+                max_no_5_major,
             );
             let mut three = hi;
             three.length[Diamonds] = 3;
+            let mut fits = rule_of_15(lo, hi, &[ShapeRule::Longer(Clubs, Diamonds)]);
+            fits.extend(rule_of_15(
+                lo,
+                three,
+                &[ShapeRule::AtLeastAsLong(Clubs, Diamonds)],
+            ));
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1C$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![
-                    Fit::new(lo, hi).with(ShapeRule::Longer(Clubs, Diamonds)),
-                    Fit::new(lo, three).with(ShapeRule::AtLeastAsLong(Clubs, Diamonds)),
-                ],
+                fits,
                 forcing: Forcing::Passable,
             });
         }
         {
             let (lo, hi) = (
                 HandValuation {
-                    lhcp: 12,
-                    length: [0, 3, 0, 3].into(),
+                    length: [0, 3, 0, 0].into(),
                     ..min
                 },
-                max,
+                max_no_5_major,
             );
             let mut four = lo;
             four.length[Diamonds] = 4;
+            let mut fits = rule_of_15(lo, hi, &[ShapeRule::Longer(Diamonds, Clubs)]);
+            fits.extend(rule_of_15(
+                four,
+                hi,
+                &[ShapeRule::AtLeastAsLong(Diamonds, Clubs)],
+            ));
             sheets.add(Convention::Rule {
                 regex: RegexSet::new([r"^P P P 1D$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
-                fits: vec![
-                    Fit::new(lo, hi).with(ShapeRule::Longer(Diamonds, Clubs)),
-                    Fit::new(four, hi).with(ShapeRule::AtLeastAsLong(Diamonds, Clubs)),
-                ],
+                fits,
                 forcing: Forcing::Passable,
             });
         }
@@ -2610,10 +2628,9 @@ impl Convention {
         for opening in [Hearts, Spades].iter().cloned() {
             let mut min_support = min;
             min_support.length[opening] = 3;
-            let max = HandValuation {
-                length: [13, 13, 4, 4].into(),
-                ..max
-            };
+            // No five card suit in the other major.
+            let mut max = max_no_5_major;
+            max.length[opening] = 13;
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
                 regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
@@ -2672,6 +2689,8 @@ impl Convention {
                 max_splinter.length[response] = 1;
                 max_splinter.hcp_in_suit[response] = 1;
                 max_splinter.hcp_outside_suit[response] = 12;
+                // The points are counted outside the short suit alone.
+                let mut min_splinter = min_splinter;
                 min_splinter.hcp_outside_suit[response] = 10;
                 let splinterbid = if response > opening { 3 } else { 4 };
                 sheets.add(Convention::Simple {
@@ -4008,6 +4027,84 @@ fn sheets_makes_a_takeout_double_in_any_seat() {
             "S KJ97 H 9 D K76 C KQ632"
         )
     );
+}
+
+/// In fourth seat a hand opens when its points and its spades come to 15,
+/// and opens a five card major as in the other seats.
+#[test]
+fn sheets_opens_by_the_rule_of_15_in_fourth_seat() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let opens = |hand: &str| system_bid(BiddingSystem::Sheets, &[Pass, Pass, Pass], hand);
+    // 15 long points and two spades, or 13 and three.
+    assert_eq!(Suit(1, Hearts), opens("S K2 H AQJ54 D 432 C A53"));
+    assert_eq!(Suit(1, Hearts), opens("S K32 H AQJ54 D 432 C A5"));
+    assert_eq!(Suit(1, Clubs), opens("S K32 H K32 D 432 C AQJ4"));
+    // 11 long points and three spades is not enough.
+    assert_eq!(Pass, opens("S K32 H QJ32 D 432 C AJ4"));
+    // 11 and four spades is.
+    assert_eq!(Suit(1, Diamonds), opens("S K432 H 32 D AQ32 C Q43"));
+}
+
+/// The answer to a takeout double of a response takes four cards in the suit
+/// it bids, and says nothing about the opponents' suits.
+#[test]
+fn sheets_answers_a_double_of_a_response_in_its_own_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let doubled = [Suit(1, Diamonds), Pass, Suit(1, Hearts), Double, Pass];
+    let answers = |hand: &str| system_bid(BiddingSystem::Sheets, &doubled, hand);
+    assert_eq!(Suit(2, Clubs), answers("S 432 H 32 D 432 C 65432"));
+    assert_eq!(Suit(1, Spades), answers("S 5432 H 32 D 5432 C 432"));
+
+    let mut answered = doubled.to_vec();
+    answered.push(Suit(2, Clubs));
+    let (shown, _) = Convention::sheets().valuation(&answered);
+    assert_eq!(
+        [4, 0, 0, 0],
+        [Clubs, Diamonds, Hearts, Spades].map(|s| shown.length[s])
+    );
+}
+
+/// A raise of partner's major may have any number of trumps from three up.
+#[test]
+fn sheets_raises_a_major_with_five_trumps() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    let hearts = [Suit(1, Hearts), Pass];
+    assert_eq!(Suit(2, Hearts), sheets(&hearts, "S 32 H K9652 D Q43 C J54"));
+    assert_eq!(Suit(3, Hearts), sheets(&hearts, "S 32 H K9652 D AQ3 C Q54"));
+    let spades = [Suit(1, Spades), Pass];
+    assert_eq!(Suit(2, Spades), sheets(&spades, "S K9652 H 32 D Q43 C J54"));
+    assert_eq!(Suit(3, Spades), sheets(&spades, "S K9652 H 32 D AQ3 C Q54"));
+}
+
+/// A splinter takes 10 to 12 points outside its short suit, wherever among
+/// the other suits they are.
+#[test]
+fn sheets_splinters_in_any_short_suit() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    let hearts = [Suit(1, Hearts), Pass];
+    assert_eq!(Suit(4, Clubs), sheets(&hearts, "S K32 H KJ32 D AJ432 C 2"));
+    assert_eq!(
+        Suit(4, Diamonds),
+        sheets(&hearts, "S K32 H KJ32 D 2 C AJ432")
+    );
+    assert_eq!(Suit(3, Spades), sheets(&hearts, "S 2 H KJ32 D K32 C AJ432"));
+    let spades = [Suit(1, Spades), Pass];
+    assert_eq!(Suit(4, Clubs), sheets(&spades, "S KJ32 H K32 D AJ432 C 2"));
+    assert_eq!(
+        Suit(4, Diamonds),
+        sheets(&spades, "S KJ32 H K32 D 2 C AJ432")
+    );
+    assert_eq!(Suit(4, Hearts), sheets(&spades, "S KJ32 H 2 D K32 C AJ432"));
 }
 
 #[test]
