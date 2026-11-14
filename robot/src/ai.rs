@@ -1146,7 +1146,9 @@ impl Convention {
             let partner_length = if partner.length[suit] == 0 && partner_max.length[suit] == 13 {
                 // Partner has said nothing about this suit, so assume their
                 // remaining cards are split evenly among the unmentioned suits.
-                (13 - partner.length.sum())
+                // Partner's minimums can total more than 13 when their calls
+                // contradict each other, so this must not go negative.
+                13u8.saturating_sub(partner.length.sum())
                     / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
             } else {
                 partner.length[suit]
