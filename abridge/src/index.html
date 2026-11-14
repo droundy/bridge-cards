@@ -8,16 +8,6 @@
 </head>
 
 <script type="text/javascript">
-    var timer;
-    function sendname() {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(function () {
-            let name = document.getElementById('myname').innerText;
-            document.cookie = "name=" + name;
-            api.executeCommand('displayName', name);
-            ws.send(JSON.stringify({ "Name": name }));
-        }, 3000);
-    }
     async function subscribe() {
         let response = await fetch("/index.html?update=true");
 

@@ -1304,11 +1304,6 @@ impl Convention {
             Convention::Either(options) => options[0].name(),
         }
     }
-    /// Does this bid work for this hand?
-    fn _is_appropriate(&self, _bids: &[Bid], _hand: Cards) -> bool {
-        todo!()
-    }
-
     /// How forcing is this bid?  When several entries describe it, the most
     /// forcing of them.
     fn is_forcing(&self) -> Forcing {
@@ -1483,7 +1478,7 @@ impl Convention {
 }
 
 impl Convention {
-    /// Notrump openings with Stayman, Jacobi transfers and invitations.  The
+    /// Notrump openings with Stayman, Jacoby transfers and invitations.  The
     /// maximum `(hcp, shcp, lhcp)` for a 2NT opening is `two_nt_max`, and
     /// Stayman takes at least `stayman_hcp` points.
     fn add_notrump(&mut self, two_nt_max: (u8, u8, u8), stayman_hcp: u8) {
@@ -1596,7 +1591,7 @@ impl Convention {
                 ..min
             },
             the_description: format_as!(HTML, ""),
-            the_name: "Jacobi transfer",
+            the_name: "Jacoby transfer",
             forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
@@ -1607,7 +1602,7 @@ impl Convention {
                 ..min
             },
             the_description: format_as!(HTML, ""),
-            the_name: "Jacobi transfer",
+            the_name: "Jacoby transfer",
             forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
@@ -1621,7 +1616,7 @@ impl Convention {
             max,
             min,
             the_description: format_as!(HTML, ""),
-            the_name: "Jacobi transfer response",
+            the_name: "Jacoby transfer response",
             forcing: Forcing::Passable,
         });
     }
@@ -2723,14 +2718,14 @@ impl Convention {
                 }
             }
 
-            let mut min_jacobi = min;
-            min_jacobi.length[opening] = 4;
+            let mut min_jacoby = min;
+            min_jacoby.length[opening] = 4;
             sheets.add(Convention::Simple {
-                the_name: "Jacobi 2NT",
+                the_name: "Jacoby 2NT",
                 regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
                 the_description: format_as!(HTML, ""),
                 max,
-                min: min_jacobi.with_shcp(13),
+                min: min_jacoby.with_shcp(13),
                 forcing: Forcing::GameForcing,
             });
         }
