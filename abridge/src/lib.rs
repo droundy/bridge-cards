@@ -1,5 +1,5 @@
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
-use bridge_deck::{Cards, Suit};
+use bridge_deck::Suit;
 use dashmap::DashMap;
 use display_as::{format_as, with_template, DisplayAs, HTML};
 use futures::{SinkExt, StreamExt};
@@ -273,15 +273,7 @@ async fn ws_connected(
                                 && [turn, playing].contains(&seat)
                                 && g.playable_cards(playing, turn).playable.contains(card)
                             {
-                                if g.played.len() == 4 {
-                                    g.played.clear();
-                                }
-                                g.played.push(card);
-                                g.hands[playing] -= Cards::singleton(card);
-                                g.trick_finish();
-                                if g.ns_tricks + g.ew_tricks == 13 {
-                                    g.hand_done = true;
-                                }
+                                g.play(card);
                             }
                         }
                     }
