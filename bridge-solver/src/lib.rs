@@ -200,13 +200,8 @@ impl Starting {
         }
     }
     fn printme(&self) {
-        for seat in 0..4 {
-            println!(
-                "  hand {}: {} ({})",
-                seat,
-                self.hands[seat],
-                self.hands[seat].len()
-            );
+        for (seat, hand) in self.hands.iter().enumerate() {
+            println!("  hand {seat}: {hand} ({})", hand.len());
         }
         println!("  extra: {} ({})", self.unknown, self.unknown.len());
     }
@@ -214,7 +209,7 @@ impl Starting {
         let n = self.tricks_remaining();
         for seat in 0..4 {
             if self.hands[seat].len() > n {
-                println!("Thi sis crazy! with {} tricks left", n);
+                println!("Thi sis crazy! with {n} tricks left");
                 self.printme();
             }
             assert!(self.hands[seat].len() <= n);
@@ -430,7 +425,7 @@ fn test_after_void() {
     if let TrickTaken::Us(after) = start.after(plays, None) {
         println!("after plays:");
         for h in after.hands.iter() {
-            println!("     hand: {}", h);
+            println!("     hand: {h}");
         }
         println!("  unknown: {}", after.unknown);
     }

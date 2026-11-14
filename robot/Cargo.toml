@@ -25,7 +25,9 @@ rand = "0.8.0"
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
 # all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
-# code size when deploying.
+# code size when deploying. It is only used on wasm (see `utils.rs`), so it is
+# only a dependency there.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [dev-dependencies]

@@ -143,8 +143,7 @@ impl BidAI for ConventionalBid {
         }
         if let Some((_, b, c)) = best {
             println!(
-                "Bidding {:?} with convention {}",
-                b,
+                "Bidding {b:?} with convention {}",
                 format_as!(HTML, c.description()).into_string()
             );
             b
@@ -351,7 +350,7 @@ impl PlayAI for RandomPlay {
         } else {
             None
         };
-        println!("trump is {:?}", nt_or_trump);
+        println!("trump is {nt_or_trump:?}");
         let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
         if game.played.len().is_multiple_of(4) && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
@@ -362,8 +361,8 @@ impl PlayAI for RandomPlay {
                 &game.played
             };
             let starting = game.starting().unwrap();
-            for i in 0..4 {
-                println!("   {}: {}", i, starting.hands[i]);
+            for (i, hand) in starting.hands.iter().enumerate() {
+                println!("   {i}: {hand}");
             }
             println!("   extra: {}", starting.unknown);
             starting.check();

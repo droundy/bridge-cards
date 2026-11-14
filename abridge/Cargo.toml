@@ -20,7 +20,6 @@ clap = { version = "4.4.3", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full", "time"] }
 futures = "0.3.28"
 axum = { version = "0.8", features = ["ws"] }
-internment = "0.7.0"
 dashmap = "5.5.3"
 
 display-as = { version = "0.8.0", features = ["axum"] }
