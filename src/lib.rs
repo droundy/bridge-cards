@@ -9,8 +9,32 @@ use serde::{Deserialize, Serialize};
 
 /// A single card
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
+#[serde(try_from = "UncheckedCard")]
 pub struct Card {
     offset: u8,
+}
+
+/// A card as it is read, before it is checked to be one of the 52.
+#[derive(Deserialize)]
+struct UncheckedCard {
+    offset: u8,
+}
+
+impl TryFrom<UncheckedCard> for Card {
+    type Error = String;
+
+    fn try_from(card: UncheckedCard) -> Result<Self, Self::Error> {
+        // A card has a rank from 2 to 14 in one of the four suits.  An offset
+        // of 64 or more would shift past the end of a `Cards` bitset, so it
+        // must be refused rather than tested as some other card.
+        if card.offset < 64 && (2..=14).contains(&(card.offset % 16)) {
+            Ok(Card {
+                offset: card.offset,
+            })
+        } else {
+            Err(format!("{} is not a card", card.offset))
+        }
+    }
 }
 
 impl std::fmt::Debug for Card {
