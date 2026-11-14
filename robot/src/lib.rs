@@ -740,6 +740,32 @@ fn test_bidding_system_survives_redeal_and_serialization() {
     assert_eq!(BiddingSystem::Sheets, old.system);
 }
 
+/// A card sent by a browser must be one of the 52.  An offset of 64 or more
+/// would shift past the end of a `Cards` bitset, so that `contains` tests
+/// another card, or panics in a debug build.
+#[test]
+fn test_a_card_from_the_wire_must_be_a_real_card() {
+    let play =
+        |card: &str| serde_json::from_str::<Action>(&format!(r#"{{"Play":["South",{card}]}}"#));
+    assert_eq!(
+        Action::Play(Seat::South, Card::C2),
+        play(r#"{"offset":2}"#).unwrap()
+    );
+    for suit in bridge_deck::Suit::ALL {
+        for rank in 2..=14 {
+            let card = Card::new(suit, rank);
+            let json = serde_json::to_string(&card).unwrap();
+            assert_eq!(card, serde_json::from_str::<Card>(&json).unwrap());
+        }
+    }
+    for offset in [0, 1, 15, 16, 63, 64, 66, 255] {
+        assert!(
+            play(&format!(r#"{{"offset":{offset}}}"#)).is_err(),
+            "offset {offset} is not a card"
+        );
+    }
+}
+
 /// South declares 1NT with four tricks left and leads a spade.  West shows
 /// out, and dummy wins the trick.
 #[cfg(test)]
