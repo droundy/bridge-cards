@@ -2,8 +2,6 @@
 //! This crate defines a type [`Card`] for an individual card ([`Card`]) and
 //! another type [`Cards`] for a deck or hand of cards.
 
-// pub mod simd;
-
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -1081,8 +1079,6 @@ impl HandValuation {
         self
     }
 }
-
-impl HandValuation {}
 
 /// A data type to hold a mapping of Cards
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
