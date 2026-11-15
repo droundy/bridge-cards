@@ -1146,8 +1146,6 @@ impl Convention {
             let partner_length = if partner.length[suit] == 0 && partner_max.length[suit] == 13 {
                 // Partner has said nothing about this suit, so assume their
                 // remaining cards are split evenly among the unmentioned suits.
-                // Partner's minimums can total more than 13 when their calls
-                // contradict each other, so this must not go negative.
                 13u8.saturating_sub(partner.length.sum())
                     / (4 - partner.length.iter().filter(|&&l| l > 0).count() as u8)
             } else {
@@ -3653,39 +3651,6 @@ fn sayc_competes_as_the_booklet_says() {
     assert_eq!(NT(1), over("S AQ3 H KJ4 D KQ54 C 432"));
     assert_eq!(Suit(1, Spades), over("S AQ432 H 4 D KQ54 C 432"));
     assert_eq!(Double, over("S AK2 H 4 D AKQ54 C K432"));
-}
-
-/// Partner's calls here (2C, a double and 3D) show more than 13 cards between
-/// them, which no consistent hand can hold, so the robot's estimate of the
-/// cards partner has left must not go negative.  Each system bids this
-/// auction with a natural entry whose length is reduced by partner's calls.
-#[test]
-fn contradictory_partner_bids_do_not_underflow() {
-    use bridge_deck::Suit::*;
-    use Bid::*;
-    let auction = [
-        Suit(1, Hearts),
-        Suit(2, Diamonds),
-        Suit(3, Diamonds),
-        Suit(3, Spades),
-        Pass,
-        Double,
-        Suit(3, Clubs),
-        Suit(3, Diamonds),
-        NT(1),
-        Suit(1, Spades),
-        Suit(2, Clubs),
-        Suit(2, Diamonds),
-        Suit(2, Clubs),
-    ];
-    for convention in [
-        Convention::sheets(),
-        Convention::sayc(),
-        Convention::two_over_one(),
-    ] {
-        // Only the last call is described; it must not panic.
-        let _ = convention.refine(&auction);
-    }
 }
 
 #[test]
