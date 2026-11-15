@@ -119,5 +119,7 @@ fn short_card_points(hand: &u64) -> usize {
 
 #[scaling::bench(group = "hcp in 4+ card suits")]
 fn long_suit_high_card_points(hand: &u64) -> usize {
-    Cards::from_for_bench(*hand).long_suits(4).high_card_points()
+    Cards::from_for_bench(*hand)
+        .long_suits(4)
+        .high_card_points()
 }
