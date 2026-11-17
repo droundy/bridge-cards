@@ -123,3 +123,136 @@ fn long_suit_high_card_points(hand: &u64) -> usize {
         .long_suits(4)
         .high_card_points()
 }
+
+/// 256 random 13-card hands, so that what a method does cannot be
+/// predicted from one hand to the next.  Each benchmark below adds up its
+/// method's answer over all of them.
+#[scaling::input(group(
+    "len",
+    "in_suits",
+    "high_card_points",
+    "protected_high_card_points",
+    "long_suits",
+    "long_card_points",
+    "short_card_points",
+    "new_losing_trick_count",
+    "values",
+    "iterate",
+    "min and max",
+    "card suit and rank",
+    "display",
+    "parse",
+    "all point counts",
+))]
+fn hands() -> Vec<u64> {
+    (0..256)
+        .map(|_| {
+            let mut deck = Cards::ALL;
+            deck.pick(13).unwrap().into_for_bench()
+        })
+        .collect()
+}
+
+fn sum_over(hands: &[u64], f: impl Fn(Cards) -> usize) -> usize {
+    hands
+        .iter()
+        .map(|&h| f(Cards::from_for_bench(h)))
+        .fold(0, usize::wrapping_add)
+}
+
+#[scaling::bench(group = "len", baseline)]
+fn many_len(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.len())
+}
+
+#[scaling::bench(group = "in_suits")]
+fn many_in_suits(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.in_suits().map(|s| s.len()).sum())
+}
+
+#[scaling::bench(group = "high_card_points")]
+fn many_high_card_points(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.high_card_points())
+}
+
+#[scaling::bench(group = "protected_high_card_points")]
+fn many_protected_high_card_points(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.protected_high_card_points())
+}
+
+#[scaling::bench(group = "long_suits")]
+fn many_long_suits(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.long_suits(4).len())
+}
+
+#[scaling::bench(group = "long_card_points")]
+fn many_long_card_points(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.long_card_points())
+}
+
+#[scaling::bench(group = "short_card_points")]
+fn many_short_card_points(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.short_card_points())
+}
+
+#[scaling::bench(group = "new_losing_trick_count")]
+fn many_new_losing_trick_count(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| (h.new_losing_trick_count() * 2.0) as usize)
+}
+
+#[scaling::bench(group = "values")]
+fn many_values(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| {
+        let v = h.values();
+        v.hcp as usize + v.lhcp as usize + v.shcp as usize + v.nltc2 as usize
+    })
+}
+
+#[scaling::bench(group = "iterate")]
+fn many_iterate(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.map(|c| c.rank() as usize).sum())
+}
+
+#[scaling::bench(group = "min and max")]
+fn many_min_and_max(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| {
+        h.min().unwrap().rank() as usize + h.max().unwrap().rank() as usize
+    })
+}
+
+#[scaling::bench(group = "card suit and rank")]
+fn many_card_suit_and_rank(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| {
+        h.map(|c| c.suit() as usize * 16 + c.rank() as usize).sum()
+    })
+}
+
+#[scaling::bench(group = "display")]
+fn many_display(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| h.to_string().len())
+}
+
+#[scaling::bench(group = "parse")]
+fn many_parse(hands: &Vec<u64>) -> usize {
+    // Parsing is timed on its own: the strings are made once for each call.
+    let strings: Vec<String> = hands
+        .iter()
+        .map(|&h| Cards::from_for_bench(h).to_string())
+        .collect();
+    strings
+        .iter()
+        .map(|s| s.parse::<Cards>().unwrap().len())
+        .sum()
+}
+
+/// What `values()` needs from a hand, without its other fields: the four
+/// point counts that are each their own method.
+#[scaling::bench(group = "all point counts")]
+fn many_all_point_counts(hands: &Vec<u64>) -> usize {
+    sum_over(hands, |h| {
+        h.high_card_points()
+            + h.protected_high_card_points()
+            + h.long_card_points()
+            + h.short_card_points()
+    })
+}
