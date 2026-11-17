@@ -313,11 +313,6 @@ impl Suit {
             Suit::Spades => 'S',
         }
     }
-    fn iter() -> impl Iterator<Item = Suit> {
-        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
-            .iter()
-            .copied()
-    }
     /// All four suits from lowest to highest
     pub const ALL: [Self; 4] = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
 }
@@ -331,6 +326,36 @@ impl Suit {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 pub struct Cards {
     bits: u64,
+}
+
+/// A 1 in the lowest bit of each of the four 16-bit suit lanes.
+const LANES: u64 = 0x0001_0001_0001_0001;
+
+/// The sum of the four lanes, each of which holds a number below 2^14.
+const fn sum_lanes(x: u64) -> usize {
+    (x.wrapping_mul(LANES) >> 48) as usize
+}
+
+/// A 1 in the lowest bit of each lane of `x` that is at least `n`, for lanes
+/// that hold at most 0x7fff.  Setting the top bit of each lane first means
+/// that subtracting `n` never borrows from the next lane, and leaves that
+/// top bit set exactly when the lane was at least `n`.
+const fn lanes_at_least(x: u64, n: u64) -> u64 {
+    (((x | (0x8000 * LANES)) - n * LANES) >> 15) & LANES
+}
+
+/// The lanes of `x` less `n`, or 0 where that would be negative, for lanes
+/// that hold at most 0x7fff.
+const fn excess_lanes(x: u64, n: u64) -> u64 {
+    let t = (x | (0x8000 * LANES)) - n * LANES;
+    t & (((t >> 15) & LANES) * 0x7fff)
+}
+
+/// `n` less the lanes of `x`, or 0 where that would be negative, for lanes
+/// that hold at most 0x7fff.
+const fn shortage_lanes(x: u64, n: u64) -> u64 {
+    let t = ((n * LANES) | (0x8000 * LANES)) - x;
+    t & (((t >> 15) & LANES) * 0x7fff)
 }
 
 impl Cards {
@@ -431,6 +456,33 @@ impl Cards {
         Cards {
             bits: self.bits & rhs.bits,
         }
+    }
+
+    /// Every suit's length, counted at once.  Each suit is a 16-bit lane of
+    /// the 64 bits, so one popcount that never carries from a lane into the
+    /// next gives the four lengths side by side, each in the low byte of its
+    /// lane.
+    ///
+    /// The point counts below are done in lanes like this, which is what
+    /// SIMD does with a vector register.  A `u64` already holds four lanes
+    /// of 16 bits, and an operation on the whole `u64` is one instruction
+    /// whether or not the target has any vector instructions.
+    const fn suit_lengths(self) -> u64 {
+        let x = self.bits & Cards::ALL.bits;
+        let x = x - ((x >> 1) & 0x5555_5555_5555_5555);
+        let x = (x & 0x3333_3333_3333_3333) + ((x >> 2) & 0x3333_3333_3333_3333);
+        let x = (x + (x >> 4)) & 0x0f0f_0f0f_0f0f_0f0f;
+        (x + (x >> 8)) & 0x00ff_00ff_00ff_00ff
+    }
+
+    /// The high card points of every suit, in the lanes of a `u64`.  An ace
+    /// is 4, a king 3, a queen 2 and a jack 1.
+    const fn suit_high_card_points(self) -> u64 {
+        let honors = (self.bits >> 11) & (0xf * LANES);
+        (honors & LANES)
+            + 2 * ((honors >> 1) & LANES)
+            + 3 * ((honors >> 2) & LANES)
+            + 4 * ((honors >> 3) & LANES)
     }
 
     /// All 52 cards.
@@ -545,151 +597,192 @@ impl Cards {
 
     /// High card points
     pub const fn high_card_points(self) -> usize {
-        self.aces().len()
-            + self.intersection(Cards::ACES.union(Cards::KINGS)).len()
-            + self
-                .intersection(Cards::ACES.union(Cards::KINGS).union(Cards::QUEENS))
-                .len()
-            + self
-                .intersection(
-                    Cards::ACES
-                        .union(Cards::KINGS)
-                        .union(Cards::QUEENS)
-                        .union(Cards::JACKS),
-                )
-                .len()
+        sum_lanes(self.suit_high_card_points())
+    }
+
+    /// The protected high card points of every suit, in the lanes of a
+    /// `u64`, for suits of the given lengths: the aces count 4, and a king
+    /// counts 1 and more with a card to protect it.
+    const fn suit_protected_high_card_points(self, lengths: u64) -> u64 {
+        let aces = (self.bits >> 14) & LANES;
+        let kings = (self.bits >> 13) & LANES;
+        let queens = (self.bits >> 12) & LANES;
+        let jacks = (self.bits >> 11) & LANES;
+        let with_two = lanes_at_least(lengths, 2) * 0xffff;
+        let with_three = lanes_at_least(lengths, 3) * 0xffff;
+        4 * aces + kings + ((kings + queens) & with_two) + ((kings + queens + jacks) & with_three)
     }
 
     /// Protected high card points, meant to be used sith scp
     pub const fn protected_high_card_points(self) -> usize {
-        self.aces().len() * 4
-            + self.intersection(Cards::KINGS).len()
-            + self
-                .long_suits(2)
-                .intersection(Cards::KINGS.union(Cards::QUEENS))
-                .len()
-            + self
-                .long_suits(3)
-                .intersection(Cards::KINGS.union(Cards::QUEENS).union(Cards::JACKS))
-                .len()
+        sum_lanes(self.suit_protected_high_card_points(self.suit_lengths()))
     }
 
     /// Long suits
     pub const fn long_suits(self, at_least: usize) -> Cards {
-        let spades = self.spades();
-        let spades = if spades.len() >= at_least {
-            spades
-        } else {
-            Cards::EMPTY
-        };
-        let hearts = self.hearts();
-        let hearts = if hearts.len() >= at_least {
-            hearts
-        } else {
-            Cards::EMPTY
-        };
-        let diamonds = self.diamonds();
-        let diamonds = if diamonds.len() >= at_least {
-            diamonds
-        } else {
-            Cards::EMPTY
-        };
-        let clubs = self.clubs();
-        let clubs = if clubs.len() >= at_least {
-            clubs
-        } else {
-            Cards::EMPTY
-        };
-        spades.union(hearts).union(diamonds).union(clubs)
+        // No suit has more than 13 cards, so any larger `at_least` is the
+        // same as 14, which keeps the lane arithmetic from overflowing.
+        let at_least = if at_least > 13 { 14 } else { at_least as u64 };
+        let long = lanes_at_least(self.suit_lengths(), at_least) * 0xffff;
+        Cards {
+            bits: self.bits & Cards::ALL.bits & long,
+        }
     }
 
     /// Long card points
     pub const fn long_card_points(self) -> usize {
-        let s = if self.spades().len() > 4 {
-            self.spades().len() - 4
-        } else {
-            0
-        };
-        let h = if self.hearts().len() > 4 {
-            self.hearts().len() - 4
-        } else {
-            0
-        };
-        let d = if self.diamonds().len() > 4 {
-            self.diamonds().len() - 4
-        } else {
-            0
-        };
-        let c = if self.clubs().len() > 4 {
-            self.clubs().len() - 4
-        } else {
-            0
-        };
-        s + h + d + c
+        sum_lanes(excess_lanes(self.suit_lengths(), 4))
     }
 
     /// Short card points 3 2 1
     pub const fn short_card_points(self) -> usize {
-        let s = if self.spades().len() < 3 {
-            3 - self.spades().len()
-        } else {
-            0
-        };
-        let h = if self.hearts().len() < 3 {
-            3 - self.hearts().len()
-        } else {
-            0
-        };
-        let d = if self.diamonds().len() < 3 {
-            3 - self.diamonds().len()
-        } else {
-            0
-        };
-        let c = if self.clubs().len() < 3 {
-            3 - self.clubs().len()
-        } else {
-            0
-        };
-        s + h + d + c
+        sum_lanes(shortage_lanes(self.suit_lengths(), 3))
+    }
+
+    /// Twice the NLTC, which is always a whole number.
+    const fn new_losing_trick_count2(self, lengths: u64) -> usize {
+        let aces = (self.bits >> 14) & LANES;
+        let kings = (self.bits >> 13) & LANES;
+        let queens = (self.bits >> 12) & LANES;
+        // A missing ace is 1.5 losers in a suit with a card, a missing king
+        // is 1 with two, and a missing queen is 0.5 with three.
+        let no_ace = lanes_at_least(lengths, 1) & (aces ^ LANES);
+        let no_king = lanes_at_least(lengths, 2) & (kings ^ LANES);
+        let no_queen = lanes_at_least(lengths, 3) & (queens ^ LANES);
+        sum_lanes(3 * no_ace + 2 * no_king + no_queen)
     }
 
     /// NLTC
     pub fn new_losing_trick_count(self) -> f64 {
-        let mut total = 0.0;
-        for s in Suit::iter() {
-            let x = self.in_suit(s);
-            let len = x.len();
-            if len >= 1 && x.intersection(Cards::ACES).bits == 0 {
-                total += 1.5;
-            }
-            if len >= 2 && x.intersection(Cards::KINGS).bits == 0 {
-                total += 1.0;
-            }
-            if len >= 3 && x.intersection(Cards::QUEENS).bits == 0 {
-                total += 0.5;
-            }
-        }
-        total
+        self.new_losing_trick_count2(self.suit_lengths()) as f64 * 0.5
     }
 
     /// Return the hand valuation
     pub fn values(self) -> HandValuation {
-        let suits = self.in_suits();
-        let length = suits.map(|s| s.len() as u8);
-        let hcp_in_suit = suits.map(|s| s.high_card_points() as u8);
-        let hcp = hcp_in_suit.sum();
-        let lhcp = self.long_card_points() as u8 + hcp;
-        let hcp_outside_suit = hcp_in_suit.map(|i| hcp - i);
+        let lengths = self.suit_lengths();
+        let hcp_in_suit = self.suit_high_card_points();
+        let hcp = sum_lanes(hcp_in_suit) as u8;
+        // The high card points outside each suit: all of them, less that suit's.
+        let hcp_outside_suit = hcp as u64 * LANES - hcp_in_suit;
+        let per_suit = |lanes: u64| {
+            PerSuit::new([
+                lanes as u8,
+                (lanes >> 16) as u8,
+                (lanes >> 32) as u8,
+                (lanes >> 48) as u8,
+            ])
+        };
         HandValuation {
             hcp,
-            shcp: self.protected_high_card_points() as u8 + self.short_card_points() as u8,
-            nltc2: (self.new_losing_trick_count() * 2.0) as u8,
-            aces: self.intersection(Cards::ACES).len() as u8,
-            kings: self.intersection(Cards::KINGS).len() as u8,
-            lhcp,
-            length,
-            hcp_in_suit,
-            hcp_outside_suit,
+            shcp: sum_lanes(
+                self.suit_protected_high_card_points(lengths) + shortage_lanes(lengths, 3),
+            ) as u8,
+            nltc2: self.new_losing_trick_count2(lengths) as u8,
+            aces: sum_lanes((self.bits >> 14) & LANES) as u8,
+            kings: sum_lanes((self.bits >> 13) & LANES) as u8,
+            lhcp: hcp + sum_lanes(excess_lanes(lengths, 4)) as u8,
+            length: per_suit(lengths),
+            hcp_in_suit: per_suit(hcp_in_suit),
+            hcp_outside_suit: per_suit(hcp_outside_suit),
+        }
+    }
+}
+
+/// What `Cards::values` and the point counts mean, worked out one suit and
+/// one card at a time from the definitions, to check the lane arithmetic.
+#[cfg(test)]
+fn values_by_definition(cards: Cards) -> HandValuation {
+    let mut v = HandValuation::MIN;
+    let mut nltc2 = 0;
+    let (mut protected, mut short, mut long) = (0, 0, 0);
+    for suit in Suit::ALL {
+        let has = |rank| cards.contains(Card::new(suit, rank));
+        let len = (2..=14).filter(|&rank| has(rank)).count() as u8;
+        let hcp: u8 = (11..=14).filter(|&rank| has(rank)).map(|r| r - 10).sum();
+        v.length[suit] = len;
+        v.hcp_in_suit[suit] = hcp;
+        v.hcp += hcp;
+        v.aces += has(14) as u8;
+        v.kings += has(13) as u8;
+        long += len.saturating_sub(4);
+        short += 3u8.saturating_sub(len);
+        protected += 4 * has(14) as u8 + has(13) as u8;
+        if len >= 2 {
+            protected += has(13) as u8 + has(12) as u8;
+        }
+        if len >= 3 {
+            protected += has(13) as u8 + has(12) as u8 + has(11) as u8;
+        }
+        if len >= 1 && !has(14) {
+            nltc2 += 3;
+        }
+        if len >= 2 && !has(13) {
+            nltc2 += 2;
+        }
+        if len >= 3 && !has(12) {
+            nltc2 += 1;
+        }
+    }
+    for suit in Suit::ALL {
+        v.hcp_outside_suit[suit] = v.hcp - v.hcp_in_suit[suit];
+    }
+    v.lhcp = v.hcp + long;
+    v.shcp = protected + short;
+    v.nltc2 = nltc2;
+    v
+}
+
+#[cfg(test)]
+fn check_point_counts(cards: Cards) {
+    let want = values_by_definition(cards);
+    assert_eq!(want, cards.values(), "{cards:?}");
+    assert_eq!(want.hcp as usize, cards.high_card_points(), "{cards:?}");
+    assert_eq!(
+        want.shcp as usize,
+        cards.protected_high_card_points() + cards.short_card_points(),
+        "{cards:?}"
+    );
+    assert_eq!(
+        (want.lhcp - want.hcp) as usize,
+        cards.long_card_points(),
+        "{cards:?}"
+    );
+    assert_eq!(
+        want.nltc2 as f64 / 2.0,
+        cards.new_losing_trick_count(),
+        "{cards:?}"
+    );
+    for at_least in [0, 1, 2, 3, 4, 5, 7, 13, 14, 15, usize::MAX] {
+        let mut long = Cards::EMPTY;
+        for suit in Suit::ALL {
+            if want.length[suit] as usize >= at_least {
+                long += cards.in_suit(suit);
+            }
+        }
+        assert_eq!(long, cards.long_suits(at_least), "{at_least} in {cards:?}");
+    }
+}
+
+#[test]
+fn point_counts_match_their_definitions() {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(1);
+    for _ in 0..20_000 {
+        let mut deck = Cards::ALL;
+        let n = rng.gen_range(0..=52);
+        check_point_counts(deck.pick_rng(&mut rng, n).unwrap());
+    }
+    // Every holding in one suit, with the others at random, so that no suit
+    // pattern is missed and the suits are known not to disturb one another.
+    for suit in Suit::ALL {
+        let mut deck = Cards::ALL;
+        let others = deck.pick_rng(&mut rng, 13).unwrap();
+        let others = others - others.in_suit(suit);
+        for holding in 0..1u64 << 13 {
+            let in_suit = Cards {
+                bits: (holding << 2) << (16 * suit as u32),
+            };
+            check_point_counts(others + in_suit);
         }
     }
 }
