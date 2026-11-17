@@ -1,28 +1,10 @@
-pub use bridge_deck::{Card, CardMap, Cards, Suit};
+pub use bridge_deck::{Card, Cards, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use std::hash::{BuildHasherDefault, Hasher};
 
 #[cfg(feature = "benchmarks")]
 mod benches;
-
-pub fn normalize_create_map(all: Cards) -> CardMap {
-    let mut map = CardMap::default();
-    for &s in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades].iter() {
-        for (n, x) in all.in_suit(s).enumerate() {
-            map[x] = Card::new(s, 2 + n as u8);
-        }
-    }
-    map
-}
-
-pub fn map_normalize(map: CardMap, hand: Cards) -> Cards {
-    let mut c = Cards::EMPTY;
-    for x in hand {
-        c = c.insert(map[x]);
-    }
-    c
-}
 
 #[cfg(test)]
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
@@ -46,23 +28,33 @@ fn test_normalize() {
         + Cards::singleton(Card::H2)
         + Cards::singleton(Card::D2)
         + Cards::singleton(Card::C2);
-    let map = normalize_create_map(Cards::ACES);
     println!("\n\nTwos:\n\n");
     assert_eq!(twos, normalize(Cards::ACES, Cards::ACES));
     assert_eq!(
-        map_normalize(map, Cards::ACES),
+        Cards::ACES.renumbered_among(Cards::ACES),
         normalize(Cards::ACES, Cards::ACES)
     );
     println!("\n\nWeird all aces:\n\n");
     assert_eq!(Cards::ACES, normalize(Cards::ALL, Cards::ACES));
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Starting {
     /// The cards that we have, starting with the leader
     pub hands: [Cards; 4],
     /// The cards that I don't know who has
     pub unknown: Cards,
+}
+
+impl std::hash::Hash for Starting {
+    /// Hashes just the five sets of cards, and not the length of the array
+    /// of hands that a derived `Hash` would also hash.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for hand in self.hands {
+            hand.hash(state);
+        }
+        self.unknown.hash(state);
+    }
 }
 
 /// Which of these plays wins the trick, counting from the leader
@@ -71,27 +63,44 @@ fn trick_winner(plays: [Card; 4], trump: Option<Suit>) -> usize {
         + Cards::singleton(plays[1])
         + Cards::singleton(plays[2])
         + Cards::singleton(plays[3]);
-    let mut winning_suit = plays[0].suit();
-    if let Some(t) = trump {
-        if !played.in_suit(t).is_empty() {
-            winning_suit = t;
+    // The highest trump wins, and when nobody trumped, the highest card of
+    // the suit that was led.
+    let winning_suit = match trump {
+        Some(t) if !played.in_suit(t).is_empty() => t,
+        _ => plays[0].suit(),
+    };
+    let best = played.in_suit(winning_suit).max().unwrap();
+    plays.iter().position(|&c| c == best).unwrap()
+}
+
+#[test]
+fn trick_winner_is_the_highest_card_of_the_suit_that_wins() {
+    use rand::Rng;
+    let mut rng = SmallRng::seed_from_u64(5);
+    for _ in 0..20_000 {
+        let mut deck = Cards::ALL;
+        let mut hands = [Cards::EMPTY; 4];
+        for hand in &mut hands {
+            *hand = deck.pick_rng(&mut rng, 13).unwrap();
         }
-    }
-    // println!("Winning suit is {:?}", winning_suit);
-    let mut winner = 0;
-    let mut best_rank = 0;
-    for i in plays
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.suit() == winning_suit)
-        .map(|(i, _)| i)
-    {
-        if plays[i].rank() > best_rank {
-            best_rank = plays[i].rank();
-            winner = i;
+        let plays = hands.map(|h| h.into_iter().nth(rng.gen_range(0..13)).unwrap());
+        let trump = [None, Some(Suit::Clubs), Some(Suit::Spades)][rng.gen_range(0..3)];
+        // Worked out as the rules of the game say.
+        let beats = |a: Card, b: Card| {
+            if a.suit() == b.suit() {
+                a.rank() > b.rank()
+            } else {
+                Some(a.suit()) == trump
+            }
+        };
+        let mut winner = 0;
+        for i in 1..4 {
+            if beats(plays[i], plays[winner]) {
+                winner = i;
+            }
         }
+        assert_eq!(winner, trick_winner(plays, trump), "{plays:?} {trump:?}");
     }
-    winner
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
@@ -206,13 +215,14 @@ impl Starting {
         println!("  extra: {} ({})", self.unknown, self.unknown.len());
     }
     pub fn check(&self) {
-        let n = self.tricks_remaining();
-        for seat in 0..4 {
-            if self.hands[seat].len() > n {
+        let lengths = self.hands.map(|hand| hand.len());
+        let n = (self.unknown.len() + lengths.iter().sum::<usize>()) / 4;
+        for length in lengths {
+            if length > n {
                 println!("Thi sis crazy! with {n} tricks left");
                 self.printme();
             }
-            assert!(self.hands[seat].len() <= n);
+            assert!(length <= n);
         }
     }
     pub fn after(mut self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
@@ -251,13 +261,13 @@ impl Starting {
         let cards_left =
             (self.unknown + self.hands[0] + self.hands[1] + self.hands[2] + self.hands[3]) - played;
 
-        let map = normalize_create_map(cards_left);
-        let unknown = map_normalize(map, self.unknown - played);
+        let renumber = |cards: Cards| (cards - played).renumbered_among(cards_left);
+        let unknown = renumber(self.unknown);
         let hands = [
-            map_normalize(map, self.hands[winner] - played),
-            map_normalize(map, self.hands[(winner + 1) % 4] - played),
-            map_normalize(map, self.hands[(winner + 2) % 4] - played),
-            map_normalize(map, self.hands[(winner + 3) % 4] - played),
+            renumber(self.hands[winner]),
+            renumber(self.hands[(winner + 1) % 4]),
+            renumber(self.hands[(winner + 2) % 4]),
+            renumber(self.hands[(winner + 3) % 4]),
         ];
 
         let mut next = Starting { hands, unknown };
@@ -648,8 +658,11 @@ impl Naive {
         }
     }
 
-    fn thorough_plays(&self, plays: Cards) -> Cards {
-        if self.care == Thoroughness::HighLow {
+    /// The plays of a hand that are worth trying, from the `plays` that it
+    /// may make.  `all` is every card in the deal being solved, and `known`
+    /// the cards that this hand is known to hold.
+    fn thorough_plays(care: Thoroughness, plays: Cards, all: Cards, known: Cards) -> Cards {
+        if care == Thoroughness::HighLow {
             let mut p = Cards::EMPTY;
             for suit in Suit::ALL.clone().iter().cloned() {
                 let s = plays.in_suit(suit);
@@ -662,7 +675,12 @@ impl Naive {
             }
             p
         } else {
-            plays
+            // Of cards that touch, any one is as good as another: they win
+            // and lose the same tricks, and once one is played the position
+            // is the same whichever it was.  The cards that we only guessed
+            // are in the hand are not the same as those that we know of,
+            // since they are what was left over when the others were played.
+            (plays & known).lowest_of_sequences(all) + (plays - known).lowest_of_sequences(all)
         }
     }
 
@@ -698,6 +716,7 @@ impl Naive {
             return *score;
         }
         let mut sampled = Sampled::default();
+        let care = self.care;
         let num_stats = if starting.unknown.is_empty() {
             1
         } else {
@@ -712,14 +731,18 @@ impl Naive {
                 // Since we only ever replace a choice by a strictly better
                 // one, this finds exactly the scores we would get by trying
                 // every response.
+                let all = hands[0] + hands[1] + hands[2] + hands[3];
+                let plays = |seat: usize, cards: Cards| {
+                    Naive::thorough_plays(care, cards, all, starting.hands[seat])
+                };
                 let mut best0 = Score::MIN;
-                for c0 in self.thorough_plays(hands[0]) {
+                for c0 in plays(0, hands[0]) {
                     let mut worst1 = Score::MAX;
-                    for c1 in self.thorough_plays(hands[1].following_suit(c0.suit())) {
+                    for c1 in plays(1, hands[1].following_suit(c0.suit())) {
                         let mut best2 = Score::MIN;
-                        for c2 in self.thorough_plays(hands[2].following_suit(c0.suit())) {
+                        for c2 in plays(2, hands[2].following_suit(c0.suit())) {
                             let mut worst3 = Score::MAX;
-                            for c3 in self.thorough_plays(hands[3].following_suit(c0.suit())) {
+                            for c3 in plays(3, hands[3].following_suit(c0.suit())) {
                                 let mysc = self.score_trick(starting, [c0, c1, c2, c3]);
                                 // println!(" {} {} {} {} -> {}", c0, c1, c2, c3, mysc.mean());
                                 if mysc < worst3 {
@@ -870,6 +893,81 @@ impl Naive {
         };
         best_plays.sort_by_key(|c| c.rank() + if Some(c.suit()) == self.trump { 13 } else { 0 });
         (score, best_plays[0])
+    }
+}
+
+/// How many tricks the side of the hands at seats 0 and 2 takes with the best
+/// play on both sides, found by trying every play of every card.
+///
+/// This knows nothing about which plays are equivalent or about what the
+/// solver remembers, so that it can check them.
+#[cfg(test)]
+fn exhaustive_tricks(hands: [Cards; 4], trump: Option<Suit>) -> usize {
+    let tricks_left = hands[0].len();
+    if tricks_left == 0 {
+        return 0;
+    }
+    let mut best0 = 0;
+    for c0 in hands[0] {
+        let mut worst1 = tricks_left;
+        for c1 in hands[1].following_suit(c0.suit()) {
+            let mut best2 = 0;
+            for c2 in hands[2].following_suit(c0.suit()) {
+                let mut worst3 = tricks_left;
+                for c3 in hands[3].following_suit(c0.suit()) {
+                    let plays = [c0, c1, c2, c3];
+                    let winner = trick_winner(plays, trump);
+                    // The next trick is led by the winner.
+                    let mut next = [Cards::EMPTY; 4];
+                    for seat in 0..4 {
+                        next[seat] = hands[(winner + seat) % 4]
+                            - Cards::singleton(plays[(winner + seat) % 4]);
+                    }
+                    let theirs_or_ours = exhaustive_tricks(next, trump);
+                    let ours = if winner & 1 == 0 {
+                        1 + theirs_or_ours
+                    } else {
+                        tricks_left - 1 - theirs_or_ours
+                    };
+                    worst3 = worst3.min(ours);
+                }
+                best2 = best2.max(worst3);
+            }
+            worst1 = worst1.min(best2);
+        }
+        best0 = best0.max(worst1);
+    }
+    best0
+}
+
+#[test]
+fn solver_agrees_with_trying_every_play() {
+    let mut rng = SmallRng::seed_from_u64(7);
+    // Positions from two dense suits are full of cards that touch, and so
+    // of plays that the solver does not try; positions from the whole deck
+    // have fewer of them.
+    for (deck, cards_each) in [
+        (Cards::SPADES + Cards::HEARTS, 4),
+        (Cards::SPADES + Cards::HEARTS, 3),
+        (Cards::ALL, 4),
+        (Cards::ALL, 3),
+    ] {
+        for _ in 0..25 {
+            let mut deck = deck;
+            let mut hands = [Cards::EMPTY; 4];
+            for hand in &mut hands {
+                *hand = deck.pick_rng(&mut rng, cards_each).unwrap();
+            }
+            for trump in [None, Some(Suit::Spades), Some(Suit::Diamonds)] {
+                let want = exhaustive_tricks(hands, trump) as f64;
+                let start = Starting {
+                    hands,
+                    unknown: Cards::EMPTY,
+                };
+                let got = Naive::new(trump).score(start).mean();
+                assert_eq!(want, got, "{hands:?} with trump {trump:?}");
+            }
+        }
     }
 }
 
@@ -1147,21 +1245,35 @@ fn score_matches_plain_minimax() {
 #[test]
 fn high_low_plays_top_and_bottom_of_each_suit() {
     use std::str::FromStr;
-    let naive = Naive::high_low(None);
     // On a lead, every long suit contributes its own top and bottom card, and
     // short suits contribute every card.
     assert_eq!(
         Cards::from_str("S: A2 H: A2 D: 2 C: 2").unwrap(),
-        naive.thorough_plays(Cards::from_str("S: AKQ32 H: AKQ32 D: 2 C: 2").unwrap())
+        Naive::thorough_plays(
+            Thoroughness::HighLow,
+            Cards::from_str("S: AKQ32 H: AKQ32 D: 2 C: 2").unwrap(),
+            Cards::from_str("S: AKQ32 H: AKQ32 D: 2 C: 2").unwrap(),
+            Cards::EMPTY
+        )
     );
     assert_eq!(
         Cards::from_str("S: A5 H: KQ D: J4 C: 8").unwrap(),
-        naive.thorough_plays(Cards::from_str("S: A9765 H: KQ D: JT54 C: 8").unwrap())
+        Naive::thorough_plays(
+            Thoroughness::HighLow,
+            Cards::from_str("S: A9765 H: KQ D: JT54 C: 8").unwrap(),
+            Cards::from_str("S: A9765 H: KQ D: JT54 C: 8").unwrap(),
+            Cards::EMPTY
+        )
     );
     // Following suit, only one suit is playable.
     assert_eq!(
         Cards::from_str("H: A2").unwrap(),
-        naive.thorough_plays(Cards::from_str("H: AKQ32").unwrap())
+        Naive::thorough_plays(
+            Thoroughness::HighLow,
+            Cards::from_str("H: AKQ32").unwrap(),
+            Cards::from_str("H: AKQ32").unwrap(),
+            Cards::EMPTY
+        )
     );
 }
 
