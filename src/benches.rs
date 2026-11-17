@@ -256,3 +256,42 @@ fn many_all_point_counts(hands: &Vec<u64>) -> usize {
             + h.short_card_points()
     })
 }
+
+/// 256 positions in the middle of a deal, each as the cards that are left
+/// and some of them that one player holds.
+#[scaling::input(group("lowest_of_sequences", "renumbered_among"))]
+fn hands_among_cards_left() -> Vec<(u64, u64)> {
+    (0..256)
+        .map(|_| {
+            let mut deck = Cards::ALL;
+            let left = deck.pick(20).unwrap();
+            let mut rest = left;
+            let mine = rest.pick(5).unwrap();
+            (left.into_for_bench(), mine.into_for_bench())
+        })
+        .collect()
+}
+
+#[scaling::bench(group = "lowest_of_sequences")]
+fn many_lowest_of_sequences(positions: &Vec<(u64, u64)>) -> usize {
+    positions
+        .iter()
+        .map(|&(left, mine)| {
+            Cards::from_for_bench(mine)
+                .lowest_of_sequences(Cards::from_for_bench(left))
+                .len()
+        })
+        .fold(0, usize::wrapping_add)
+}
+
+#[scaling::bench(group = "renumbered_among")]
+fn many_renumbered_among(positions: &Vec<(u64, u64)>) -> usize {
+    positions
+        .iter()
+        .map(|&(left, mine)| {
+            Cards::from_for_bench(mine)
+                .renumbered_among(Cards::from_for_bench(left))
+                .len()
+        })
+        .fold(0, usize::wrapping_add)
+}
