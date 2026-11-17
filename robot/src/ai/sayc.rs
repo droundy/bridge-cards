@@ -242,11 +242,12 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     let explore = std::mem::replace(&mut s.1, Convention::new(""));
     s.0.append(explore);
     s.add_block(|t| t.add_natural_bids());
-    // This comes after everything, even the natural bids, because it is a
-    // last resort: the robot bids the first entry that fits, and this one
-    // fits every hand, so anywhere earlier in the table it would hide the
-    // bids and passes that describe the hand better.
+    // These come after everything, even the natural bids, because they are
+    // last resorts: the robot bids the first entry that fits, and these fit
+    // every hand, so anywhere earlier in the table they would hide the bids
+    // and passes that describe the hand better.
     must_double_when_passed_out(&mut s);
+    answer_unusual_2nt(&mut s);
     s.0
 }
 
@@ -1250,6 +1251,38 @@ fn must_double_when_passed_out(s: &mut Sheet) {
         Forcing::Passable,
         [fit(MIN, MAX)],
     );
+}
+
+/// Advancer's answer to an unusual 2NT, which forces: the longer of the two
+/// suits it shows, and the higher when they are as long.  Without these the
+/// natural bids answered, and they take four cards in the suit, so a hand with
+/// fewer in both passed.  A hand with game values still bids a game, since
+/// the natural game bids come first, so the caller puts these last in the
+/// table.
+fn answer_unusual_2nt(s: &mut Sheet) {
+    use Suit::*;
+    for opening in Suit::ALL.iter().cloned() {
+        let (low, high) = match opening {
+            Clubs => (Diamonds, Hearts),
+            Diamonds => (Clubs, Hearts),
+            Hearts | Spades => (Clubs, Diamonds),
+        };
+        let after = format!("^{OPEN}1{} 2N [PX] 3", opening.latin());
+        s.add(
+            "Unusual 2NT response",
+            &format!("{after}{}$", high.latin()),
+            "The longer suit, the higher when as long",
+            Forcing::Passable,
+            [fit(MIN, MAX).with(AtLeastAsLong(high, low))],
+        );
+        s.add(
+            "Unusual 2NT response",
+            &format!("{after}{}$", low.latin()),
+            "The longer suit",
+            Forcing::Passable,
+            [fit(MIN, MAX).with(Longer(low, high))],
+        );
+    }
 }
 
 /// The opponent's call between the opening and a new suit response at

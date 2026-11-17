@@ -3647,6 +3647,60 @@ fn sayc_competes_as_the_booklet_says() {
     assert_eq!(Double, over("S AK2 H 4 D AKQ54 C K432"));
 }
 
+/// An unusual 2NT forces advancer to choose one of the two suits it shows: the
+/// longer, and the higher when they are as long.  Any hand does, though one
+/// with game values bids the game.
+#[test]
+fn sayc_advances_an_unusual_2nt() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+
+    for system in [BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        let advance = |opening: Bid, hand: &str| system_bid(system, &[opening, NT(2), Pass], hand);
+        // Over a major the suits are the minors.
+        let hearts = Suit(1, Hearts);
+        assert_eq!(
+            Suit(3, Diamonds),
+            advance(hearts, "S KQJ74 H 65 D 863 C T87")
+        );
+        assert_eq!(
+            Suit(3, Diamonds),
+            advance(hearts, "S KQJ74 H 652 D 863 C T8")
+        );
+        assert_eq!(Suit(3, Clubs), advance(hearts, "S KQJ74 H 652 D T8 C 863"));
+        assert_eq!(Suit(3, Clubs), advance(hearts, "S KQJ7 H 652 D 86 C T874"));
+        let spades = Suit(1, Spades);
+        assert_eq!(
+            Suit(3, Diamonds),
+            advance(spades, "S 65 H KQJ74 D 863 C T87")
+        );
+        // Over diamonds they are clubs and hearts, and over clubs diamonds
+        // and hearts.
+        let diamonds = Suit(1, Diamonds);
+        assert_eq!(
+            Suit(3, Hearts),
+            advance(diamonds, "S KQJ74 H 652 D T8 C 863")
+        );
+        assert_eq!(
+            Suit(3, Clubs),
+            advance(diamonds, "S KQJ74 H 65 D T8 C 8632")
+        );
+        let clubs = Suit(1, Clubs);
+        assert_eq!(Suit(3, Hearts), advance(clubs, "S KQJ7 H 652 D 863 C T87"));
+        assert_eq!(
+            Suit(3, Diamonds),
+            advance(clubs, "S KQJ74 H 65 D 863 C T87")
+        );
+        // A double of the 2NT changes nothing, and game values bid a game.
+        let after_double = [hearts, NT(2), Double];
+        assert_eq!(
+            Suit(3, Diamonds),
+            system_bid(system, &after_double, "S KQJ74 H 65 D 863 C T87")
+        );
+        assert_eq!(NT(3), advance(hearts, "S AKQ2 H 65 D AK3 C KT87"));
+    }
+}
+
 #[test]
 fn bids_with_several_entries_describe_them_all() {
     use bridge_deck::Suit::*;
