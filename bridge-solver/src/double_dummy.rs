@@ -210,30 +210,56 @@ impl DoubleDummy {
         }
     }
 
-    /// Tricks that the leader takes however the others play, by leading the
-    /// top cards of a suit, which win while they last as long as no one else
-    /// can ruff them.
+    /// Tricks that the leader's side takes however the others play: the top
+    /// cards of the leader's suits, which win while they last as long as no
+    /// one else can ruff them, and then those of partner in a suit that the
+    /// leader can lead to them.
     fn sure_tricks(&self, hands: [Cards; 4]) -> usize {
         let all = hands[0] + hands[1] + hands[2] + hands[3];
         let others_can_ruff = |suit: Suit| match self.trump {
             Some(trump) if trump != suit => !(hands[1] + hands[3]).in_suit(trump).is_empty(),
             _ => false,
         };
-        let mut sure = 0;
+        // How many of the top cards of `suit` `hand` holds, from the top.
+        let tops = |hand: Cards, suit: Suit| {
+            let mut left = all.in_suit(suit);
+            let mut tops = 0;
+            while let Some(top) = left.max() {
+                if !hand.contains(top) {
+                    break;
+                }
+                tops += 1;
+                left -= Cards::singleton(top);
+            }
+            tops
+        };
+        let mut own = 0;
+        let mut partners = 0;
         for suit in Suit::ALL {
             if others_can_ruff(suit) {
                 continue;
             }
-            let mut left = all.in_suit(suit);
-            while let Some(top) = left.max() {
-                if !hands[0].contains(top) {
-                    break;
-                }
-                sure += 1;
-                left -= Cards::singleton(top);
+            own += tops(hands[0], suit);
+            if !hands[0].in_suit(suit).is_empty() {
+                partners = partners.max(tops(hands[2], suit));
             }
         }
-        sure.min(hands[0].len())
+        let n = hands[0].len();
+        // The leader cashes their own winners first, and then leads to
+        // partner, as long as partner has other cards to play to the leader's
+        // winners than the ones that win their suit.
+        let partner_can_wait = |suit: Suit| {
+            !hands[0].in_suit(suit).is_empty()
+                && !others_can_ruff(suit)
+                && tops(hands[2], suit) == partners
+                && (hands[2] - hands[2].in_suit(suit)).len() >= own
+        };
+        let sure = if partners > 0 && Suit::ALL.iter().any(|&suit| partner_can_wait(suit)) {
+            own + partners
+        } else {
+            own.max(partners)
+        };
+        sure.min(n)
     }
 }
 
@@ -252,8 +278,8 @@ mod tests {
     #[test]
     fn tricks_agree_with_the_naive_solver() {
         let mut rng = SmallRng::seed_from_u64(7);
-        for size in 1..=6 {
-            for _ in 0..60 {
+        for size in 1..=7 {
+            for _ in 0..100 {
                 let hands = deal(&mut rng, size);
                 let trump = [None, Some(Suit::Hearts), Some(Suit::Clubs)][rng.gen_range(0..3)];
                 let naive = Naive::new(trump)
@@ -352,7 +378,8 @@ mod tests {
     #[test]
     fn the_leader_takes_their_top_cards() {
         // In notrump, the leader holds the top three spades and the top two
-        // hearts: five sure tricks.
+        // hearts: five sure tricks.  Partner's spades and hearts are lower,
+        // so add nothing.
         let hands = ["S AKQ H AK", "S 432 H 43", "S 765 H 65", "S T98 H 87"]
             .map(|hand| hand.parse::<Cards>().unwrap());
         let solver = DoubleDummy::new(None);
