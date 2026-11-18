@@ -101,6 +101,11 @@ impl Hidden {
         })
     }
 
+    /// The seats of the two hands.
+    pub(crate) fn seats(&self) -> [Seat; 2] {
+        self.seats
+    }
+
     /// How many of the calls that the two hands made the robot would not have
     /// made with the hands of `deal`, bidding by `convention`.  None, when
     /// `deal` is a deal that the robot would have bid the auction with.
@@ -585,12 +590,7 @@ mod tests {
                 let (deal, _) = hidden.sample(&mut rng).unwrap();
                 let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
                 let started = std::time::Instant::now();
-                card_values(
-                    starting,
-                    trump_of(&game),
-                    &in_trick,
-                    game.could_be_played(),
-                );
+                card_values(starting, trump_of(&game), &in_trick, game.could_be_played());
                 times.push(started.elapsed().as_secs_f64());
                 eprintln!("{tricks_left} tricks left: {:.3} s", times.last().unwrap());
             }

@@ -179,6 +179,26 @@ fn seed_from(text: &str) -> u64 {
 /// ensemble is the same for every play that is chosen in a situation, and for
 /// every version of the robot.
 fn loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
+    loss_by(situation, chosen, reference_values)
+}
+
+/// How many tricks the best play would win in the real deal, which the
+/// situation has, with best play by everyone after it, more than the play that
+/// was chosen would, or `None` where that is not worked out.  This does not
+/// favour a player who chooses by an ensemble like the reference one, as
+/// [`loss`] does, but it is noisier: a play that is best in most deals that
+/// fit can lose in the one that was dealt.
+fn real_loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
+    loss_by(situation, chosen, real_values)
+}
+
+/// The loss of the play that was chosen, by `values`, which values every legal
+/// card of a situation.
+fn loss_by(
+    situation: &str,
+    chosen: &Option<String>,
+    values: fn(&str, &GameState<()>) -> Option<Values>,
+) -> Option<f64> {
     let game: GameState<()> = serde_json::from_str(situation).ok()?;
     let tricks_left = game.hands.iter().map(|hand| hand.len()).max()?;
     if tricks_left > DOUBLE_DUMMY_TRICKS {
@@ -193,7 +213,7 @@ fn loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
         // Nothing is as bad as an illegal play.
         return Some(tricks_left as f64);
     }
-    let means = reference_values(situation, &game)?;
+    let means = values(situation, &game)?;
     let mine = means.iter().find(|&&(card, _)| card == chosen)?.1;
     let best = if plays_for_the_leaders(&game) {
         means.iter().map(|&(_, mean)| mean).fold(f64::MIN, f64::max)
@@ -207,9 +227,9 @@ fn loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
 type Values = Vec<(Card, f64)>;
 
 thread_local! {
-    /// The values that `reference_values` has worked out, since every player
-    /// of a situation is valued by the same ones.
-    static REFERENCE: std::cell::RefCell<std::collections::HashMap<String, Option<Values>>>
+    /// The values that `reference_values` and `real_values` have worked out,
+    /// since every player of a situation is valued by the same ones.
+    static REMEMBERED: std::cell::RefCell<std::collections::HashMap<String, Option<Values>>>
         = Default::default();
 }
 
@@ -217,11 +237,42 @@ thread_local! {
 /// whoever leads the trick wins by playing it, with best play by everyone after
 /// that, averaged over the deals of the ensemble.
 fn reference_values(situation: &str, game: &GameState<()>) -> Option<Values> {
-    if let Some(known) = REFERENCE.with(|r| r.borrow().get(situation).cloned()) {
+    remembered("reference", situation, || {
+        work_out_reference_values(situation, game)
+    })
+}
+
+/// The value of each legal card in the real deal: the tricks that the side of
+/// whoever leads the trick wins by playing it, with best play by everyone after
+/// that.
+fn real_values(situation: &str, game: &GameState<()>) -> Option<Values> {
+    remembered("real", situation, || {
+        let convention = game.system.convention();
+        let hidden = Hidden::new(game, &convention)?;
+        let real = hidden.seats().map(|seat| game.hands[seat]);
+        let (starting, in_trick) = starting_with(game, &hidden, real)?;
+        Some(card_values(
+            starting,
+            trump_of(game),
+            &in_trick,
+            game.could_be_played(),
+        ))
+    })
+}
+
+/// The values of a situation that were worked out as `kind` before, or else
+/// those that `work_out` gives, which are remembered.
+fn remembered(
+    kind: &str,
+    situation: &str,
+    work_out: impl FnOnce() -> Option<Values>,
+) -> Option<Values> {
+    let key = format!("{kind} {situation}");
+    if let Some(known) = REMEMBERED.with(|r| r.borrow().get(&key).cloned()) {
         return known;
     }
-    let values = work_out_reference_values(situation, game);
-    REFERENCE.with(|r| r.borrow_mut().insert(situation.to_string(), values.clone()));
+    let values = work_out();
+    REMEMBERED.with(|r| r.borrow_mut().insert(key, values.clone()));
     values
 }
 
@@ -255,7 +306,8 @@ fn work_out_reference_values(situation: &str, game: &GameState<()>) -> Option<Va
 }
 
 /// How well the robot chose in a stage, as the mean tricks lost to the best
-/// play and the share of the choices that lost any.
+/// play over the reference ensemble and in the real deal, and the share of the
+/// choices that lost any over the ensemble.
 #[scaling::metrics(group = "play decision")]
 fn play_quality(situations: &Vec<String>, chosen: Vec<Option<String>>) -> Metrics {
     let losses: Vec<f64> = situations
@@ -267,7 +319,16 @@ fn play_quality(situations: &Vec<String>, chosen: Vec<Option<String>>) -> Metric
         return Metrics::new();
     }
     let lost = losses.iter().filter(|&&loss| loss > 1e-9).count();
+    let real: Vec<f64> = situations
+        .iter()
+        .zip(&chosen)
+        .filter_map(|(situation, chosen)| real_loss(situation, chosen))
+        .collect();
     Metrics::new()
+        .ratio(
+            "tricks lost in the real deal",
+            real.iter().sum::<f64>() / real.len() as f64,
+        )
         .ratio(
             "tricks lost",
             losses.iter().sum::<f64>() / losses.len() as f64,
@@ -342,6 +403,44 @@ mod tests {
         let game: GameState<()> = serde_json::from_str(situation).unwrap();
         let not_legal = (Cards::ALL - game.could_be_played()).next().unwrap();
         assert_eq!(Some(3.0), loss(situation, &play_of(&game, not_legal)),);
+    }
+
+    /// The mean loss of each player with 3 to 7 tricks left, for comparing
+    /// their quality with more situations than a timed run wants:
+    /// `PLAY_BENCH_SITUATIONS=48 cargo test -p robot --release --features
+    /// benchmarks compare_the_players -- --ignored --nocapture`, with
+    /// `PLAY_BENCH_REFERENCE=replayed` to value the plays by the replayed
+    /// ensemble.
+    #[test]
+    #[ignore]
+    fn compare_the_players() {
+        type Player = fn(&Vec<String>) -> Vec<Option<String>>;
+        let players: [(&str, Player); 4] = [
+            ("robot", choose_plays),
+            ("ensemble", ensemble_plays),
+            ("replayed ensemble", replayed_ensemble_plays),
+            ("random", random_plays),
+        ];
+        println!("reference replayed: {}", reference_replays());
+        for tricks_left in (3..=7).rev() {
+            let situations = play_situations(tricks_left);
+            let losses: Vec<String> = players
+                .iter()
+                .map(|(name, player)| {
+                    let chosen = player(&situations);
+                    let mean = |loss: fn(&str, &Option<String>) -> Option<f64>| {
+                        let losses: Vec<f64> = situations
+                            .iter()
+                            .zip(&chosen)
+                            .filter_map(|(situation, chosen)| loss(situation, chosen))
+                            .collect();
+                        losses.iter().sum::<f64>() / losses.len() as f64
+                    };
+                    format!("{name} {:.3} (real {:.3})", mean(loss), mean(real_loss))
+                })
+                .collect();
+            println!("{tricks_left} tricks left: {}", losses.join(", "));
+        }
     }
 
     #[test]
