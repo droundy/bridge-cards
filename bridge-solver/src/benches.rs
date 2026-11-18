@@ -12,7 +12,7 @@
 //! its own sizes with no upper limit, extrapolating a power law, and on these
 //! costs it walks into calls that take hours.
 
-use crate::{Card, Cards, Naive, Starting, Suit};
+use crate::{Card, Cards, DoubleDummy, Naive, Starting, Suit};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
@@ -187,6 +187,31 @@ fn naive(position: &Position) -> f64 {
     Naive::new(trump).score(starting).mean()
 }
 
+#[scaling::input(
+    group = "double dummy, larger deals",
+    name = "cards",
+    sizes(8, 9, 10, 11, 12),
+    reusable
+)]
+fn larger_deal_no_trump(n: usize) -> Position {
+    position(full_deal(n), None)
+}
+
+/// [`DoubleDummy`], which only solves deals with every card known, on the full
+/// deals that `naive` solves, and on larger ones that would take `naive` far
+/// too long.
+#[scaling::bench(group(
+    "last trick",
+    "one suit each",
+    "full deal, hearts",
+    "full deal, no trump",
+    "double dummy, larger deals"
+))]
+fn double_dummy(position: &Position) -> f64 {
+    let (starting, trump) = from_position(position);
+    DoubleDummy::new(trump).tricks(starting.hands) as f64
+}
+
 #[scaling::bench(group = "single dummy, oneround")]
 fn oneround(position: &Position) -> f64 {
     let (starting, trump) = from_position(position);
@@ -197,4 +222,38 @@ fn oneround(position: &Position) -> f64 {
 fn high_low(position: &Position) -> f64 {
     let (starting, trump) = from_position(position);
     Naive::high_low(trump).score(starting).mean()
+}
+
+/// The number of deals that the robot samples to choose a play with this many
+/// tricks left, as `robot/src/ai.rs` does.
+fn robot_samples(tricks_left: usize) -> usize {
+    match tricks_left {
+        0..=4 => 16,
+        5 => 4,
+        6 => 2,
+        _ => 1,
+    }
+}
+
+#[scaling::input(
+    group = "robot decision",
+    name = "cards",
+    sizes(2, 3, 4, 5, 6),
+    reusable
+)]
+fn robot_decision_position(n: usize) -> Position {
+    position(single_dummy(n), Some(Suit::Hearts))
+}
+
+/// What the robot does to choose a card to lead: sample deals for the cards
+/// it cannot see, and score each card that it could play, with
+/// [`Naive::score_after`].
+#[scaling::bench(group = "robot decision")]
+fn robot_decision(position: &Position) -> f64 {
+    let (starting, trump) = from_position(position);
+    let samples = robot_samples(starting.tricks_remaining());
+    Naive::statistical(trump, samples)
+        .score_after(starting, &[])
+        .0
+        .mean()
 }

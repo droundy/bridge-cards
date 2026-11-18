@@ -13,14 +13,38 @@
 //! and so are the many positions in which the side on lead has enough top
 //! cards to take the target without any search.
 
-use crate::{trick_winner, PositionHasher, Starting, TrickTaken};
+use crate::{likely_plays, PositionHasher, Starting};
+
 use bridge_deck::{Card, Cards, Suit};
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 
-/// The least and the most tricks that the side on lead can take in each
-/// position, as far as is known.
-type Bounds = HashMap<Starting, (u8, u8), BuildHasherDefault<PositionHasher>>;
+/// The `hands` renumbered among their cards, so that the gaps that the cards
+/// played before them leave are closed up, as they are after each trick the
+/// solver plays.  Positions that differ only in cards gone from the deck are
+/// then the same.
+fn renumbered(hands: [Cards; 4]) -> [Cards; 4] {
+    let all = hands[0] + hands[1] + hands[2] + hands[3];
+    hands.map(|hand| hand.renumbered_among(all))
+}
+
+/// How [`renumbered`] renumbers each card of `hands`.
+fn renumbering(hands: [Cards; 4]) -> impl Fn(Card) -> Card {
+    let all = hands[0] + hands[1] + hands[2] + hands[3];
+    move |card| Cards::singleton(card).renumbered_among(all).max().unwrap()
+}
+
+/// What is known of each position.
+type Bounds = HashMap<Starting, Known, BuildHasherDefault<PositionHasher>>;
+
+/// What is known of a position: the least and the most tricks that the side
+/// on lead can take, and the lead that last made a target, if one has.
+#[derive(Clone, Copy)]
+struct Known {
+    lower: u8,
+    upper: u8,
+    lead: Option<Card>,
+}
 
 /// A double-dummy solver: every hand is known to everyone, and everyone plays
 /// as well as can be.
@@ -44,7 +68,7 @@ impl DoubleDummy {
     /// of the same size.
     pub fn tricks(&mut self, hands: [Cards; 4]) -> usize {
         let position = Starting {
-            hands,
+            hands: renumbered(hands),
             unknown: Cards::EMPTY,
         };
         position.check();
@@ -65,19 +89,95 @@ impl DoubleDummy {
     /// the hands as they were before the trick.  There may be from one to
     /// four plays.
     pub fn tricks_after(&mut self, hands: [Cards; 4], plays: &[Card]) -> usize {
+        let renumber = renumbering(hands);
+        let plays: Vec<Card> = plays.iter().map(|&card| renumber(card)).collect();
+        self.search_after(renumbered(hands), &plays, None)
+    }
+
+    /// The tricks that the side that led this trick takes, with best play by
+    /// everyone after it, after each card that the next player could play to
+    /// `plays`, from `hands`, which are the hands as they were before the
+    /// trick.  There may be from none to three plays.
+    ///
+    /// This is [`DoubleDummy::tricks_after`] for each card, but cheaper: the
+    /// cards that touch are worked out once, and the search for each card
+    /// starts from the tricks of the card before, which are usually close.
+    pub fn tricks_after_each(&mut self, hands: [Cards; 4], plays: &[Card]) -> Vec<(Card, usize)> {
+        assert!(plays.len() < 4, "a trick has four cards");
+        let renumber = renumbering(hands);
+        let mut trick: Vec<Card> = plays.iter().map(|&card| renumber(card)).collect();
+        let renumbered_hands = renumbered(hands);
+        // The lowest of each run of cards that touch, likeliest best first.
+        let mut runs: Vec<(Card, usize)> = Vec::new();
+        for card in likely_plays(self.trump, &renumbered_hands, &trick) {
+            trick.push(card);
+            let guess = runs.last().map(|&(_, tricks)| tricks);
+            runs.push((card, self.search_after(renumbered_hands, &trick, guess)));
+            trick.pop();
+        }
+        let lowest = runs
+            .iter()
+            .fold(Cards::EMPTY, |cards, &(card, _)| cards.insert(card));
+        let legal = match plays.first() {
+            None => hands[0],
+            Some(lead) => hands[plays.len()].following_suit(lead.suit()),
+        };
+        legal
+            .map(|card| {
+                // The run of a card is the one of the lowest card at or below it.
+                let card_now = renumber(card);
+                let run = (lowest.in_suit(card.suit()) - Cards::higher_than(card_now)).max();
+                let &(_, tricks) = runs.iter().find(|&&(card, _)| Some(card) == run).unwrap();
+                (card, tricks)
+            })
+            .collect()
+    }
+
+    /// The tricks that the side that led this trick takes after `plays`, from
+    /// `hands`, both renumbered, searching from `guess` if there is one.
+    fn search_after(&mut self, hands: [Cards; 4], plays: &[Card], guess: Option<usize>) -> usize {
         let n = hands[0].len();
-        let (mut low, mut high) = (0, n);
-        while low < high {
-            let target = (low + high).div_ceil(2);
+        let winner = (1..plays.len()).fold(0, |winner, i| {
+            if self.beats(plays[i], plays[winner]) {
+                i
+            } else {
+                winner
+            }
+        });
+        let mut makes = |target: usize| {
             let mut trick = [plays[0]; 4];
             trick[..plays.len()].copy_from_slice(plays);
-            if self.makes_from(hands, &mut trick, plays.len(), target) {
-                low = target;
-            } else {
-                high = target - 1;
+            target == 0 || self.makes_from(hands, &mut trick, plays.len(), winner, target)
+        };
+        match guess {
+            None => {
+                let (mut low, mut high) = (0, n);
+                while low < high {
+                    let target = (low + high).div_ceil(2);
+                    if makes(target) {
+                        low = target;
+                    } else {
+                        high = target - 1;
+                    }
+                }
+                low
+            }
+            Some(guess) => {
+                // Up or down from the guess, one trick at a time.
+                let mut tricks = guess.min(n);
+                if makes(tricks) {
+                    while tricks < n && makes(tricks + 1) {
+                        tricks += 1;
+                    }
+                } else {
+                    tricks -= 1;
+                    while !makes(tricks) {
+                        tricks -= 1;
+                    }
+                }
+                tricks
             }
         }
-        low
     }
 
     /// Whether the side on lead in `position` can take at least `target` of
@@ -90,94 +190,94 @@ impl DoubleDummy {
         if target > n {
             return false;
         }
-        let (lower, upper) = self
-            .bounds
-            .get(&position)
-            .map_or((0, n), |&(lower, upper)| (lower as usize, upper as usize));
+        // Top cards settle many questions, more cheaply than a look in the
+        // table.
+        if target > n - self.sure_losers(position.hands) {
+            return false;
+        }
+        let sure = self.sure_tricks(position.hands);
+        if sure >= target {
+            return true;
+        }
+        let known = self.bounds.get(&position).copied().unwrap_or(Known {
+            lower: 0,
+            upper: n as u8,
+            lead: None,
+        });
+        let (lower, upper) = (known.lower as usize, known.upper as usize);
         if target <= lower {
             return true;
         }
         if target > upper {
             return false;
         }
-        let sure = self.sure_tricks(position.hands);
-        let makes = sure >= target || {
+        let mut lead = known.lead;
+        let makes = {
+            // The lead that made a target before is tried first.
             let mut trick = [Card::S2; 4];
-            self.makes_from(position.hands, &mut trick, 0, target)
+            let tried = known.lead;
+            let leads = tried.into_iter().chain(
+                likely_plays(self.trump, &position.hands, &[]).filter(|&card| Some(card) != tried),
+            );
+            let mut makes = false;
+            for card in leads {
+                trick[0] = card;
+                if self.makes_from(position.hands, &mut trick, 1, 0, target) {
+                    lead = Some(card);
+                    makes = true;
+                    break;
+                }
+            }
+            makes
         };
         let (lower, upper) = if makes {
             (lower.max(target).max(sure), upper)
         } else {
             (lower.max(sure), upper.min(target - 1))
         };
-        self.bounds.insert(position, (lower as u8, upper as u8));
+        self.bounds.insert(
+            position,
+            Known {
+                lower: lower as u8,
+                upper: upper as u8,
+                lead,
+            },
+        );
         makes
     }
 
     /// Whether the side that leads this trick, from `hands` as they were
     /// before it, can take at least `target` of the tricks that are left,
-    /// once the first `played` cards of `trick` have been played to it.
+    /// once the first `played` cards of `trick` have been played to it, of
+    /// which the one at `winner` is winning it.
     fn makes_from(
         &mut self,
         hands: [Cards; 4],
         trick: &mut [Card; 4],
         played: usize,
+        winner: usize,
         target: usize,
     ) -> bool {
         if played == 4 {
-            return self.makes_after(hands, *trick, target);
+            return self.makes_after(hands, *trick, winner, target);
         }
-        let all = hands[0] + hands[1] + hands[2] + hands[3];
-        let legal = if played == 0 {
-            hands[0]
-        } else {
-            hands[played].following_suit(trick[0].suit())
-        };
-        // Of cards that touch, any one is as good as another.
-        let plays = legal.lowest_of_sequences(all);
         // The leader and their partner want the target made, and the others
         // want it not to be.
         let wants_it = played & 1 == 0;
-        // The card most likely to settle the question is tried first, since
-        // once one card does, the others need not be tried.
-        let first = self.likely_best(&trick[..played], plays, all);
-        let rest = first.map_or(plays, |first| plays - Cards::singleton(first));
-        for card in first.into_iter().chain(rest) {
+        // Once one card settles the question, the others need not be tried,
+        // so the likeliest to are tried first.
+        for card in likely_plays(self.trump, &hands, &trick[..played]) {
             trick[played] = card;
-            if self.makes_from(hands, trick, played + 1, target) == wants_it {
+            let winner = if self.beats(card, trick[winner]) {
+                played
+            } else {
+                winner
+            };
+            if self.makes_from(hands, trick, played + 1, winner, target) == wants_it {
                 return wants_it;
             }
         }
         !wants_it
-    }
-
-    /// Which of the cards `plays` is likely the best play after `trick`, if
-    /// one is: a winner to lead, nothing when partner is winning the trick,
-    /// and otherwise the cheapest card that would win it.
-    fn likely_best(&self, trick: &[Card], mut plays: Cards, all: Cards) -> Option<Card> {
-        if trick.is_empty() {
-            // The top card of a suit, which wins the trick unless it is
-            // ruffed.
-            return plays.find(|&card| all.in_suit(card.suit()).max() == Some(card));
-        }
-        let winner = self.winner_so_far(trick);
-        if winner & 1 == trick.len() & 1 {
-            // Partner is winning, and the lowest card is tried first anyway.
-            return None;
-        }
-        let winning = trick[winner];
-        plays.find(|&card| self.beats(card, winning))
-    }
-
-    /// Which of the cards of a trick that is not finished is winning it.
-    fn winner_so_far(&self, trick: &[Card]) -> usize {
-        let mut winner = 0;
-        for (i, &card) in trick.iter().enumerate().skip(1) {
-            if self.beats(card, trick[winner]) {
-                winner = i;
-            }
-        }
-        winner
     }
 
     /// Whether `card`, played after `winning`, beats it.
@@ -189,25 +289,51 @@ impl DoubleDummy {
         }
     }
 
-    /// Whether the side that led the trick `plays`, from `hands`, takes at
-    /// least `target` of the tricks that were left before it.
-    fn makes_after(&mut self, hands: [Cards; 4], plays: [Card; 4], target: usize) -> bool {
+    /// Whether the side that led the trick `plays` from `hands`, which the
+    /// one at `winner` won, takes at least `target` of the tricks that were
+    /// left before it.
+    fn makes_after(
+        &mut self,
+        hands: [Cards; 4],
+        plays: [Card; 4],
+        winner: usize,
+        target: usize,
+    ) -> bool {
         let n = hands[0].len();
-        let ours = trick_winner(plays, self.trump) & 1 == 0;
+        let ours = winner & 1 == 0;
         if n == 1 {
             return ours as usize >= target;
         }
-        let before = Starting {
-            hands,
+        // The cards are renumbered as though the ones played had never been
+        // in the deck, and the winner leads to the next trick.
+        let played = plays
+            .iter()
+            .fold(Cards::EMPTY, |cards, &card| cards.insert(card));
+        let next = Starting {
+            hands: [0, 1, 2, 3].map(|i| hands[(winner + i) % 4].renumbered_without(played)),
             unknown: Cards::EMPTY,
         };
-        match before.after_unchecked(plays, self.trump) {
-            TrickTaken::Us(next) if ours => self.at_least(next, target - 1),
+        if ours {
+            self.at_least(next, target - 1)
+        } else {
             // The others lead next, and the leaders make their target if
             // the others take no more than the rest.
-            TrickTaken::Them(next) => !self.at_least(next, n - target),
-            TrickTaken::Us(_) => unreachable!("the trick was won by the other side"),
+            !self.at_least(next, n - target)
         }
+    }
+
+    /// Tricks that the side not on lead takes however the leaders play: the
+    /// trumps of one of them that are higher than any of the leaders'.
+    fn sure_losers(&self, hands: [Cards; 4]) -> usize {
+        let Some(trump) = self.trump else {
+            return 0;
+        };
+        let theirs = (hands[1] + hands[3]).in_suit(trump);
+        let above = match (hands[0] + hands[2]).in_suit(trump).max() {
+            None => theirs,
+            Some(best) => theirs & Cards::higher_than(best),
+        };
+        (hands[1] & above).len().max((hands[3] & above).len())
     }
 
     /// Tricks that the leader's side takes however the others play: the top
@@ -216,10 +342,6 @@ impl DoubleDummy {
     /// leader can lead to them.
     fn sure_tricks(&self, hands: [Cards; 4]) -> usize {
         let all = hands[0] + hands[1] + hands[2] + hands[3];
-        let others_can_ruff = |suit: Suit| match self.trump {
-            Some(trump) if trump != suit => !(hands[1] + hands[3]).in_suit(trump).is_empty(),
-            _ => false,
-        };
         // How many of the top cards of `suit` `hand` holds, from the top.
         let tops = |hand: Cards, suit: Suit| {
             let mut left = all.in_suit(suit);
@@ -232,6 +354,18 @@ impl DoubleDummy {
                 left -= Cards::singleton(top);
             }
             tops
+        };
+        // The others can ruff unless the leader can draw their trumps with
+        // top trumps first.
+        let others_can_ruff = |suit: Suit| match self.trump {
+            Some(trump) if trump != suit => {
+                let longest = hands[1]
+                    .in_suit(trump)
+                    .len()
+                    .max(hands[3].in_suit(trump).len());
+                longest > 0 && tops(hands[0], trump) < longest
+            }
+            _ => false,
         };
         let mut own = 0;
         let mut partners = 0;
@@ -298,6 +432,37 @@ mod tests {
     }
 
     #[test]
+    fn tricks_after_each_card_agree_with_tricks_after_it() {
+        let mut rng = SmallRng::seed_from_u64(9);
+        for size in 1..=6 {
+            for _ in 0..30 {
+                // The hands of a deal leave gaps, as cards played before
+                // them would.
+                let hands = deal(&mut rng, size);
+                let trump = [None, Some(Suit::Hearts)][rng.gen_range(0..2)];
+                let mut plays = Vec::new();
+                for seat in 0..4 {
+                    let each = DoubleDummy::new(trump).tricks_after_each(hands, &plays);
+                    let legal = match plays.first() {
+                        None => hands[0],
+                        Some(lead) => hands[seat].following_suit(lead.suit()),
+                    };
+                    assert_eq!(legal.len(), each.len());
+                    for (card, tricks) in each {
+                        assert!(legal.contains(card));
+                        plays.push(card);
+                        let alone = DoubleDummy::new(trump).tricks_after(hands, &plays);
+                        plays.pop();
+                        assert_eq!(alone, tricks, "{hands:?} {plays:?} {card:?}");
+                    }
+                    let mut legal = legal;
+                    plays.push(legal.pick_rng(&mut rng, 1).unwrap().max().unwrap());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn tricks_after_plays_agree_with_trying_each_reply() {
         let mut rng = SmallRng::seed_from_u64(8);
         for size in 2..=5 {
@@ -328,7 +493,9 @@ mod tests {
     }
 
     /// How long each solver takes on deals of each size, with the sizes in
-    /// `DD_SIZES` (8 to 13 by default), and `Naive` only up to 10.
+    /// `DD_SIZES` (8 to 13 by default) and `DD_DEALS` deals of each (8 by
+    /// default), and `Naive` only up to 10, and how long `DoubleDummy` takes
+    /// to value every lead.
     #[test]
     #[ignore]
     fn report_the_time_to_solve_a_deal() {
@@ -336,24 +503,39 @@ mod tests {
             .ok()
             .map(|s| s.split(',').filter_map(|n| n.parse().ok()).collect())
             .unwrap_or((8..=13).collect());
+        let deals = std::env::var("DD_DEALS")
+            .ok()
+            .and_then(|d| d.parse().ok())
+            .unwrap_or(8);
+        let time = |f: &mut dyn FnMut()| {
+            let started = std::time::Instant::now();
+            f();
+            started.elapsed().as_secs_f64()
+        };
         for size in sizes {
             let mut rng = SmallRng::seed_from_u64(size as u64);
             let mut dd = Vec::new();
+            let mut leads = Vec::new();
             let mut naive = Vec::new();
-            for i in 0..8 {
+            for i in 0..deals {
                 let hands = deal(&mut rng, size);
                 let trump = [None, Some(Suit::Spades)][i % 2];
-                let started = std::time::Instant::now();
-                let tricks = DoubleDummy::new(trump).tricks(hands);
-                dd.push(started.elapsed().as_secs_f64());
+                let mut tricks = 0;
+                dd.push(time(&mut || tricks = DoubleDummy::new(trump).tricks(hands)));
+                leads.push(time(&mut || {
+                    let each = DoubleDummy::new(trump).tricks_after_each(hands, &[]);
+                    assert_eq!(Some(tricks), each.iter().map(|&(_, tricks)| tricks).max());
+                }));
                 if size <= 10 {
-                    let started = std::time::Instant::now();
-                    let score = Naive::new(trump).score(Starting {
+                    let starting = Starting {
                         hands,
                         unknown: Cards::EMPTY,
-                    });
-                    naive.push(started.elapsed().as_secs_f64());
-                    assert_eq!(tricks as f64, score.mean());
+                    };
+                    let mut score = 0.0;
+                    naive.push(time(&mut || {
+                        score = Naive::new(trump).score(starting).mean()
+                    }));
+                    assert_eq!(tricks as f64, score);
                 }
             }
             let summary = |times: &mut Vec<f64>| {
@@ -368,8 +550,9 @@ mod tests {
                 )
             };
             println!(
-                "{size} cards: double dummy {}; naive {}",
+                "{size} cards: double dummy {}, every lead {}; naive {}",
                 summary(&mut dd),
+                summary(&mut leads),
                 summary(&mut naive)
             );
         }
@@ -384,9 +567,14 @@ mod tests {
             .map(|hand| hand.parse::<Cards>().unwrap());
         let solver = DoubleDummy::new(None);
         assert_eq!(5, solver.sure_tricks(hands));
-        // With hearts trumps and an opponent who holds a trump, the spades are
-        // not sure, but the trumps are.
+        // With hearts trumps, the leader's top trumps draw the others' two
+        // trumps first, and then the spades are sure.
         let solver = DoubleDummy::new(Some(Suit::Hearts));
+        assert_eq!(5, solver.sure_tricks(hands));
+        // With a third trump to one of the others, the spades could be
+        // ruffed, and only the trumps are sure.
+        let hands = ["S AKQ H AK", "S 432 H 4 D 2", "S 765 H 65", "S T9 H 873"]
+            .map(|hand| hand.parse::<Cards>().unwrap());
         assert_eq!(2, solver.sure_tricks(hands));
     }
 }
