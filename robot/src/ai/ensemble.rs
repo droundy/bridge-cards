@@ -268,9 +268,9 @@ fn deals_for(tricks_left: usize) -> usize {
 #[derive(Debug)]
 pub struct EnsemblePlay {
     rng: StdRng,
-    /// The convention that the auction was read with, and the system it is the
-    /// convention of.
-    convention: Option<(BiddingSystem, Convention)>,
+    /// The conventions that auctions have been read with, each with the system
+    /// it is the convention of, so that each is built only once.
+    conventions: Vec<(BiddingSystem, Convention)>,
 }
 
 impl EnsemblePlay {
@@ -286,18 +286,19 @@ impl EnsemblePlay {
     fn with_rng(rng: StdRng) -> Self {
         EnsemblePlay {
             rng,
-            convention: None,
+            conventions: Vec::new(),
         }
     }
 
     /// What the player knows of the hands that they cannot see.
     fn hidden<C>(&mut self, game: &GameState<C>) -> Option<Hidden> {
-        let known = matches!(&self.convention, Some((system, _)) if *system == game.system);
-        if !known {
-            self.convention = Some((game.system, game.system.convention()));
-        }
-        let (_, convention) = self.convention.as_ref()?;
-        Hidden::new(game, convention)
+        let known = self.conventions.iter().position(|(s, _)| *s == game.system);
+        let i = known.unwrap_or_else(|| {
+            let convention = game.system.convention();
+            self.conventions.push((game.system, convention));
+            self.conventions.len() - 1
+        });
+        Hidden::new(game, &self.conventions[i].1)
     }
 }
 
