@@ -158,6 +158,8 @@ pub(crate) struct Auction {
     /// Which suits each player bid, counting from the leader: 0 is the
     /// leader, 1 the dummy, 2 partner and 3 the declarer.
     bid: [[bool; 4]; 4],
+    /// Who doubled or redoubled the contract last, counting from the leader.
+    doubled_by: Option<usize>,
 }
 
 impl Auction {
@@ -178,6 +180,7 @@ impl Auction {
             trump: None,
             level: 0,
             bid: [[false; 4]; 4],
+            doubled_by: None,
         };
         for (seat, bid) in bids {
             match bid {
@@ -185,12 +188,15 @@ impl Auction {
                     auction.bid[seat][suit as usize] = true;
                     auction.trump = Some(suit);
                     auction.level = level;
+                    auction.doubled_by = None;
                 }
                 Bid::NT(level) => {
                     auction.trump = None;
                     auction.level = level;
+                    auction.doubled_by = None;
                 }
-                _ => {}
+                Bid::Double | Bid::Redouble => auction.doubled_by = Some(seat),
+                Bid::Pass => {}
             }
         }
         auction
@@ -198,7 +204,7 @@ impl Auction {
 }
 
 /// The things about a lead that [`likely_opening_leads`] weighs.
-const FEATURES: [&str; 26] = [
+const FEATURES: [&str; 35] = [
     "length of the suit / 4",
     "singleton",
     "doubleton",
@@ -225,6 +231,15 @@ const FEATURES: [&str; 26] = [
     "the top of three or more without an honour",
     "a singleton, holding trumps",
     "an ace against a slam",
+    "the contract is doubled",
+    "partner doubled, leading a suit an opponent bid",
+    "doubled, leading trumps",
+    "the lower of two touching cards",
+    "the middle of three touching cards",
+    "trumps, with dummy having bid a side suit",
+    "a long suit against a high contract",
+    "a long suit an opponent bid",
+    "an ace in a suit an opponent bid",
 ];
 
 /// The things about leading `card` from `hand` after `auction`, as
@@ -240,6 +255,7 @@ fn features(auction: &Auction, hand: Cards, card: Card) -> [f64; FEATURES.len()]
     let is_trump = auction.trump == Some(suit);
     let bid = |seat: usize| auction.bid[seat][suit as usize];
     let honours = ace || king || queen || jack;
+    let opponent_bid = bid(1) || bid(3);
     let f = |b: bool| b as u8 as f64;
     [
         length as f64 / 4.0,
@@ -268,19 +284,32 @@ fn features(auction: &Auction, hand: Cards, card: Card) -> [f64; FEATURES.len()]
         f(length >= 3 && higher == 0 && !honours),
         f(length == 1 && !is_trump && auction.trump.is_some_and(|t| trumps(t) > 0)),
         f(card.rank() == 14 && auction.level >= 6),
+        f(auction.doubled_by.is_some()),
+        f(auction.doubled_by == Some(2) && opponent_bid),
+        f(auction.doubled_by.is_some() && is_trump),
+        f(card.rank() < 14 && has(card.rank() + 1)),
+        f(card.rank() > 2 && card.rank() < 14 && has(card.rank() + 1) && has(card.rank() - 1)),
+        f(is_trump && (0..4).any(|s| s != suit as usize && auction.bid[1][s])),
+        f(length >= 4 && auction.level >= 5),
+        f(length >= 4 && opponent_bid),
+        f(card.rank() == 14 && opponent_bid),
     ]
 }
 
 /// The weights of [`FEATURES`] against a notrump contract.
 const NOTRUMP_WEIGHTS: [f64; FEATURES.len()] = [
-    1.160, -0.055, -0.370, 0.903, -0.892, -0.818, 0.495, 0.986, 0.205, 0.626, 0.000, 1.892, -1.265,
-    -1.538, 0.021, 0.875, 0.860, -0.262, -0.474, 2.846, 0.279, 2.130, -0.289, 0.270, 0.000, 0.130,
+    2.693, 0.005, -0.082, 0.807, -1.341, -0.972, 1.384, 1.145, -0.444, -0.186,
+    0.000, 1.197, -1.150, -1.500, 0.110, 1.437, -1.925, -0.958, -0.526, -0.319,
+    1.188, 0.201, -0.121, -0.115, 0.000, 0.002, 0.000, 0.000, 0.000, 4.110,
+    -0.369, 0.000, -0.214, -1.098, 0.009,
 ];
 
 /// The weights of [`FEATURES`] against a suit contract.
 const SUIT_WEIGHTS: [f64; FEATURES.len()] = [
-    0.359, 2.797, 1.707, -1.106, -2.814, -3.861, 1.892, 1.399, 1.129, 2.403, -2.384, 3.041, -1.044,
-    -3.091, 0.574, 0.091, 2.012, 1.899, -0.989, 3.928, 0.254, 3.957, 1.894, -1.149, 2.183, 0.000,
+    -0.492, 2.708, 1.398, -0.608, -2.871, -3.044, 2.321, 1.879, 1.007, 1.226,
+    -2.189, 2.375, -1.021, -2.851, 0.544, 0.271, 2.680, 1.399, -0.976, 3.927,
+    -0.352, 4.138, 1.570, -0.510, 2.573, 0.101, -0.000, 0.000, -0.010, 0.595,
+    0.475, -0.324, 0.147, -0.198, 0.358,
 ];
 
 /// How likely a lead of `card` is to be best, the higher the better.
@@ -549,15 +578,20 @@ mod tests {
         }
     }
 
-    fn read_leads(path: &str) -> Vec<Lead> {
+    /// The leads in the files `paths`, comma-separated.
+    fn read_leads(paths: &str) -> Vec<Lead> {
         let card = |pair: &serde_json::Value| {
             Card::new(
                 Suit::ALL[pair[0].as_u64().unwrap() as usize],
                 pair[1].as_u64().unwrap() as u8,
             )
         };
-        let text = std::fs::read_to_string(path).unwrap();
-        text.lines()
+        let text: Vec<String> = paths
+            .split(',')
+            .map(|path| std::fs::read_to_string(path.trim()).unwrap())
+            .collect();
+        text.iter()
+            .flat_map(|text| text.lines())
             .map(|line| {
                 let json: serde_json::Value = serde_json::from_str(line).unwrap();
                 let bids = json["bids"].as_array().unwrap().iter().map(|bid| {
@@ -637,8 +671,15 @@ mod tests {
     fn fit(leads: &[&Lead], penalty: f64) -> Weights {
         let mut weights = [0.0; FEATURES.len()];
         let rate = 1.0;
+        // `OPENING_LEAD_FEATURES` fits only the first that many features, to
+        // see what the rest add.
+        let active: usize = std::env::var("OPENING_LEAD_FEATURES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(FEATURES.len());
         for _ in 0..2000 {
             let mut gradient = weights.map(|w| -penalty * w);
+            gradient[active..].fill(0.0);
             for lead in leads {
                 let features: Vec<Weights> = lead
                     .values
@@ -664,7 +705,7 @@ mod tests {
                     }
                 }
             }
-            for k in 0..FEATURES.len() {
+            for k in 0..active {
                 weights[k] += rate * gradient[k];
             }
         }
