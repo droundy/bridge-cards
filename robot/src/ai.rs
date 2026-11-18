@@ -141,11 +141,7 @@ impl BidAI for ConventionalBid {
                 .contract_known(history, &hand)
                 .map(|(b, c)| (usize::MAX, b, c));
         }
-        if let Some((_, b, c)) = best {
-            println!(
-                "Bidding {b:?} with convention {}",
-                format_as!(HTML, c.description()).into_string()
-            );
+        if let Some((_, b, _)) = best {
             b
         } else {
             Bid::Pass
@@ -389,6 +385,8 @@ impl PlayAI for RandomPlay {
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
 mod booklet;
+pub(crate) mod ensemble;
+pub use ensemble::EnsemblePlay;
 #[cfg(test)]
 mod daily_columns;
 pub(crate) mod rules;

@@ -334,6 +334,18 @@ impl Convention {
         shown
     }
 
+    /// The bounds on the hand that the bids of the player `offset` seats before
+    /// the next bidder show, which are a minimum and a maximum of every count
+    /// that a `HandValuation` has.
+    pub(super) fn shown_bounds(
+        &self,
+        history: &[Bid],
+        offset: usize,
+    ) -> (HandValuation, HandValuation) {
+        let shown = self.shown(history, offset);
+        (shown.min, shown.max)
+    }
+
     /// A sentence on what `who` has shown with their bids, if they have bid
     /// anything but pass, or are partner.
     fn what_was_shown(&self, history: &[Bid], who: &str, offset: usize) -> Option<Text> {
