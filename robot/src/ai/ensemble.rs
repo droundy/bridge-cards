@@ -32,6 +32,7 @@ use bridge_solver::{Naive, Starting};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use std::sync::OnceLock;
 
 /// How many deals to try for one that fits the auction before taking one that
 /// does not.
@@ -269,11 +270,18 @@ pub(crate) fn trump_of<C>(game: &GameState<C>) -> Option<Suit> {
 
 /// How many of the tricks left the side of whoever leads this trick wins,
 /// when everything is known, after `plays` have been made to the trick.
+///
+/// This is a minimax search over the rest of the trick, with alpha-beta
+/// pruning: a branch is skipped once it cannot change the value, so the value
+/// is exactly what searching every branch would find.  `alpha` and `beta` are
+/// the best that the leader's side and the other side are already sure of.
 fn trick_value(
     solver: &mut Naive,
     starting: Starting,
     trump: Option<Suit>,
     plays: &mut Vec<Card>,
+    mut alpha: f64,
+    mut beta: f64,
 ) -> f64 {
     if plays.len() == 4 {
         let trick = starting.after([plays[0], plays[1], plays[2], plays[3]], trump);
@@ -285,17 +293,27 @@ fn trick_value(
     } else {
         starting.hands[seat].following_suit(plays[0].suit())
     };
+    // The leader and the partner of the leader want the most tricks.
+    let most = seat & 1 == 0;
     let mut best: Option<f64> = None;
     for card in legal {
         plays.push(card);
-        let value = trick_value(solver, starting, trump, plays);
+        let value = trick_value(solver, starting, trump, plays, alpha, beta);
         plays.pop();
-        best = Some(match best {
-            // The leader and the partner of the leader want the most tricks.
-            Some(best) if seat & 1 == 0 => best.max(value),
+        let so_far = match best {
+            Some(best) if most => best.max(value),
             Some(best) => best.min(value),
             None => value,
-        });
+        };
+        best = Some(so_far);
+        if most {
+            alpha = alpha.max(so_far);
+        } else {
+            beta = beta.min(so_far);
+        }
+        if alpha >= beta {
+            break;
+        }
     }
     best.expect("a hand has to have a card to play")
 }
@@ -314,7 +332,14 @@ pub(crate) fn card_values(
     legal
         .map(|card| {
             plays.push(card);
-            let value = trick_value(&mut solver, starting, trump, &mut plays);
+            let value = trick_value(
+                &mut solver,
+                starting,
+                trump,
+                &mut plays,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+            );
             plays.pop();
             (card, value)
         })
@@ -359,12 +384,22 @@ fn deals_for(tricks_left: usize) -> usize {
 #[derive(Debug)]
 pub struct EnsemblePlay {
     rng: StdRng,
-    /// The convention that the auction was read with, and the system it is the
-    /// convention of.
-    convention: Option<(BiddingSystem, Convention)>,
     /// Whether to keep the deals that come closest to being bid as the
     /// auction was.
     replay: bool,
+}
+
+/// The convention of `system`, which takes a long time to build (it compiles
+/// regexes), so it is built once for each system and kept.
+fn convention_of(system: BiddingSystem) -> &'static Convention {
+    static SHEETS: OnceLock<Convention> = OnceLock::new();
+    static SAYC: OnceLock<Convention> = OnceLock::new();
+    static TWO_OVER_ONE: OnceLock<Convention> = OnceLock::new();
+    match system {
+        BiddingSystem::Sheets => SHEETS.get_or_init(|| system.convention()),
+        BiddingSystem::Sayc => SAYC.get_or_init(|| system.convention()),
+        BiddingSystem::TwoOverOne => TWO_OVER_ONE.get_or_init(|| system.convention()),
+    }
 }
 
 impl EnsemblePlay {
@@ -378,11 +413,7 @@ impl EnsemblePlay {
     }
 
     fn with_rng(rng: StdRng) -> Self {
-        EnsemblePlay {
-            rng,
-            convention: None,
-            replay: false,
-        }
+        EnsemblePlay { rng, replay: false }
     }
 
     /// This player, choosing by an ensemble of the deals that the robot would
@@ -401,11 +432,7 @@ impl EnsemblePlay {
         game: &GameState<C>,
         count: usize,
     ) -> Option<(Hidden, Vec<[Cards; 2]>)> {
-        let known = matches!(&self.convention, Some((system, _)) if *system == game.system);
-        if !known {
-            self.convention = Some((game.system, game.system.convention()));
-        }
-        let (_, convention) = self.convention.as_ref()?;
+        let convention = convention_of(game.system);
         let hidden = Hidden::new(game, convention)?;
         let deals = hidden.ensemble(&mut self.rng, count, self.replay.then_some(convention));
         Some((hidden, deals))
@@ -737,6 +764,40 @@ mod tests {
                 assert!(game.could_be_played().contains(card), "{card:?}");
             }
         }
+    }
+
+    /// Timing and a checksum of the choices, for optimizing. Run with
+    /// `cargo test -p robot --release timing_for_optimizing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn timing_for_optimizing() {
+        let mut all = Vec::new();
+        for tricks_left in 2..=7 {
+            all.push((tricks_left, games(tricks_left, 16)));
+        }
+        let mut checksum = 0u64;
+        let mut plays = 0;
+        let warm = std::time::Instant::now();
+        for system in [BiddingSystem::Sheets, BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+            convention_of(system);
+        }
+        eprintln!("WARMUP secs={:.3}", warm.elapsed().as_secs_f64());
+        let started = std::time::Instant::now();
+        for (tricks_left, games) in &all {
+            let mut player = EnsemblePlay::seeded(*tricks_left as u64);
+            for game in games {
+                let card = player.play(game);
+                let text = format!("{card:?}");
+                for byte in text.bytes() {
+                    checksum = checksum.wrapping_mul(131).wrapping_add(byte as u64);
+                }
+                plays += 1;
+            }
+        }
+        eprintln!(
+            "TIMING plays={plays} secs={:.3} checksum={checksum}",
+            started.elapsed().as_secs_f64()
+        );
     }
 
     #[test]
