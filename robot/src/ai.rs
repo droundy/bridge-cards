@@ -391,6 +391,10 @@ mod advice;
 mod booklet;
 pub(crate) mod ensemble;
 pub(crate) mod opening_lead;
+#[cfg(test)]
+mod fitting;
+#[cfg(test)]
+mod fitted_play;
 pub use ensemble::EnsemblePlay;
 #[cfg(test)]
 mod daily_columns;
