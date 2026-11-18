@@ -104,6 +104,11 @@ impl Hidden {
         })
     }
 
+    /// The seats of the two hands.
+    pub(crate) fn seats(&self) -> [Seat; 2] {
+        self.seats
+    }
+
     /// How many of the calls that the two hands made the robot would not have
     /// made with the hands of `deal`, bidding by `convention`.  None, when
     /// `deal` is a deal that the robot would have bid the auction with.
