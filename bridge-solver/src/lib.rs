@@ -832,18 +832,13 @@ impl Naive {
             }
         }
         let score = sampled.score();
-        println!("Score: {:?}", score);
         if plays.is_empty() {
             self.cache.insert(starting, score);
         }
-        println!("Best plays:");
         let play_result: std::collections::HashMap<Card, Score> = play_result
             .into_iter()
             .map(|(card, sampled)| (card, sampled.score()))
             .collect();
-        for (p, s) in play_result.iter() {
-            println!("    {} -> {:.3}", p, s.mean());
-        }
         let risk_worth_taking = if self.care == Thoroughness::OneRound {
             0.1
         } else if !starting.unknown.is_empty() {

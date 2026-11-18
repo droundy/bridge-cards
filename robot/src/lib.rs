@@ -4,6 +4,8 @@ use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};
 
 mod ai;
+#[cfg(feature = "benchmarks")]
+pub mod benches;
 mod utils;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

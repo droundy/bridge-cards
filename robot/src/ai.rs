@@ -350,7 +350,6 @@ impl PlayAI for RandomPlay {
         } else {
             None
         };
-        println!("trump is {nt_or_trump:?}");
         let tricks_left = game.hands.iter().map(|h| h.len()).max().unwrap();
         if game.played.len().is_multiple_of(4) && starting.hands[0].len() == 13 {
             opening_lead(nt_or_trump, starting.hands[0])
@@ -361,10 +360,6 @@ impl PlayAI for RandomPlay {
                 &game.played
             };
             let starting = game.starting().unwrap();
-            for (i, hand) in starting.hands.iter().enumerate() {
-                println!("   {i}: {hand}");
-            }
-            println!("   extra: {}", starting.unknown);
             starting.check();
             let mut solver = if tricks_left < 5 {
                 bridge_solver::Naive::statistical(nt_or_trump, 16)
@@ -382,7 +377,6 @@ impl PlayAI for RandomPlay {
             solver.score_after(starting, cards_played).1
         } else {
             // The follwoing should just unwrap, since there should always be a card to pick
-            println!("could be played: {}", game.could_be_played());
             game.could_be_played()
                 .pick(1)
                 .unwrap()
