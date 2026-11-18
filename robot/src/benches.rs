@@ -19,6 +19,8 @@
 //! ensemble of deals of the two hands that the player cannot see, which fit
 //! what is known of them: how many cards each has, the suits each has shown out
 //! of, which cards have been played, and what the auction showed of each hand.
+//! With `PLAY_BENCH_REFERENCE=replayed` it is narrowed to the deals that the
+//! robot would have bid the auction with, or that come closest.
 //! Its value in a deal is the tricks that it wins with the best play of
 //! everyone when all the hands are known, and its value is the mean of that
 //! over the ensemble.  The loss of a choice is the value of the best card,
@@ -117,6 +119,22 @@ fn ensemble_plays(situations: &Vec<String>) -> Vec<Option<String>> {
         .collect()
 }
 
+/// The play of [`EnsemblePlay`] when it [replays the
+/// auction](EnsemblePlay::replaying_the_auction), and so chooses by the deals
+/// that the robot would have bid the auction with.
+#[scaling::bench(group = "play decision")]
+fn replayed_ensemble_plays(situations: &Vec<String>) -> Vec<Option<String>> {
+    let mut player = EnsemblePlay::new().replaying_the_auction();
+    situations
+        .iter()
+        .map(|situation| {
+            let game: GameState<()> = serde_json::from_str(situation).ok()?;
+            let card = player.play(&game);
+            serde_json::to_string(&Action::Play(game.hand_playing()?, card)).ok()
+        })
+        .collect()
+}
+
 /// Plays any legal card, for a sense of how much the double-dummy loss of the
 /// robot is worth.
 #[scaling::bench(group = "play decision")]
@@ -136,6 +154,14 @@ fn random_plays(situations: &Vec<String>) -> Vec<Option<String>> {
 /// How many deals of the hands that the player cannot see make up the
 /// ensemble that a play is valued over.
 const REFERENCE_DEALS: usize = 48;
+
+/// Whether the ensemble that a play is valued over is narrowed to the deals
+/// that come closest to being bid as the auction was, which it is when the
+/// environment variable `PLAY_BENCH_REFERENCE` is `replayed`.  It is then
+/// smaller, and often much smaller, than [`REFERENCE_DEALS`].
+fn reference_replays() -> bool {
+    std::env::var("PLAY_BENCH_REFERENCE").is_ok_and(|reference| reference == "replayed")
+}
 
 /// A number made from `text`, which is the same on every platform.
 fn seed_from(text: &str) -> u64 {
@@ -203,11 +229,15 @@ fn work_out_reference_values(situation: &str, game: &GameState<()>) -> Option<Va
     let convention = game.system.convention();
     let hidden = Hidden::new(game, &convention)?;
     let mut rng = StdRng::seed_from_u64(seed_from(situation));
+    let replay = reference_replays().then_some(&convention);
+    let deals = hidden.ensemble(&mut rng, REFERENCE_DEALS, replay);
+    if deals.is_empty() {
+        return None;
+    }
     let trump = trump_of(game);
     let legal = game.could_be_played();
     let mut totals: Vec<(Card, f64)> = legal.map(|card| (card, 0.0)).collect();
-    for _ in 0..REFERENCE_DEALS {
-        let (deal, _) = hidden.sample(&mut rng)?;
+    for &deal in &deals {
         let (starting, in_trick) = starting_with(game, &hidden, deal)?;
         for (total, (_, value)) in totals
             .iter_mut()
@@ -219,7 +249,7 @@ fn work_out_reference_values(situation: &str, game: &GameState<()>) -> Option<Va
     Some(
         totals
             .into_iter()
-            .map(|(card, total)| (card, total / REFERENCE_DEALS as f64))
+            .map(|(card, total)| (card, total / deals.len() as f64))
             .collect(),
     )
 }
