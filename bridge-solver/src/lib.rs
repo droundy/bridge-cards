@@ -7,6 +7,8 @@ use std::hash::{BuildHasherDefault, Hasher};
 mod benches;
 mod double_dummy;
 pub use double_dummy::DoubleDummy;
+mod ordering;
+pub use ordering::likely_plays;
 
 #[cfg(test)]
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
