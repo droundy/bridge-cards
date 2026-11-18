@@ -16,8 +16,8 @@
 //! would have opened 1♥.  So the ensemble can also be narrowed to the deals
 //! that the robot would have bid the auction with, by bidding each of them
 //! again ([`Hidden::closest_to_the_auction`]).  People do not always bid as the
-//! robot does, so when no deal makes every call, it keeps those that miss
-//! fewest.
+//! robot does, so it keeps the deals that make every call and then those that
+//! miss fewest, as many as it wants.
 //!
 //! Two things in this are not true to the game.  Best play by everyone with
 //! every hand known is not how anyone plays, since a defender who cannot see
@@ -123,33 +123,34 @@ impl Hidden {
             .sum()
     }
 
-    /// Those of `deals` that come closest to being bid as the auction was,
-    /// by `convention`: every deal that the robot would have bid the auction
-    /// with, or when there are none of those, every deal that misses as few
-    /// of the calls as any.  People do not always bid as the robot does, so
-    /// there may be no deal that makes every call.
+    /// The `count` of `deals` that come closest to being bid as the auction
+    /// was, by `convention`: the deals that the robot would have bid the
+    /// auction with, and then those that miss fewest of its calls.  People do
+    /// not always bid as the robot does, so there may be no deal that makes
+    /// every call, and a deal that misses one may be as likely as one that
+    /// makes them all.
     pub(crate) fn closest_to_the_auction(
         &self,
         deals: Vec<[Cards; 2]>,
         convention: &Convention,
+        count: usize,
     ) -> Vec<[Cards; 2]> {
-        let missed: Vec<usize> = deals
-            .iter()
-            .map(|deal| self.calls_missed(deal, convention))
-            .collect();
-        let fewest = missed.iter().copied().min().unwrap_or(0);
-        deals
+        let mut ranked: Vec<(usize, [Cards; 2])> = deals
             .into_iter()
-            .zip(missed)
-            .filter(|&(_, missed)| missed == fewest)
-            .map(|(deal, _)| deal)
+            .map(|deal| (self.calls_missed(&deal, convention), deal))
+            .collect();
+        ranked.sort_by_key(|&(missed, _)| missed);
+        ranked
+            .into_iter()
+            .take(count)
+            .map(|(_, deal)| deal)
             .collect()
     }
 
     /// An ensemble of `count` deals, or fewer if the cards cannot be dealt.
     /// With `replay`, a convention, it is the deals of `count` times
     /// [`OVERSAMPLE`] that come closest to being bid as the auction was by
-    /// that convention, up to `count` of them, which may be as few as one.
+    /// that convention.
     pub(crate) fn ensemble(
         &self,
         rng: &mut impl Rng,
@@ -165,8 +166,7 @@ impl Hidden {
             .map_while(|_| self.sample(rng).map(|(deal, _)| deal))
             .collect();
         if let Some(convention) = replay {
-            deals = self.closest_to_the_auction(deals, convention);
-            deals.truncate(count);
+            deals = self.closest_to_the_auction(deals, convention, count);
         }
         deals
     }
@@ -678,17 +678,19 @@ mod tests {
         let hidden = Hidden::new(&game, &convention).unwrap();
         let mut rng = StdRng::seed_from_u64(6);
         let sampled = hidden.ensemble(&mut rng, 40, None);
-        let fewest = sampled
+        let mut missed: Vec<usize> = sampled
             .iter()
             .map(|deal| hidden.calls_missed(deal, &convention))
-            .min()
-            .unwrap();
-        assert!(fewest > 0);
-        let deals = hidden.closest_to_the_auction(sampled, &convention);
-        assert!(!deals.is_empty());
-        for deal in &deals {
-            assert_eq!(fewest, hidden.calls_missed(deal, &convention));
-        }
+            .collect();
+        assert!(missed.iter().all(|&m| m > 0));
+        let deals = hidden.closest_to_the_auction(sampled, &convention, 10);
+        // The ten that miss fewest, whether or not they tie.
+        missed.sort();
+        let kept: Vec<usize> = deals
+            .iter()
+            .map(|deal| hidden.calls_missed(deal, &convention))
+            .collect();
+        assert_eq!(missed[..10], kept[..]);
     }
 
     /// How many sampled deals the robot would have bid the auction with, and
