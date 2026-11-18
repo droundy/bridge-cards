@@ -1,9 +1,13 @@
-pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention};
+pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention, EnsemblePlay, PlayAI};
 use bridge_deck::{Card, Cards};
 use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};
 
 mod ai;
+#[cfg(feature = "benchmarks")]
+pub mod benches;
+#[cfg(any(test, feature = "benchmarks"))]
+mod situations;
 mod utils;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

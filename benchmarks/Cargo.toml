@@ -18,6 +18,8 @@ publish = false
 bridge-deck = { path = "..", features = ["benchmarks"] }
 bridge-solver = { path = "../bridge-solver", features = ["benchmarks"] }
 
+robot = { path = "../robot", features = ["benchmarks"] }
+
 bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
 bridge-solver-main = { package = "bridge-solver", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }
 
