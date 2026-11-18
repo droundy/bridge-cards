@@ -9,8 +9,8 @@
 use bridge_deck as _;
 use bridge_deck_main as _;
 use bridge_solver as _;
-use robot as _;
 use bridge_solver_main as _;
+use robot as _;
 
 fn main() -> Result<(), scaling::RegistrationError> {
     let filters: Vec<String> = std::env::args()

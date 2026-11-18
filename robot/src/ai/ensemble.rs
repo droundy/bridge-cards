@@ -364,9 +364,9 @@ fn deals_for(tricks_left: usize) -> usize {
 #[derive(Debug)]
 pub struct EnsemblePlay {
     rng: StdRng,
-    /// The convention that the auction was read with, and the system it is the
-    /// convention of.
-    convention: Option<(BiddingSystem, Convention)>,
+    /// The conventions that auctions have been read with, each with the system
+    /// it is the convention of, so that each is built only once.
+    conventions: Vec<(BiddingSystem, Convention)>,
     /// Whether to keep the deals that come closest to being bid as the
     /// auction was.
     replay: bool,
@@ -385,7 +385,7 @@ impl EnsemblePlay {
     fn with_rng(rng: StdRng) -> Self {
         EnsemblePlay {
             rng,
-            convention: None,
+            conventions: Vec::new(),
             replay: false,
         }
     }
@@ -406,11 +406,13 @@ impl EnsemblePlay {
         game: &GameState<C>,
         count: usize,
     ) -> Option<(Hidden, Vec<[Cards; 2]>)> {
-        let known = matches!(&self.convention, Some((system, _)) if *system == game.system);
-        if !known {
-            self.convention = Some((game.system, game.system.convention()));
-        }
-        let (_, convention) = self.convention.as_ref()?;
+        let known = self.conventions.iter().position(|(s, _)| *s == game.system);
+        let i = known.unwrap_or_else(|| {
+            let convention = game.system.convention();
+            self.conventions.push((game.system, convention));
+            self.conventions.len() - 1
+        });
+        let convention = &self.conventions[i].1;
         let hidden = Hidden::new(game, convention)?;
         let deals = hidden.ensemble(&mut self.rng, count, self.replay.then_some(convention));
         Some((hidden, deals))
