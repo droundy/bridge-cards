@@ -94,6 +94,42 @@ impl DoubleDummy {
         self.search_after(renumbered(hands), &plays, None)
     }
 
+    /// Whether the side that led this trick takes at least `target` of the
+    /// tricks that are left, with best play by everyone, after `plays` have
+    /// been made to it from `hands`, which are the hands as they were before
+    /// the trick.  There may be from one to four plays.
+    ///
+    /// This is the one question that [`DoubleDummy::tricks_after`] asks
+    /// several times over, so it is several times cheaper.
+    pub fn takes_at_least_after(
+        &mut self,
+        hands: [Cards; 4],
+        plays: &[Card],
+        target: usize,
+    ) -> bool {
+        let renumber = renumbering(hands);
+        let plays: Vec<Card> = plays.iter().map(|&card| renumber(card)).collect();
+        self.makes_after_plays(renumbered(hands), &plays, target)
+    }
+
+    /// Whether the side that led this trick takes at least `target` of the
+    /// tricks that are left after `plays`, from `hands`, both renumbered.
+    fn makes_after_plays(&mut self, hands: [Cards; 4], plays: &[Card], target: usize) -> bool {
+        if target > hands[0].len() {
+            return false;
+        }
+        let winner = (1..plays.len()).fold(0, |winner, i| {
+            if self.beats(plays[i], plays[winner]) {
+                i
+            } else {
+                winner
+            }
+        });
+        let mut trick = [plays[0]; 4];
+        trick[..plays.len()].copy_from_slice(plays);
+        target == 0 || self.makes_from(hands, &mut trick, plays.len(), winner, target)
+    }
+
     /// The tricks that the side that led this trick takes, with best play by
     /// everyone after it, after each card that the next player could play to
     /// `plays`, from `hands`, which are the hands as they were before the
@@ -137,18 +173,7 @@ impl DoubleDummy {
     /// `hands`, both renumbered, searching from `guess` if there is one.
     fn search_after(&mut self, hands: [Cards; 4], plays: &[Card], guess: Option<usize>) -> usize {
         let n = hands[0].len();
-        let winner = (1..plays.len()).fold(0, |winner, i| {
-            if self.beats(plays[i], plays[winner]) {
-                i
-            } else {
-                winner
-            }
-        });
-        let mut makes = |target: usize| {
-            let mut trick = [plays[0]; 4];
-            trick[..plays.len()].copy_from_slice(plays);
-            target == 0 || self.makes_from(hands, &mut trick, plays.len(), winner, target)
-        };
+        let mut makes = |target: usize| self.makes_after_plays(hands, plays, target);
         match guess {
             None => {
                 let (mut low, mut high) = (0, n);
@@ -431,6 +456,12 @@ mod tests {
         }
     }
 
+    fn plays_with(plays: &[Card], card: Card) -> Vec<Card> {
+        let mut plays = plays.to_vec();
+        plays.push(card);
+        plays
+    }
+
     #[test]
     fn tricks_after_each_card_agree_with_tricks_after_it() {
         let mut rng = SmallRng::seed_from_u64(9);
@@ -454,6 +485,17 @@ mod tests {
                         let alone = DoubleDummy::new(trump).tricks_after(hands, &plays);
                         plays.pop();
                         assert_eq!(alone, tricks, "{hands:?} {plays:?} {card:?}");
+                        let mut solver = DoubleDummy::new(trump);
+                        assert!(solver.takes_at_least_after(
+                            hands,
+                            &plays_with(&plays, card),
+                            tricks
+                        ));
+                        assert!(!solver.takes_at_least_after(
+                            hands,
+                            &plays_with(&plays, card),
+                            tricks + 1
+                        ));
                     }
                     let mut legal = legal;
                     plays.push(legal.pick_rng(&mut rng, 1).unwrap().max().unwrap());

@@ -25,6 +25,7 @@
 //! gives every deal that it keeps the same weight, as though each hand were as
 //! likely as any other that would have been bid the same way.
 
+use super::opening_lead::{likely_opening_leads, Auction, Unseen};
 use super::{Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
@@ -468,6 +469,47 @@ impl EnsemblePlay {
     }
 }
 
+impl EnsemblePlay {
+    /// The opening lead, if it is the opening lead: of the leads that
+    /// [`likely_opening_leads`] thinks likeliest, the one that takes the
+    /// most tricks on average over an ensemble of the three hands that the
+    /// leader cannot see.  Solving a lead with every trick left takes most
+    /// of a second a deal, so only a few leads are tried, on a few deals.
+    fn opening_lead<C>(&mut self, game: &GameState<C>) -> Option<Card> {
+        let convention = convention_of(game.system);
+        let unseen = Unseen::new(game, convention)?;
+        let hand = game.hands[game.turn()?];
+        let leads = likely_opening_leads(&Auction::new(game)?, hand);
+        let leads = &leads[..OPENING_LEADS_TRIED.min(leads.len())];
+        let deals = unseen.ensemble(
+            &mut self.rng,
+            hand,
+            OPENING_LEAD_DEALS,
+            self.replay.then_some(convention),
+        );
+        let trump = trump_of(game);
+        let mut totals = vec![0; leads.len()];
+        for deal in deals {
+            let mut solver = DoubleDummy::new(trump);
+            for (total, &lead) in totals.iter_mut().zip(leads) {
+                *total += solver.tricks_after(deal, &[lead]);
+            }
+        }
+        // The most tricks, and of leads as good, the likeliest.
+        let most = *totals.iter().max()?;
+        let best = totals.iter().position(|&total| total == most)?;
+        Some(leads[best])
+    }
+}
+
+/// How many of the likeliest opening leads [`EnsemblePlay`] tries.  An
+/// ensemble of a few deals adds little to the first of them, and each lead
+/// takes most of a second a deal to solve.
+const OPENING_LEADS_TRIED: usize = 2;
+
+/// How many deals [`EnsemblePlay`] tries the opening leads on.
+const OPENING_LEAD_DEALS: usize = 4;
+
 impl Default for EnsemblePlay {
     fn default() -> Self {
         Self::new()
@@ -480,6 +522,9 @@ impl PlayAI for EnsemblePlay {
         let tricks_left = game.hands.iter().map(|hand| hand.len()).max().unwrap_or(0);
         if legal.len() == 1 {
             return legal.min().unwrap();
+        }
+        if let Some(lead) = self.opening_lead(game) {
+            return lead;
         }
         if tricks_left > MOST_TRICKS {
             return RandomPlay.play(game);
