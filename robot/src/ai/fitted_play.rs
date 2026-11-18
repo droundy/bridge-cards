@@ -9,7 +9,7 @@
 //! tables (`opening_lead`), since the dummy is not yet in sight then.
 
 use super::Convention;
-use crate::{Bid, GameState, Seat};
+use crate::{Bid, GameState, Seat, Seated};
 use bridge_deck::{Card, Cards, Suit};
 
 /// The tables, each with its size and the facts that index it.  The role is
@@ -70,13 +70,18 @@ struct Shown {
 }
 
 impl Shown {
-    /// What the auction (read by `convention`) and the play of `game` show of
-    /// the hand of `seat`, which holds some of `hidden`.
-    fn new<C>(game: &GameState<C>, convention: &Convention, seat: Seat, hidden: Cards) -> Shown {
+    /// What the auction of `game` (read by `convention`) and the play show of
+    /// the hand of `seat`, which has `played` and holds some of `hidden`.
+    fn new<C>(
+        game: &GameState<C>,
+        convention: &Convention,
+        seat: Seat,
+        played: Cards,
+        hidden: Cards,
+    ) -> Shown {
         let first = (seat as usize + 4 - game.dealer as usize) % 4;
         let offset = (game.bids.len() + 4 - first) % 4;
         let (min, max) = convention.shown_bounds(&game.bids, offset);
-        let played = game.original_hands[seat] - game.hands[seat];
         let length = Suit::ALL.map(|suit| {
             if !game.shown_out[seat].in_suit(suit).is_empty() {
                 return (0, 0);
@@ -163,17 +168,28 @@ impl View {
     /// by `convention`, or `None` when nobody is to play a card, or it is the
     /// opening lead.
     pub(crate) fn new<C>(game: &GameState<C>, convention: &Convention) -> Option<View> {
+        View::at(game, convention, game.hands, current_trick(game))
+    }
+
+    /// What the next player to `trick` would see, if the hands were `hands`
+    /// then, where `trick` is the current trick of `game`, or the start of
+    /// it, or the current trick with cards that might be played after it.
+    /// What `game` shows of each hand is taken as it would have been then.
+    pub(crate) fn at<C>(
+        game: &GameState<C>,
+        convention: &Convention,
+        hands: Seated<Cards>,
+        trick: &[Card],
+    ) -> Option<View> {
         let lead_seat = game.lead?;
         let dummy = game.dummy()?;
         let declarer = dummy + 2;
-        let in_trick: &[Card] = if game.played.len() == 4 {
-            &[]
-        } else {
-            &game.played
-        };
-        let place = in_trick.len();
+        let place = trick.len();
+        if place > 3 {
+            return None;
+        }
         let seat = lead_seat + place;
-        let left = (0..4).fold(Cards::EMPTY, |cards, s| cards + game.hands[Seat::from(s)]);
+        let left = (0..4).fold(Cards::EMPTY, |cards, s| cards + hands[Seat::from(s)]);
         if left.len() == 52 {
             return None;
         }
@@ -186,16 +202,16 @@ impl View {
         } else {
             3
         };
-        let mine = game.hands[seat];
+        let mine = hands[seat];
         let other = if seat == dummy {
-            game.hands[declarer]
+            hands[declarer]
         } else {
-            game.hands[dummy]
+            hands[dummy]
         };
         let trump = super::ensemble::trump_of(game);
         let mut winner = 0;
-        for (i, &card) in in_trick.iter().enumerate().skip(1) {
-            if beats(trump, card, in_trick[winner]) {
+        for (i, &card) in trick.iter().enumerate().skip(1) {
+            if beats(trump, card, trick[winner]) {
                 winner = i;
             }
         }
@@ -207,12 +223,13 @@ impl View {
                 bid[theirs][suit as usize] = true;
             }
         }
+        let played = played_at(game, trick);
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let mut shown = || {
             let hidden_seat = hidden_seats.next().unwrap();
-            Shown::new(game, convention, hidden_seat, hidden)
+            Shown::new(game, convention, hidden_seat, played[hidden_seat], hidden)
         };
         let shown = [shown(), shown()];
         Some(View {
@@ -223,12 +240,21 @@ impl View {
             other,
             hidden,
             left,
-            lead: in_trick.first().map(|card| card.suit()),
-            winning: in_trick.get(winner).copied(),
+            lead: trick.first().map(|card| card.suit()),
+            winning: trick.get(winner).copied(),
             partner_winning: place > 0 && winner % 2 == place % 2,
             bid,
             shown,
         })
+    }
+
+    /// The cards that the player could play: those of the suit led if they
+    /// have any, and otherwise any.
+    pub(crate) fn legal(&self) -> Cards {
+        match self.lead {
+            Some(lead) if !self.mine.in_suit(lead).is_empty() => self.mine.in_suit(lead),
+            _ => self.mine,
+        }
     }
 
     /// The entries of the tables of [`TUPLES`], laid end to end, that
@@ -296,6 +322,138 @@ impl View {
     }
 }
 
+/// The cards played to the trick that is not yet over in `game`, if any.
+fn current_trick<C>(game: &GameState<C>) -> &[Card] {
+    if game.played.len() == 4 {
+        &[]
+    } else {
+        &game.played
+    }
+}
+
+/// The seat that plays the `i`th card of the current trick of `game`.
+fn seat_of<C>(game: &GameState<C>, i: usize) -> Seat {
+    game.lead.unwrap() + i
+}
+
+/// The cards that each hand had played when `trick` (as [`View::at`] takes
+/// it) had been played to the current trick of `game`.  What each hand has
+/// played is seen by all.
+fn played_at<C>(game: &GameState<C>, trick: &[Card]) -> Seated<Cards> {
+    let mut played = game.original_hands;
+    for s in 0..4 {
+        let seat = Seat::from(s);
+        played[seat] = game.original_hands[seat] - game.hands[seat];
+    }
+    let current = current_trick(game);
+    for (i, &card) in current.iter().enumerate().skip(trick.len()) {
+        played[seat_of(game, i)] -= Cards::singleton(card);
+    }
+    for (i, &card) in trick.iter().enumerate().skip(current.len()) {
+        played[seat_of(game, i)] += Cards::singleton(card);
+    }
+    played
+}
+
+/// The hands of `game` with the hidden hands of `seats` dealt `deal`, as they
+/// were, or would be, once `trick` (as [`View::at`] takes it) had been
+/// played to the current trick.
+pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2], trick: &[Card]) -> Seated<Cards> {
+    let mut hands = game.hands;
+    for (seat, cards) in seats.into_iter().zip(deal) {
+        hands[seat] = cards;
+    }
+    let current = current_trick(game);
+    for (i, &card) in current.iter().enumerate().skip(trick.len()) {
+        hands[seat_of(game, i)] += Cards::singleton(card);
+    }
+    for (i, &card) in trick.iter().enumerate().skip(current.len()) {
+        hands[seat_of(game, i)] -= Cards::singleton(card);
+    }
+    hands
+}
+
+/// The chance that the player of `view` plays each card that they could,
+/// by the play model with `weights`: the softmax of its scores divided by
+/// `temperature`, which is fitted so that these are chances and not only an
+/// order.
+pub(crate) fn chances(view: &View, weights: &[f64], temperature: f64) -> Vec<(Card, f64)> {
+    let scores: Vec<(Card, f64)> = view
+        .legal()
+        .map(|card| {
+            let score: f64 = view.entries(card).iter().map(|&e| weights[e]).sum();
+            (card, score / temperature)
+        })
+        .collect();
+    let most = scores.iter().map(|s| s.1).fold(f64::MIN, f64::max);
+    let odds: Vec<(Card, f64)> = scores.iter().map(|&(c, s)| (c, (s - most).exp())).collect();
+    let sum: f64 = odds.iter().map(|o| o.1).sum();
+    odds.into_iter().map(|(c, o)| (c, o / sum)).collect()
+}
+
+/// The chance that the next player to `trick` (as [`View::at`] takes it)
+/// plays each card, when we cannot see their hand: the chances of
+/// [`chances`] in each of `deals` of the hidden hands of `seats`, each with
+/// its weight, averaged.  A card that they would always play if they held it
+/// has only the chance that they hold it.
+pub(crate) fn predicted_plays<C>(
+    game: &GameState<C>,
+    convention: &Convention,
+    seats: [Seat; 2],
+    deals: &[([Cards; 2], f64)],
+    trick: &[Card],
+    weights: &[f64],
+    temperature: f64,
+) -> Vec<(Card, f64)> {
+    let mut totals: Vec<(Card, f64)> = Vec::new();
+    let total_weight: f64 = deals.iter().map(|d| d.1).sum();
+    for &(deal, weight) in deals {
+        let hands = hands_at(game, seats, deal, trick);
+        let Some(view) = View::at(game, convention, hands, trick) else {
+            continue;
+        };
+        for (card, chance) in chances(&view, weights, temperature) {
+            match totals.iter_mut().find(|t| t.0 == card) {
+                Some(total) => total.1 += weight * chance / total_weight,
+                None => totals.push((card, weight * chance / total_weight)),
+            }
+        }
+    }
+    totals
+}
+
+/// How likely the cards that the hands of `seats` have played to the
+/// current trick of `game` are, by the play model, if those hands were dealt
+/// `deal`: the product of the chance of each, as it was played.  Weighting
+/// deals of an ensemble by it draws what can be drawn from those plays.
+pub(crate) fn trick_likelihood<C>(
+    game: &GameState<C>,
+    convention: &Convention,
+    seats: [Seat; 2],
+    deal: [Cards; 2],
+    weights: &[f64],
+    temperature: f64,
+) -> f64 {
+    let current = current_trick(game);
+    let mut likelihood = 1.0;
+    for (i, &card) in current.iter().enumerate() {
+        if !seats.contains(&seat_of(game, i)) {
+            continue;
+        }
+        let trick = &current[..i];
+        let hands = hands_at(game, seats, deal, trick);
+        let Some(view) = View::at(game, convention, hands, trick) else {
+            continue;
+        };
+        let chance = chances(&view, weights, temperature)
+            .into_iter()
+            .find(|c| c.0 == card)
+            .map_or(0.0, |c| c.1);
+        likelihood *= chance;
+    }
+    likelihood
+}
+
 /// Whether `card`, played after `winning`, beats it.
 fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
     if card.suit() == winning.suit() {
@@ -312,7 +470,7 @@ mod tests {
     use crate::ai::fitting;
     use crate::situations::Generator;
     use rand::rngs::StdRng;
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
 
     fn var(name: &str, default: &str) -> String {
         std::env::var(name).unwrap_or_else(|_| default.into())
@@ -358,6 +516,109 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Situations of the play at every stage, as games.
+    fn some_games() -> Vec<GameState<()>> {
+        let mut generator = Generator::new();
+        let mut rng = StdRng::seed_from_u64(2);
+        let mut games = Vec::new();
+        for tricks_left in 2..=12 {
+            for index in 0..16 {
+                if let Some(json) = generator.situation(&mut rng, index, tricks_left) {
+                    games.push(serde_json::from_str(&json).unwrap());
+                }
+            }
+        }
+        games
+    }
+
+    #[test]
+    fn a_view_earlier_in_the_trick_could_play_the_card_that_was_played() {
+        for game in some_games() {
+            let convention = game.system.convention();
+            let hidden = Hidden::new(&game, &convention).unwrap();
+            let seats = hidden.seats();
+            let real = seats.map(|seat| game.hands[seat]);
+            let current = current_trick(&game);
+            for (i, &card) in current.iter().enumerate() {
+                let hands = hands_at(&game, seats, real, &current[..i]);
+                let view = View::at(&game, &convention, hands, &current[..i]).unwrap();
+                assert!(view.legal().contains(card), "{card} at {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let weights: Vec<f64> = (0..ENTRIES).map(|_| rng.gen_range(-1.0..1.0)).collect();
+        for game in some_games() {
+            let convention = game.system.convention();
+            let view = View::new(&game, &convention).unwrap();
+            let sum: f64 = chances(&view, &weights, 1.0).iter().map(|c| c.1).sum();
+            assert!((sum - 1.0).abs() < 1e-9);
+            let hidden = Hidden::new(&game, &convention).unwrap();
+            let seats = hidden.seats();
+            let real = seats.map(|seat| game.hands[seat]);
+            assert!(trick_likelihood(&game, &convention, seats, real, &weights, 1.0) > 0.0);
+            // After the first card we could play, what would the next
+            // player play, if we cannot see their hand?
+            let trick: Vec<Card> = current_trick(&game)
+                .iter()
+                .copied()
+                .chain(view.legal().min())
+                .collect();
+            let next = seat_of(&game, trick.len());
+            if trick.len() == 4 || !seats.contains(&next) {
+                continue;
+            }
+            let deals: Vec<([Cards; 2], f64)> = hidden
+                .ensemble(&mut rng, 4, None)
+                .into_iter()
+                .map(|deal| (deal, 1.0))
+                .collect();
+            let predicted = predicted_plays(&game, &convention, seats, &deals, &trick, &weights, 1.0);
+            let sum: f64 = predicted.iter().map(|p| p.1).sum();
+            assert!((sum - 1.0).abs() < 1e-9, "{sum}");
+            let pool = game.hands[seats[0]] + game.hands[seats[1]];
+            assert!(predicted.iter().all(|&(card, _)| pool.contains(card)));
+        }
+    }
+
+    /// The temperature for [`chances`] that makes the chance of a best card
+    /// likeliest, by the mean log of it, over the data in `PLAY_TEST`, for
+    /// the weights in the file `PLAY_WEIGHTS`: the chances that a player
+    /// who plays as the ensemble's values say would play each card.
+    #[test]
+    #[ignore]
+    fn fit_play_temperature() {
+        let text = std::fs::read_to_string(std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS")).unwrap();
+        let weights: Vec<f64> = text.lines().map(|line| line.parse().unwrap()).collect();
+        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), TUPLES.len());
+        for temperature in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0] {
+            let total: f64 = test
+                .iter()
+                .map(|s| {
+                    let scores: Vec<f64> = s
+                        .choice
+                        .iter()
+                        .map(|(e, _)| fitting::score(&weights, e) / temperature)
+                        .collect();
+                    let most = scores.iter().copied().fold(f64::MIN, f64::max);
+                    let odds: Vec<f64> = scores.iter().map(|x| (x - most).exp()).collect();
+                    let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                    let on_best: f64 = odds
+                        .iter()
+                        .zip(&s.choice)
+                        .filter(|(_, c)| c.1 >= best - 1e-9)
+                        .map(|(o, _)| o)
+                        .sum();
+                    (on_best / odds.iter().sum::<f64>()).ln()
+                })
+                .sum();
+            println!("temperature {temperature}: mean log chance of a best card {:.4}", total / test.len() as f64);
         }
     }
 
