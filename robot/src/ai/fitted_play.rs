@@ -422,10 +422,23 @@ pub(crate) fn predicted_plays<C>(
     totals
 }
 
-/// How likely the cards that the hands of `seats` have played to the
-/// current trick of `game` are, by the play model, if those hands were dealt
-/// `deal`: the product of the chance of each, as it was played.  Weighting
-/// deals of an ensemble by it draws what can be drawn from those plays.
+/// The seat whose player chooses the cards of `seat`: the declarer chooses
+/// the dummy's.
+fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
+    if Some(seat) == game.dummy() {
+        seat + 2
+    } else {
+        seat
+    }
+}
+
+/// How likely the cards that players whose hands are `seats` have chosen
+/// for the current trick of `game` are, by the play model, if those hands
+/// were dealt `deal`: the product of the chance of each, as it was played.
+/// That includes the dummy's cards when the declarer is hidden, since how
+/// the declarer plays the dummy shows something of their own hand.
+/// Weighting deals of an ensemble by it draws what can be drawn from those
+/// plays.
 pub(crate) fn trick_likelihood<C>(
     game: &GameState<C>,
     convention: &Convention,
@@ -437,7 +450,7 @@ pub(crate) fn trick_likelihood<C>(
     let current = current_trick(game);
     let mut likelihood = 1.0;
     for (i, &card) in current.iter().enumerate() {
-        if !seats.contains(&seat_of(game, i)) {
+        if !seats.contains(&chooser(game, seat_of(game, i))) {
             continue;
         }
         let trick = &current[..i];
@@ -570,8 +583,10 @@ mod tests {
                 .copied()
                 .chain(view.legal().min())
                 .collect();
+            // The next player is predicted when they, or the declarer
+            // choosing the dummy's card, cannot be seen.
             let next = seat_of(&game, trick.len());
-            if trick.len() == 4 || !seats.contains(&next) {
+            if trick.len() == 4 || !seats.contains(&chooser(&game, next)) {
                 continue;
             }
             let deals: Vec<([Cards; 2], f64)> = hidden
@@ -582,8 +597,13 @@ mod tests {
             let predicted = predicted_plays(&game, &convention, seats, &deals, &trick, &weights, 1.0);
             let sum: f64 = predicted.iter().map(|p| p.1).sum();
             assert!((sum - 1.0).abs() < 1e-9, "{sum}");
-            let pool = game.hands[seats[0]] + game.hands[seats[1]];
-            assert!(predicted.iter().all(|&(card, _)| pool.contains(card)));
+            let could_hold = if seats.contains(&next) {
+                game.hands[seats[0]] + game.hands[seats[1]]
+            } else {
+                // The dummy is in sight: only its own cards can be played.
+                game.hands[next]
+            };
+            assert!(predicted.iter().all(|&(card, _)| could_hold.contains(card)));
         }
     }
 
