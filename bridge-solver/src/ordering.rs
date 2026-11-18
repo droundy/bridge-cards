@@ -8,6 +8,8 @@
 
 use bridge_deck::{Card, Cards, Suit};
 
+pub(crate) mod fitted;
+
 /// The cards worth trying for the next player to `trick`, from `hands`, the
 /// likeliest best first.  The `hands` are as they were before the trick, in
 /// the order of play from its leader, so the next player holds
@@ -312,6 +314,10 @@ mod tests {
                     .fold(Cards::EMPTY, |set, &card| set.insert(card));
                 assert_eq!(plays.len(), set.len(), "{plays:?}");
                 assert_eq!(legal.lowest_of_sequences(all), set);
+                let weights = made_up_weights(size as u64);
+                let fitted: Vec<Card> = fitted::fitted_plays(trump, &hands, &trick, &weights).collect();
+                let fitted_set = fitted.iter().fold(Cards::EMPTY, |set, &card| set.insert(card));
+                assert_eq!((fitted.len(), fitted_set), (plays.len(), set));
             }
         }
     }
@@ -352,5 +358,335 @@ mod tests {
                 lost[seat] as f64 / seen[seat] as f64
             );
         }
+    }
+
+    /// Weights made up from `seed`, for orders that are not fitted.
+    fn made_up_weights(seed: u64) -> Vec<f32> {
+        let mut rng = SmallRng::seed_from_u64(seed);
+        (0..fitted::ENTRIES).map(|_| rng.gen_range(-1.0f32..1.0)).collect()
+    }
+
+    #[test]
+    fn a_fitted_order_finds_the_same_tricks() {
+        let mut rng = SmallRng::seed_from_u64(3);
+        for i in 0..40 {
+            let trump = [None, Some(Suit::Hearts)][i % 2];
+            let dealt = deal(&mut rng, 6);
+            let mut tiers = DoubleDummy::new(trump);
+            let mut fitted = DoubleDummy::new(trump).with_play_weights(made_up_weights(i as u64));
+            for (hands, trick) in positions(&mut rng, dealt).into_iter().step_by(5) {
+                assert_eq!(
+                    tiers.tricks_after_each(hands, &trick),
+                    fitted.tricks_after_each(hands, &trick)
+                );
+            }
+        }
+    }
+
+    fn var(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    fn pair(card: Card) -> [u8; 2] {
+        [card.suit() as u8, card.rank()]
+    }
+
+    /// Writes positions of random deals, with the double-dummy tricks after
+    /// each play worth trying, one JSON object per line, to the file
+    /// `PLAY_ORDER_DATA`: the deal's number, the trumps (0 for clubs to 3 for
+    /// spades, or null), the hands renumbered among the cards left (as the
+    /// solver keeps them) in the order of play from the leader of the trick,
+    /// the cards played to the trick so far, and for each play that
+    /// `likely_plays` gives, the tricks that the side that led the trick
+    /// takes after it with best play.  Positions with only one such play are
+    /// left out.  There are `PLAY_ORDER_DEALS` (1000) deals, from the seed
+    /// `PLAY_ORDER_SEED` (1), each of from 2 to `PLAY_ORDER_TRICKS` (8)
+    /// tricks, played through at random.  It uses every core.
+    #[test]
+    #[ignore]
+    fn collect_play_order_data() {
+        let path = std::env::var("PLAY_ORDER_DATA").expect("PLAY_ORDER_DATA");
+        let deals = var("PLAY_ORDER_DEALS", 1000) as usize;
+        let seed = var("PLAY_ORDER_SEED", 1);
+        let most = var("PLAY_ORDER_TRICKS", 8) as usize;
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let lines = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i >= deals {
+                        break;
+                    }
+                    let mut rng = SmallRng::seed_from_u64(seed * 1_000_000 + i as u64);
+                    let size = rng.gen_range(2..=most);
+                    let trump = [None, Some(Suit::Clubs), Some(Suit::Diamonds), Some(Suit::Hearts), Some(Suit::Spades)]
+                        [rng.gen_range(0..5)];
+                    let mut solver = DoubleDummy::new(trump);
+                    let dealt = deal(&mut rng, size);
+                    let mut found = Vec::new();
+                    for (hands, trick) in positions(&mut rng, dealt) {
+                        let all = hands[0] + hands[1] + hands[2] + hands[3];
+                        let renumber = |card| Cards::singleton(card).renumbered_among(all).max().unwrap();
+                        let hands = hands.map(|hand| hand.renumbered_among(all));
+                        let trick: Vec<Card> = trick.into_iter().map(renumber).collect();
+                        let plays = fitted::Position::new(trump, &hands, &trick).plays();
+                        if plays.len() < 2 {
+                            continue;
+                        }
+                        let each = solver.tricks_after_each(hands, &trick);
+                        let tricks = |card| each.iter().find(|&&(c, _)| c == card).unwrap().1;
+                        let line = serde_json::json!({
+                            "deal": i,
+                            "trump": trump.map(|suit| suit as u8),
+                            "hands": hands.map(|hand| hand.map(pair).collect::<Vec<_>>()),
+                            "trick": trick.iter().map(|&card| pair(card)).collect::<Vec<_>>(),
+                            "plays": plays.map(|card| (pair(card), tricks(card))).collect::<Vec<_>>(),
+                        });
+                        found.push(line.to_string());
+                    }
+                    lines.lock().unwrap().push((i, found));
+                });
+            }
+        });
+        let mut lines = lines.into_inner().unwrap();
+        lines.sort();
+        let text: String = lines
+            .into_iter()
+            .flat_map(|(_, found)| found)
+            .map(|line| line + "\n")
+            .collect();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// A position from the data that `collect_play_order_data` writes.
+    struct Labelled {
+        deal: usize,
+        trump: Option<Suit>,
+        hands: [Cards; 4],
+        trick: Vec<Card>,
+        /// Each play worth trying, and whether it is one of the best for the
+        /// side that plays it.
+        plays: Vec<(Card, bool)>,
+    }
+
+    /// The positions in the files `paths`, comma-separated.
+    fn read_positions(paths: &str) -> Vec<Labelled> {
+        let card = |pair: &serde_json::Value| {
+            Card::new(
+                Suit::ALL[pair[0].as_u64().unwrap() as usize],
+                pair[1].as_u64().unwrap() as u8,
+            )
+        };
+        let mut positions = Vec::new();
+        for path in paths.split(',') {
+            let text = std::fs::read_to_string(path.trim()).unwrap();
+            for line in text.lines() {
+                let json: serde_json::Value = serde_json::from_str(line).unwrap();
+                let trick: Vec<Card> = json["trick"].as_array().unwrap().iter().map(card).collect();
+                let tricks: Vec<(Card, u64)> = json["plays"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|play| (card(&play[0]), play[1].as_u64().unwrap()))
+                    .collect();
+                // The side that led the trick wants the most tricks, and the
+                // other side the fewest.
+                let leaders = trick.len().is_multiple_of(2);
+                let values = tricks.iter().map(|&(_, t)| t);
+                let target = if leaders { values.max() } else { values.min() }.unwrap();
+                let hands = [0, 1, 2, 3].map(|i| {
+                    json["hands"][i]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(card)
+                        .fold(Cards::EMPTY, Cards::insert)
+                });
+                positions.push(Labelled {
+                    deal: json["deal"].as_u64().unwrap() as usize,
+                    trump: json["trump"].as_u64().map(|s| Suit::ALL[s as usize]),
+                    hands,
+                    trick,
+                    plays: tricks.into_iter().map(|(c, t)| (c, t == target)).collect(),
+                });
+            }
+        }
+        positions
+    }
+
+    /// The entries that each play of each of `positions` looks up, and
+    /// whether it is one of the best.
+    type Prepared = Vec<Vec<([usize; fitted::TUPLES.len()], bool)>>;
+
+    fn prepare(positions: &[&Labelled]) -> Prepared {
+        positions
+            .iter()
+            .map(|p| {
+                let position = fitted::Position::new(p.trump, &p.hands, &p.trick);
+                p.plays
+                    .iter()
+                    .map(|&(card, best)| (position.entries(card), best))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Weights that make the best plays the likeliest, fitted to `data` by
+    /// `steps` steps of Adam on the mean log of the chance that a play
+    /// chosen with odds that grow exponentially with its score is one of the
+    /// best, less `penalty` times the size of the weights.
+    fn fit_order(data: &Prepared, penalty: f64, steps: usize) -> Vec<f32> {
+        let size = fitted::ENTRIES;
+        let mut weights = vec![0.0f64; size];
+        let (mut first, mut second) = (vec![0.0; size], vec![0.0; size]);
+        for step in 1..=steps {
+            let mut gradient: Vec<f64> = weights.iter().map(|w| -penalty * w).collect();
+            for plays in data {
+                let scores: Vec<f64> = plays
+                    .iter()
+                    .map(|(entries, _)| entries.iter().map(|&e| weights[e]).sum())
+                    .collect();
+                let most = scores.iter().copied().fold(f64::MIN, f64::max);
+                let odds: Vec<f64> = scores.iter().map(|s| (s - most).exp()).collect();
+                let sum: f64 = odds.iter().sum();
+                let best: f64 = odds.iter().zip(plays).filter(|(_, p)| p.1).map(|(o, _)| o).sum();
+                for (o, (entries, is_best)) in odds.iter().zip(plays) {
+                    let wanted = if *is_best { o / best } else { 0.0 };
+                    let g = (wanted - o / sum) / data.len() as f64;
+                    for &e in entries {
+                        gradient[e] += g;
+                    }
+                }
+            }
+            let t = step as f64;
+            let rate = 0.05 * (1.0 - (t - 1.0) / steps as f64);
+            for j in 0..size {
+                first[j] = 0.9 * first[j] + 0.1 * gradient[j];
+                second[j] = 0.999 * second[j] + 0.001 * gradient[j] * gradient[j];
+                let a = first[j] / (1.0 - 0.9f64.powf(t));
+                let b = second[j] / (1.0 - 0.999f64.powf(t));
+                weights[j] += rate * a / (b.sqrt() + 1e-8);
+            }
+        }
+        weights.into_iter().map(|w| w as f32).collect()
+    }
+
+    /// How often the play that `weights` scores highest is one of the best,
+    /// over `data`.
+    fn first_is_best(data: &Prepared, weights: &[f32]) -> f64 {
+        let hits = data
+            .iter()
+            .filter(|plays| {
+                let score = |p: &([usize; fitted::TUPLES.len()], bool)| -> f32 {
+                    p.0.iter().map(|&e| weights[e]).sum()
+                };
+                let mut top = &plays[0];
+                for play in &plays[1..] {
+                    if score(play) > score(top) {
+                        top = play;
+                    }
+                }
+                top.1
+            })
+            .count();
+        hits as f64 / data.len() as f64
+    }
+
+    /// Fits the weights of `fitted` to the data in the files
+    /// `PLAY_ORDER_DATA`, comma-separated, picking the penalty on the size of
+    /// the weights by five-fold cross-validation over the deals, and says how
+    /// often the first play is one of the best on the data in
+    /// `PLAY_ORDER_TEST`, by the fitted order and by the tiers of
+    /// `likely_plays`, at each seat.  Writes the weights, one a line, to the
+    /// file `PLAY_ORDER_WEIGHTS` if it is set.  `PLAY_ORDER_STEPS` (300) is
+    /// the number of steps of each fit.
+    #[test]
+    #[ignore]
+    fn fit_play_order() {
+        let train = read_positions(&std::env::var("PLAY_ORDER_DATA").expect("PLAY_ORDER_DATA"));
+        let test = read_positions(&std::env::var("PLAY_ORDER_TEST").expect("PLAY_ORDER_TEST"));
+        let steps = var("PLAY_ORDER_STEPS", 300) as usize;
+        let all: Vec<&Labelled> = train.iter().collect();
+        let mut best = (f64::MIN, 0.0);
+        for penalty in [0.0, 1e-5, 1e-4, 1e-3] {
+            let hits: f64 = std::thread::scope(|scope| {
+                let folds: Vec<_> = (0..5)
+                    .map(|fold| {
+                        let all = &all;
+                        scope.spawn(move || {
+                            let split = |held: bool| -> Vec<&Labelled> {
+                                all.iter().copied().filter(|p| (p.deal % 5 == fold) == held).collect()
+                            };
+                            let held = prepare(&split(true));
+                            let weights = fit_order(&prepare(&split(false)), penalty, steps);
+                            first_is_best(&held, &weights) * held.len() as f64
+                        })
+                    })
+                    .collect();
+                folds.into_iter().map(|f| f.join().unwrap()).sum()
+            });
+            let rate = hits / all.len() as f64;
+            println!("penalty {penalty}: first play best {rate:.4} of the time, held out");
+            if rate > best.0 {
+                best = (rate, penalty);
+            }
+        }
+        let weights = fit_order(&prepare(&all), best.1, steps);
+        for seat in 0..4 {
+            let at: Vec<&Labelled> = test.iter().filter(|p| p.trick.len() == seat).collect();
+            let tiers = at
+                .iter()
+                .filter(|p| {
+                    let first = likely_plays(p.trump, &p.hands, &p.trick).next().unwrap();
+                    p.plays.iter().any(|&(card, best)| card == first && best)
+                })
+                .count() as f64
+                / at.len() as f64;
+            println!(
+                "seat {seat}, {} test positions: first play best {:.4} fitted, {tiers:.4} tiers",
+                at.len(),
+                first_is_best(&prepare(&at), &weights),
+            );
+        }
+        if let Ok(path) = std::env::var("PLAY_ORDER_WEIGHTS") {
+            let text: String = weights.iter().map(|w| format!("{w}\n")).collect();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
+    /// How long the solver takes to solve `PLAY_ORDER_SPEED_DEALS` (20) deals
+    /// of `PLAY_ORDER_TRICKS` (9) tricks, by the tiers of `likely_plays` and by
+    /// the order of the weights in the file `PLAY_ORDER_WEIGHTS`, checking that
+    /// both find the same tricks.
+    #[test]
+    #[ignore]
+    fn report_play_order_speed() {
+        let text = std::fs::read_to_string(std::env::var("PLAY_ORDER_WEIGHTS").expect("PLAY_ORDER_WEIGHTS")).unwrap();
+        let weights: Vec<f32> = text.lines().map(|line| line.parse().unwrap()).collect();
+        let deals = var("PLAY_ORDER_SPEED_DEALS", 20);
+        let size = var("PLAY_ORDER_TRICKS", 9) as usize;
+        let mut rng = SmallRng::seed_from_u64(4);
+        let dealt: Vec<(Option<Suit>, [Cards; 4])> = (0..deals)
+            .map(|i| ([None, Some(Suit::Spades)][i as usize % 2], deal(&mut rng, size)))
+            .collect();
+        let mut tricks = [0; 2];
+        for (i, name) in ["tiers", "fitted"].iter().enumerate() {
+            let started = std::time::Instant::now();
+            for &(trump, hands) in &dealt {
+                let mut solver = DoubleDummy::new(trump);
+                if i == 1 {
+                    solver = solver.with_play_weights(weights.clone());
+                }
+                tricks[i] += solver.tricks(hands);
+            }
+            let seconds = started.elapsed().as_secs_f64() / deals as f64;
+            println!("{name}: {seconds:.4} s a deal");
+        }
+        assert_eq!(tricks[0], tricks[1]);
     }
 }

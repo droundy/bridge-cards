@@ -36,6 +36,57 @@ impl Cards {
     pub const fn top_ranks(self, suit: Suit, n: u32) -> usize {
         ((self.suit_bits(suit) >> (15 - n)) & ((1 << n) - 1)) as usize
     }
+
+    /// Which of `hands` holds each of the `n` cards just above `card` in its
+    /// suit, as a number below `5^n` whose digit `k` in base 5 is for the
+    /// card `k + 1` ranks above: 0 if no hand holds it, or else 1 more than
+    /// the index of the hand that does.  In hands that have been renumbered
+    /// among the cards left (see [`Cards::renumbered_among`]), these are the
+    /// next cards still in play.
+    pub const fn holders_above(hands: &[Cards; 4], card: Card, n: u32) -> usize {
+        let held = [
+            hands[0].above(card, n),
+            hands[1].above(card, n),
+            hands[2].above(card, n),
+            hands[3].above(card, n),
+        ];
+        holders(held, n, false)
+    }
+
+    /// Which of `hands` holds each of the `n` cards just below `card` in its
+    /// suit, as [`Cards::holders_above`] gives those above: digit `k` is for
+    /// the card `k + 1` ranks below.
+    pub const fn holders_below(hands: &[Cards; 4], card: Card, n: u32) -> usize {
+        let held = [
+            hands[0].below(card, n),
+            hands[1].below(card, n),
+            hands[2].below(card, n),
+            hands[3].below(card, n),
+        ];
+        holders(held, n, true)
+    }
+}
+
+/// The base-5 number of [`Cards::holders_above`], from which of `n` cards
+/// each of four hands holds, as [`Cards::above`] (or, `reversed`,
+/// [`Cards::below`]) gives them.
+const fn holders(held: [usize; 4], n: u32, reversed: bool) -> usize {
+    let mut number = 0;
+    let mut k = n;
+    while k > 0 {
+        k -= 1;
+        let bit = if reversed { n - 1 - k } else { k };
+        let mut digit = 0;
+        let mut hand = 0;
+        while hand < 4 {
+            if held[hand] >> bit & 1 == 1 {
+                digit = hand + 1;
+            }
+            hand += 1;
+        }
+        number = number * 5 + digit;
+    }
+    number
 }
 
 #[cfg(test)]
@@ -50,6 +101,30 @@ mod tests {
     /// The bits that a number is made of, built one card at a time.
     fn number(bits: impl Iterator<Item = bool>) -> usize {
         bits.enumerate().map(|(i, b)| (b as usize) << i).sum()
+    }
+
+    #[test]
+    fn the_holders_are_the_hands_that_hold_the_cards() {
+        let mut deck = Cards::ALL;
+        for _ in 0..200 {
+            let hands = [0; 4].map(|_| deck.pick(13).unwrap());
+            deck = Cards::ALL;
+            for card in Cards::ALL {
+                let (suit, rank) = (card.suit(), card.rank() as i32);
+                let holder = |rank: i32| {
+                    (0..4)
+                        .find(|&h| holds(hands[h], suit, rank))
+                        .map_or(0, |h| h + 1)
+                };
+                for n in 1..=3 {
+                    let digits = |sign: i32| -> usize {
+                        (1..=n).rev().fold(0, |number, k| number * 5 + holder(rank + sign * k))
+                    };
+                    assert_eq!(Cards::holders_above(&hands, card, n as u32), digits(1));
+                    assert_eq!(Cards::holders_below(&hands, card, n as u32), digits(-1));
+                }
+            }
+        }
     }
 
     #[test]

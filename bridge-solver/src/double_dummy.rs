@@ -13,7 +13,8 @@
 //! and so are the many positions in which the side on lead has enough top
 //! cards to take the target without any search.
 
-use crate::{likely_plays, PositionHasher, Starting};
+use crate::ordering::fitted::plays as plays_to_try;
+use crate::{PositionHasher, Starting};
 
 use bridge_deck::{Card, Cards, Suit};
 use std::collections::HashMap;
@@ -52,6 +53,9 @@ struct Known {
 pub struct DoubleDummy {
     trump: Option<Suit>,
     bounds: Bounds,
+    /// The weights of a fitted order of plays, if it is to be used instead
+    /// of the tiers of [`likely_plays`](crate::likely_plays).
+    weights: Option<std::sync::Arc<[f32]>>,
 }
 
 impl DoubleDummy {
@@ -60,7 +64,18 @@ impl DoubleDummy {
         DoubleDummy {
             trump,
             bounds: Bounds::default(),
+            weights: None,
         }
+    }
+
+    /// This solver, trying plays in the order of the network fitted in
+    /// `ordering::fitted` with `weights`, one for each of its entries.  The
+    /// order changes only how long it takes, never what it finds.
+    #[cfg(test)]
+    pub(crate) fn with_play_weights(mut self, weights: Vec<f32>) -> Self {
+        assert_eq!(weights.len(), crate::ordering::fitted::ENTRIES);
+        self.weights = Some(weights.into());
+        self
     }
 
     /// The tricks that the side on lead takes with best play by everyone,
@@ -145,7 +160,7 @@ impl DoubleDummy {
         let renumbered_hands = renumbered(hands);
         // The lowest of each run of cards that touch, likeliest best first.
         let mut runs: Vec<(Card, usize)> = Vec::new();
-        for card in likely_plays(self.trump, &renumbered_hands, &trick) {
+        for card in plays_to_try(self.trump, self.weights.as_deref(), &renumbered_hands, &trick) {
             trick.push(card);
             let guess = runs.last().map(|&(_, tricks)| tricks);
             runs.push((card, self.search_after(renumbered_hands, &trick, guess)));
@@ -242,7 +257,8 @@ impl DoubleDummy {
             let mut trick = [Card::S2; 4];
             let tried = known.lead;
             let leads = tried.into_iter().chain(
-                likely_plays(self.trump, &position.hands, &[]).filter(|&card| Some(card) != tried),
+                plays_to_try(self.trump, self.weights.as_deref(), &position.hands, &[])
+                    .filter(|&card| Some(card) != tried),
             );
             let mut makes = false;
             for card in leads {
@@ -291,7 +307,7 @@ impl DoubleDummy {
         let wants_it = played & 1 == 0;
         // Once one card settles the question, the others need not be tried,
         // so the likeliest to are tried first.
-        for card in likely_plays(self.trump, &hands, &trick[..played]) {
+        for card in plays_to_try(self.trump, self.weights.as_deref(), &hands, &trick[..played]) {
             trick[played] = card;
             let winner = if self.beats(card, trick[winner]) {
                 played
