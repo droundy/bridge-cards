@@ -390,7 +390,7 @@ use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF
 mod advice;
 mod booklet;
 pub(crate) mod ensemble;
-mod opening_lead;
+pub(crate) mod opening_lead;
 pub use ensemble::EnsemblePlay;
 #[cfg(test)]
 mod daily_columns;

@@ -43,9 +43,13 @@
 //! situations of a stage.
 
 use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden};
+use crate::ai::opening_lead::candidates::{
+    linear_lead, opening_leads, pruned_lead, tuple_lead, TUPLES,
+};
+use crate::ai::opening_lead::{likely_opening_leads, Auction};
 use crate::situations::Generator;
 use crate::{Action, EnsemblePlay, GameState, PlayAI};
-use bridge_deck::Card;
+use bridge_deck::{Card, Cards};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use scaling::Metrics;
@@ -337,6 +341,57 @@ fn play_quality(situations: &Vec<String>, chosen: Vec<Option<String>>) -> Metric
             "choices that lost",
             100.0 * lost as f64 / losses.len() as f64,
         )
+}
+
+/// The opening leads of the "opening lead" group: the auction as the leader
+/// sees it and the leader's hand, for 64 opening leads that the robot bid
+/// to, the same every time.  Only this crate's working tree registers the
+/// group, so the input can be its own types.
+#[scaling::input(group = "opening lead", name = "64 leads", reusable)]
+fn opening_lead_hands() -> Vec<(Auction, Cards)> {
+    opening_leads(1, 64)
+        .iter()
+        .map(|game| (Auction::new(game).unwrap(), game.hands[game.turn().unwrap()]))
+        .collect()
+}
+
+/// The lead that the 35 fitted features score highest, which is the lead
+/// the robot's order of opening leads puts first.
+#[scaling::bench(group = "opening lead", baseline)]
+fn fitted_features(leads: &Vec<(Auction, Cards)>) -> Vec<Card> {
+    leads.iter().map(|(auction, hand)| linear_lead(auction, *hand)).collect()
+}
+
+/// The lead that an n-tuple network scores highest, with weights that are
+/// made up, since they do not change how long it takes.
+#[scaling::bench(group = "opening lead")]
+fn n_tuple_network(leads: &Vec<(Auction, Cards)>) -> Vec<Card> {
+    static WEIGHTS: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    let weights = WEIGHTS.get_or_init(|| {
+        let size: usize = TUPLES.iter().map(|t| t.0).sum();
+        (0..size).map(|i| (i * 2_654_435_761 % 1000) as f64 / 1000.0 - 0.5).collect()
+    });
+    leads
+        .iter()
+        .map(|(auction, hand)| tuple_lead(weights, auction, *hand))
+        .collect()
+}
+
+/// The lead that the pruned network for suit contracts scores highest,
+/// written out as its closed-form sum.
+#[scaling::bench(group = "opening lead")]
+fn pruned_network(leads: &Vec<(Auction, Cards)>) -> Vec<Card> {
+    leads.iter().map(|(auction, hand)| pruned_lead(auction, *hand)).collect()
+}
+
+/// The first of the leads that `likely_opening_leads` sorts, which is what
+/// the robot calls.
+#[scaling::bench(group = "opening lead")]
+fn sorted_fitted_features(leads: &Vec<(Auction, Cards)>) -> Vec<Card> {
+    leads
+        .iter()
+        .map(|(auction, hand)| likely_opening_leads(auction, *hand)[0])
+        .collect()
 }
 
 #[cfg(test)]

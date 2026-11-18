@@ -336,19 +336,18 @@ pub(crate) fn likely_opening_leads(auction: &Auction, hand: Cards) -> Vec<Card> 
     leads.into_iter().map(|(_, card)| card).collect()
 }
 
-#[cfg(test)]
-mod tests {
+/// Other ways of ordering the opening leads, beside [`likely_opening_leads`],
+/// for the fits in the tests and for the "opening lead" benchmarks to compare.
+#[cfg(any(test, feature = "benchmarks"))]
+pub(crate) mod candidates {
     use super::*;
-    use crate::ai::ensemble::trump_of;
     use crate::situations::Generator;
-    use bridge_deck::{Card, Suit};
-    use bridge_solver::DoubleDummy;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     /// Opening leads that the robot bid to, `count` of them, the same every
-    /// time.
-    fn opening_leads(seed: u64, count: usize) -> Vec<GameState<()>> {
+    /// time for the same `seed`.
+    pub(crate) fn opening_leads(seed: u64, count: usize) -> Vec<GameState<()>> {
         let mut generator = Generator::new();
         let mut rng = StdRng::seed_from_u64(seed);
         let mut games = Vec::new();
@@ -365,6 +364,151 @@ mod tests {
         }
         games
     }
+
+    /// The lead from `hand` that `score` scores highest.
+    pub(crate) fn best_lead(hand: Cards, score: impl Fn(Card) -> f64) -> Card {
+        let mut best = (f64::MIN, None);
+        for card in hand {
+            let s = score(card);
+            if s > best.0 {
+                best = (s, Some(card));
+            }
+        }
+        best.1.unwrap()
+    }
+
+    #[cfg(feature = "benchmarks")]
+    /// The first of [`likely_opening_leads`], without sorting the others.
+    pub(crate) fn linear_lead(auction: &Auction, hand: Cards) -> Card {
+        let weights = if auction.trump.is_some() {
+            &SUIT_WEIGHTS
+        } else {
+            &NOTRUMP_WEIGHTS
+        };
+        best_lead(hand, |card| lead_score(auction, hand, card, weights))
+    }
+
+    /// The lead that an n-tuple network with `weights` scores highest.
+    pub(crate) fn tuple_lead(weights: &[f64], auction: &Auction, hand: Cards) -> Card {
+        best_lead(hand, |card| tuple_score(weights, &tuple_entries(auction, hand, card)))
+    }
+
+    #[cfg(feature = "benchmarks")]
+    /// The lead that [`pruned_suit_score`] scores highest.
+    pub(crate) fn pruned_lead(auction: &Auction, hand: Cards) -> Card {
+        best_lead(hand, |card| pruned_suit_score(auction, hand, card))
+    }
+
+    /// The tables of an n-tuple network for the opening lead: their sizes,
+    /// and the plain facts about a lead that index each of them.
+    pub(crate) const TUPLES: [(usize, &str); 6] = [
+        (13 * 64, "the rank, and which of the three ranks above and below it are held"),
+        (32 * 7, "which of the ace to the ten of the suit are held, and its length"),
+        (13 * 7, "the rank and the length of the suit"),
+        (64, "who bid the suit, whether it is trumps, whether the contract is doubled"),
+        (8 * 7, "the level and the length of the suit"),
+        (7 * 7, "the length of the trumps and of the suit"),
+    ];
+
+    /// The entries of the tables of `TUPLES`, laid end to end, that leading
+    /// `card` from `hand` after `auction` looks up, one in each table.
+    pub(crate) fn tuple_entries(auction: &Auction, hand: Cards, card: Card) -> [usize; TUPLES.len()] {
+        let suit = card.suit();
+        let rank = card.rank() as u32;
+        let (above, below) = (hand.above(card, 3) as u32, hand.below(card, 3) as u32);
+        let length = hand.in_suit(suit).len().min(7) as u32 - 1;
+        let bid = (0..4).fold(0, |bits, seat| bits | (auction.bid[seat][suit as usize] as u32) << seat);
+        let trump_length = auction.trump.map_or(0, |t| hand.in_suit(t).len().min(6)) as u32;
+        let indices = [
+            (rank - 2) * 64 + above * 8 + below,
+            hand.top_ranks(suit, 5) as u32 * 7 + length,
+            (rank - 2) * 7 + length,
+            bid | ((auction.trump == Some(suit)) as u32) << 4 | (auction.doubled_by.is_some() as u32) << 5,
+            auction.level as u32 * 7 + length,
+            trump_length * 7 + length,
+        ];
+        let mut entries = [0; TUPLES.len()];
+        let mut offset = 0;
+        for (t, index) in indices.into_iter().enumerate() {
+            debug_assert!((index as usize) < TUPLES[t].0, "{}", TUPLES[t].1);
+            entries[t] = offset + index as usize;
+            offset += TUPLES[t].0;
+        }
+        entries
+    }
+
+    /// The score of a lead in an n-tuple network: the sum of its entries.
+    pub(crate) fn tuple_score(weights: &[f64], entries: &[usize]) -> f64 {
+        entries.iter().map(|&e| weights[e]).sum()
+    }
+
+    #[cfg(feature = "benchmarks")]
+    /// A pruned network for suit contracts, fitted to plain facts about the
+    /// lead (the length, rank and honours of its suit, who bid it and so on),
+    /// written out as its closed-form sum.
+    pub(crate) fn pruned_suit_score(auction: &Auction, hand: Cards, card: Card) -> f64 {
+        let suit = card.suit();
+        let holding = hand.in_suit(suit);
+        let has = |rank: u8| holding.contains(Card::new(suit, rank)) as u8 as f64;
+        let bid = |seat: usize| auction.bid[seat][suit as usize] as u8 as f64;
+        let rank = card.rank();
+        let length = holding.len() as f64 / 4.0;
+        let higher = (holding & Cards::higher_than(card)).len() as f64 / 4.0;
+        let (ace, king, queen, jack, ten) = (has(14), has(13), has(12), has(11), has(10));
+        let points = holding.high_card_points() as f64 / 4.0;
+        let touching_above = if rank < 14 { has(rank + 1) } else { 0.0 };
+        let touching_below = if rank > 2 { has(rank - 1) } else { 0.0 };
+        let trumps = (auction.trump == Some(suit)) as u8 as f64;
+        let level = auction.level as f64 / 7.0;
+        let doubled = auction.doubled_by.is_some() as u8 as f64;
+        let dummy_bid_a_side_suit =
+            (0..4).any(|s| s != suit as usize && auction.bid[1][s]) as u8 as f64;
+        let trump_length = auction.trump.map_or(0.0, |t| hand.in_suit(t).len() as f64 / 4.0);
+        let relu = |x: f64| x.max(0.0);
+        -0.15 * ace - 0.08 * bid(3) - 0.52 * relu(0.12 * ace) - 0.57 * relu(0.14 * ace)
+            + 4.59
+                * relu(
+                    2.69 - 1.74 * length + 0.76 * higher - 0.97 * king + 0.17 * queen - 0.31 * ten
+                        - 0.98 * points
+                        + 0.25 * touching_above
+                        - 0.72 * touching_below
+                        - 0.13 * bid(0)
+                        - 0.44 * bid(1)
+                        + 0.76 * bid(2)
+                        - 1.13 * bid(3)
+                        + 0.42 * level
+                        - 0.16 * dummy_bid_a_side_suit
+                        + 0.91 * trump_length,
+                )
+            + 4.78
+                * relu(
+                    -0.93 - 0.49 * length + 1.34 * (rank as f64 / 14.0) - 3.47 * higher
+                        + 0.06 * ace
+                        + 0.36 * king
+                        - 0.15 * queen
+                        + 0.04 * jack
+                        + 0.25 * ten
+                        + 0.76 * points
+                        + 1.76 * touching_below
+                        - 0.38 * trumps
+                        + 0.16 * bid(0)
+                        - 0.13 * bid(1)
+                        - 0.59 * bid(3)
+                        + 0.04 * level
+                        - 0.40 * doubled,
+                )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::candidates::*;
+    use super::*;
+    use crate::ai::ensemble::trump_of;
+    use bridge_deck::{Card, Suit};
+    use bridge_solver::DoubleDummy;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     #[test]
     fn the_ensemble_leads_one_of_the_likeliest_leads() {
@@ -712,49 +856,6 @@ mod tests {
         weights
     }
 
-    /// The tables of an n-tuple network for the opening lead: their sizes,
-    /// and the plain facts about a lead that index each of them.
-    const TUPLES: [(usize, &str); 6] = [
-        (13 * 64, "the rank, and which of the three ranks above and below it are held"),
-        (32 * 7, "which of the ace to the ten of the suit are held, and its length"),
-        (13 * 7, "the rank and the length of the suit"),
-        (64, "who bid the suit, whether it is trumps, whether the contract is doubled"),
-        (8 * 7, "the level and the length of the suit"),
-        (7 * 7, "the length of the trumps and of the suit"),
-    ];
-
-    /// The entries of the tables of `TUPLES`, laid end to end, that leading
-    /// `card` from `hand` after `auction` looks up, one in each table.
-    fn tuple_entries(auction: &Auction, hand: Cards, card: Card) -> [usize; TUPLES.len()] {
-        let suit = card.suit();
-        let rank = card.rank() as u32;
-        let (above, below) = (hand.above(card, 3) as u32, hand.below(card, 3) as u32);
-        let length = hand.in_suit(suit).len().min(7) as u32 - 1;
-        let bid = (0..4).fold(0, |bits, seat| bits | (auction.bid[seat][suit as usize] as u32) << seat);
-        let trump_length = auction.trump.map_or(0, |t| hand.in_suit(t).len().min(6)) as u32;
-        let indices = [
-            (rank - 2) * 64 + above * 8 + below,
-            hand.top_ranks(suit, 5) as u32 * 7 + length,
-            (rank - 2) * 7 + length,
-            bid | ((auction.trump == Some(suit)) as u32) << 4 | (auction.doubled_by.is_some() as u32) << 5,
-            auction.level as u32 * 7 + length,
-            trump_length * 7 + length,
-        ];
-        let mut entries = [0; TUPLES.len()];
-        let mut offset = 0;
-        for (t, index) in indices.into_iter().enumerate() {
-            debug_assert!((index as usize) < TUPLES[t].0, "{}", TUPLES[t].1);
-            entries[t] = offset + index as usize;
-            offset += TUPLES[t].0;
-        }
-        entries
-    }
-
-    /// The score of a lead in an n-tuple network: the sum of its entries.
-    fn tuple_score(weights: &[f64], entries: &[usize]) -> f64 {
-        entries.iter().map(|&e| weights[e]).sum()
-    }
-
     /// The weights of the tables of `TUPLES` that make leads with the most
     /// tricks the likeliest, fitted as `fit` fits its weights (each entry is a
     /// feature that is 1 when the lead looks it up), by `steps` steps of Adam
@@ -802,8 +903,7 @@ mod tests {
 
     /// The lead that an n-tuple network scores highest.
     fn tuple_choice(lead: &Lead, weights: &[f64]) -> Card {
-        let score = |card| tuple_score(weights, &tuple_entries(&lead.auction, lead.hand, card));
-        lead.hand.max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap()
+        tuple_lead(weights, &lead.auction, lead.hand)
     }
 
     fn by_contract(leads: &[Lead], notrump: bool) -> Vec<&Lead> {
@@ -916,112 +1016,6 @@ mod tests {
                 mean_tricks(&test, |lead| tuple_choice(lead, &weights)),
             );
         }
-    }
-
-    /// A pruned network for suit contracts, fitted to plain facts about the
-    /// lead (the length, rank and honours of its suit, who bid it and so on),
-    /// written out as its closed-form sum.
-    fn pruned_suit_score(auction: &Auction, hand: Cards, card: Card) -> f64 {
-        let suit = card.suit();
-        let holding = hand.in_suit(suit);
-        let has = |rank: u8| holding.contains(Card::new(suit, rank)) as u8 as f64;
-        let bid = |seat: usize| auction.bid[seat][suit as usize] as u8 as f64;
-        let rank = card.rank();
-        let length = holding.len() as f64 / 4.0;
-        let higher = (holding & Cards::higher_than(card)).len() as f64 / 4.0;
-        let (ace, king, queen, jack, ten) = (has(14), has(13), has(12), has(11), has(10));
-        let points = holding.high_card_points() as f64 / 4.0;
-        let touching_above = if rank < 14 { has(rank + 1) } else { 0.0 };
-        let touching_below = if rank > 2 { has(rank - 1) } else { 0.0 };
-        let trumps = (auction.trump == Some(suit)) as u8 as f64;
-        let level = auction.level as f64 / 7.0;
-        let doubled = auction.doubled_by.is_some() as u8 as f64;
-        let dummy_bid_a_side_suit =
-            (0..4).any(|s| s != suit as usize && auction.bid[1][s]) as u8 as f64;
-        let trump_length = auction.trump.map_or(0.0, |t| hand.in_suit(t).len() as f64 / 4.0);
-        let relu = |x: f64| x.max(0.0);
-        -0.15 * ace - 0.08 * bid(3) - 0.52 * relu(0.12 * ace) - 0.57 * relu(0.14 * ace)
-            + 4.59
-                * relu(
-                    2.69 - 1.74 * length + 0.76 * higher - 0.97 * king + 0.17 * queen - 0.31 * ten
-                        - 0.98 * points
-                        + 0.25 * touching_above
-                        - 0.72 * touching_below
-                        - 0.13 * bid(0)
-                        - 0.44 * bid(1)
-                        + 0.76 * bid(2)
-                        - 1.13 * bid(3)
-                        + 0.42 * level
-                        - 0.16 * dummy_bid_a_side_suit
-                        + 0.91 * trump_length,
-                )
-            + 4.78
-                * relu(
-                    -0.93 - 0.49 * length + 1.34 * (rank as f64 / 14.0) - 3.47 * higher
-                        + 0.06 * ace
-                        + 0.36 * king
-                        - 0.15 * queen
-                        + 0.04 * jack
-                        + 0.25 * ten
-                        + 0.76 * points
-                        + 1.76 * touching_below
-                        - 0.38 * trumps
-                        + 0.16 * bid(0)
-                        - 0.13 * bid(1)
-                        - 0.59 * bid(3)
-                        + 0.04 * level
-                        - 0.40 * doubled,
-                )
-    }
-
-    /// How long each model takes to score every lead of a hand and choose
-    /// the best, over the hands in `OPENING_LEAD_DATA`, natively: the 35
-    /// features with their weights, the n-tuple network (whose weights do
-    /// not change its speed), each one's features or entries alone, and
-    /// `likely_opening_leads`, which also sorts the leads.
-    #[test]
-    #[ignore]
-    fn time_opening_lead_models() {
-        use std::hint::black_box;
-        let leads = read_leads(&std::env::var("OPENING_LEAD_DATA").expect("OPENING_LEAD_DATA"));
-        let weights = vec![0.01; TUPLES.iter().map(|t| t.0).sum()];
-        let best = |hand: Cards, score: &dyn Fn(Card) -> f64| {
-            let mut best = (f64::MIN, None);
-            for card in hand {
-                let s = score(card);
-                if s > best.0 {
-                    best = (s, Some(card));
-                }
-            }
-            best.1.unwrap()
-        };
-        let time = |name: &str, choose: &dyn Fn(&Lead) -> Card| {
-            let rounds = 200;
-            let started = std::time::Instant::now();
-            for _ in 0..rounds {
-                for lead in &leads {
-                    black_box(choose(black_box(lead)));
-                }
-            }
-            let ns = started.elapsed().as_nanos() as f64 / (rounds * leads.len()) as f64;
-            println!("{name}: {ns:.0} ns a hand");
-        };
-        time("35 features, linear", &|lead| {
-            best(lead.hand, &|c| lead_score(&lead.auction, lead.hand, c, &SUIT_WEIGHTS))
-        });
-        time("  35 features alone", &|lead| {
-            best(lead.hand, &|c| black_box(features(&lead.auction, lead.hand, c))[0])
-        });
-        time("n-tuple", &|lead| {
-            best(lead.hand, &|c| tuple_score(&weights, &tuple_entries(&lead.auction, lead.hand, c)))
-        });
-        time("  n-tuple entries alone", &|lead| {
-            best(lead.hand, &|c| black_box(tuple_entries(&lead.auction, lead.hand, c))[0] as f64)
-        });
-        time("pruned network, closed form", &|lead| {
-            best(lead.hand, &|c| pruned_suit_score(&lead.auction, lead.hand, c))
-        });
-        time("likely_opening_leads", &|lead| likely_opening_leads(&lead.auction, lead.hand)[0]);
     }
 
     /// Compares the leads of `likely_opening_leads` with those of the robot's
