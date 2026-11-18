@@ -5,6 +5,8 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 #[cfg(feature = "benchmarks")]
 mod benches;
+mod double_dummy;
+pub use double_dummy::DoubleDummy;
 
 #[cfg(test)]
 pub fn normalize(all: Cards, hand: Cards) -> Cards {
