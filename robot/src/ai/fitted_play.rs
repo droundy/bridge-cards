@@ -8,6 +8,7 @@
 //! good, only which facts each table sees; the opening lead has its own
 //! tables (`opening_lead`), since the dummy is not yet in sight then.
 
+use super::Convention;
 use crate::{Bid, GameState, Seat};
 use bridge_deck::{Card, Cards, Suit};
 
@@ -16,7 +17,7 @@ use bridge_deck::{Card, Cards, Suit};
 /// dummy's, and 2 and 3 for the defenders on the declarer's left and right;
 /// the place is how many cards have been played to the trick; how a card is
 /// played is whether it leads, follows suit, ruffs or is discarded.
-pub(crate) const TUPLES: [(usize, &str); 7] = [
+pub(crate) const TUPLES: [(usize, &str); 11] = [
     (
         4 * 4 * 4 * 2 * 2,
         "the role, the place, how the card is played, whether partner is \
@@ -43,7 +44,84 @@ pub(crate) const TUPLES: [(usize, &str); 7] = [
         4 * 4 * 4,
         "the role, how the card is played, and which sides bid its suit",
     ),
+    (
+        4 * 4 * 20,
+        "the place, how the card is played, and the fewest and most cards of \
+         its suit that the first hidden hand after the player can hold, by the \
+         auction and the play",
+    ),
+    (4 * 4 * 20, "the same of the second hidden hand"),
+    (
+        4 * 4 * 20 * 2,
+        "the role, the place, the fewest and most points that the first hidden \
+         hand can still hold, by the auction and the play, and whether the card \
+         is an honour",
+    ),
+    (4 * 4 * 20 * 2, "the same of the second hidden hand"),
 ];
+
+/// What the auction and the play show of a hand that cannot be seen.
+#[derive(Clone, Copy)]
+struct Shown {
+    /// The fewest and most cards it can hold of each suit now.
+    length: [(usize, usize); 4],
+    /// The fewest and most high card points it can hold now.
+    points: (usize, usize),
+}
+
+impl Shown {
+    /// What the auction (read by `convention`) and the play of `game` show of
+    /// the hand of `seat`, which holds some of `hidden`.
+    fn new<C>(game: &GameState<C>, convention: &Convention, seat: Seat, hidden: Cards) -> Shown {
+        let first = (seat as usize + 4 - game.dealer as usize) % 4;
+        let offset = (game.bids.len() + 4 - first) % 4;
+        let (min, max) = convention.shown_bounds(&game.bids, offset);
+        let played = game.original_hands[seat] - game.hands[seat];
+        let length = Suit::ALL.map(|suit| {
+            if !game.shown_out[seat].in_suit(suit).is_empty() {
+                return (0, 0);
+            }
+            let gone = played.in_suit(suit).len();
+            let most = (max.length[suit] as usize).saturating_sub(gone);
+            let least = (min.length[suit] as usize).saturating_sub(gone);
+            let most = most.min(hidden.in_suit(suit).len());
+            (least.min(most), most)
+        });
+        let gone = played.high_card_points();
+        Shown {
+            length,
+            points: (
+                (min.hcp as usize).saturating_sub(gone),
+                (max.hcp as usize).saturating_sub(gone),
+            ),
+        }
+    }
+
+    /// The fewest and most cards of `suit`, as a number below 20.
+    fn length_index(&self, suit: Suit) -> usize {
+        let (least, most) = self.length[suit as usize];
+        least.min(3) * 5 + most.min(4)
+    }
+
+    /// The fewest and most points, as a number below 20.
+    fn points_index(&self) -> usize {
+        let (least, most) = self.points;
+        let least = match least {
+            0..=5 => 0,
+            6..=10 => 1,
+            11..=15 => 2,
+            _ => 3,
+        };
+        let most = match most {
+            0..=7 => 0,
+            8..=11 => 1,
+            12..=15 => 2,
+            16..=20 => 3,
+            _ => 4,
+        };
+        least * 5 + most
+    }
+}
 
 /// How many entries the tables have, end to end.
 pub(crate) const ENTRIES: usize = {
@@ -75,12 +153,16 @@ pub(crate) struct View {
     partner_winning: bool,
     /// Which suits each side has bid: the player's side and the other.
     bid: [[bool; 4]; 2],
+    /// What is shown of the two hidden hands, the first after the player
+    /// first.
+    shown: [Shown; 2],
 }
 
 impl View {
-    /// What the player to play a card in `game` can see, or `None` when
-    /// nobody is to play a card, or it is the opening lead.
-    pub(crate) fn new<C>(game: &GameState<C>) -> Option<View> {
+    /// What the player to play a card in `game` can see, reading the auction
+    /// by `convention`, or `None` when nobody is to play a card, or it is the
+    /// opening lead.
+    pub(crate) fn new<C>(game: &GameState<C>, convention: &Convention) -> Option<View> {
         let lead_seat = game.lead?;
         let dummy = game.dummy()?;
         let declarer = dummy + 2;
@@ -125,18 +207,27 @@ impl View {
                 bid[theirs][suit as usize] = true;
             }
         }
+        let hidden = left - mine - other;
+        let in_sight = if seat == dummy { declarer } else { dummy };
+        let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
+        let mut shown = || {
+            let hidden_seat = hidden_seats.next().unwrap();
+            Shown::new(game, convention, hidden_seat, hidden)
+        };
+        let shown = [shown(), shown()];
         Some(View {
             role,
             place,
             trump,
             mine,
             other,
-            hidden: left - mine - other,
+            hidden,
             left,
             lead: in_trick.first().map(|card| card.suit()),
             winning: in_trick.get(winner).copied(),
             partner_winning: place > 0 && winner % 2 == place % 2,
             bid,
+            shown,
         })
     }
 
@@ -189,6 +280,10 @@ impl View {
             ((place * 4 + length) * 4 + other_length) * 2 + trumps as usize,
             (place * 4 + how) * 6 + tricks,
             (role * 4 + how) * 4 + bid_by,
+            (place * 4 + how) * 20 + self.shown[0].length_index(suit),
+            (place * 4 + how) * 20 + self.shown[1].length_index(suit),
+            ((role * 4 + place) * 20 + self.shown[0].points_index()) * 2 + (card.rank() >= 10) as usize,
+            ((role * 4 + place) * 20 + self.shown[1].points_index()) * 2 + (card.rank() >= 10) as usize,
         ];
         let mut entries = [0; TUPLES.len()];
         let mut offset = 0;
@@ -241,7 +336,21 @@ mod tests {
                     continue;
                 };
                 let game: GameState<()> = serde_json::from_str(&json).unwrap();
-                let view = View::new(&game).unwrap();
+                let view = View::new(&game, &game.system.convention()).unwrap();
+                // The robot bid the auction, so the hidden hands are as it
+                // showed them, less what they have played.
+                let seat = game.lead.unwrap() + game.played.len() % 4;
+                let in_sight = if Some(seat) == game.dummy() { seat + 2 } else { game.dummy().unwrap() };
+                let hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
+                for (shown, hidden_seat) in view.shown.iter().zip(hidden_seats) {
+                    let hand = game.hands[hidden_seat];
+                    for suit in Suit::ALL {
+                        let (least, most) = shown.length[suit as usize];
+                        assert!((least..=most).contains(&hand.in_suit(suit).len()), "{json}");
+                    }
+                    let (least, most) = shown.points;
+                    assert!((least..=most).contains(&hand.high_card_points()), "{json}");
+                }
                 for card in game.could_be_played() {
                     for (t, entry) in view.entries(card).into_iter().enumerate() {
                         let start: usize = TUPLES[..t].iter().map(|t| t.0).sum();
@@ -345,15 +454,20 @@ mod tests {
         choice: Vec<(Vec<usize>, f64)>,
     }
 
-    /// The situations in the files `paths`, comma-separated.
-    fn read_situations(paths: &str) -> Vec<Situation> {
+    /// The situations in the files `paths`, comma-separated, each card with
+    /// the entries of only the first `tables` of the tables of [`TUPLES`].
+    fn read_situations(paths: &str, tables: usize) -> Vec<Situation> {
+        let mut conventions = std::collections::HashMap::new();
         let mut situations = Vec::new();
         for path in paths.split(',') {
             for line in std::fs::read_to_string(path.trim()).unwrap().lines() {
                 let json: serde_json::Value = serde_json::from_str(line).unwrap();
                 let game: GameState<()> =
                     serde_json::from_str(json["situation"].as_str().unwrap()).unwrap();
-                let view = View::new(&game).unwrap();
+                let convention = conventions
+                    .entry(format!("{:?}", game.system))
+                    .or_insert_with(|| game.system.convention());
+                let view = View::new(&game, convention).unwrap();
                 let leaders = json["leaders"].as_bool().unwrap();
                 let choice = json["values"]
                     .as_array()
@@ -370,7 +484,7 @@ mod tests {
                         // The tricks of the player's side, up to a number that
                         // is the same for every card.
                         let value = if leaders { mean } else { -mean };
-                        (view.entries(card).to_vec(), value)
+                        (view.entries(card)[..tables].to_vec(), value)
                     })
                     .collect();
                 situations.push(Situation {
@@ -387,12 +501,15 @@ mod tests {
     /// the data in `PLAY_TEST`, the tricks that its choice loses to the best
     /// card by the ensemble's values, beside those that a card at random
     /// loses.  Writes the weights, one a line, to the file `PLAY_WEIGHTS` if
-    /// it is set.  `PLAY_STEPS` (500) is the number of steps of each fit.
+    /// it is set.  `PLAY_STEPS` (500) is the number of steps of each fit, and
+    /// only the first `PLAY_TABLES` (all) of the tables are used, to see what
+    /// the others add.
     #[test]
     #[ignore]
     fn fit_play_model() {
-        let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"));
-        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"));
+        let tables = number("PLAY_TABLES", TUPLES.len());
+        let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), tables);
+        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), tables);
         let steps = number("PLAY_STEPS", 500);
         let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
         let (penalty, held_out) =
