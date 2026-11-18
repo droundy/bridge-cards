@@ -566,6 +566,44 @@ mod tests {
         assert!(fitted > 10, "only {fitted} of 40 deals fit");
     }
 
+    /// How long it takes to value every legal card in one deal, which is what
+    /// a choice of `EnsemblePlay` costs for each deal of its ensemble, for the
+    /// stages in `ENSEMBLE_STAGES` (by default 8 to 11 tricks left).
+    #[test]
+    #[ignore]
+    fn report_the_time_to_value_the_cards_of_a_deal() {
+        let stages: Vec<usize> = std::env::var("ENSEMBLE_STAGES")
+            .ok()
+            .map(|s| s.split(',').filter_map(|n| n.parse().ok()).collect())
+            .unwrap_or(vec![8, 9, 10, 11]);
+        for tricks_left in stages {
+            let mut times = Vec::new();
+            for game in games(tricks_left, 8) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let mut rng = StdRng::seed_from_u64(1);
+                let (deal, _) = hidden.sample(&mut rng).unwrap();
+                let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
+                let started = std::time::Instant::now();
+                card_values(
+                    starting,
+                    trump_of(&game),
+                    &in_trick,
+                    game.could_be_played(),
+                );
+                times.push(started.elapsed().as_secs_f64());
+                eprintln!("{tricks_left} tricks left: {:.3} s", times.last().unwrap());
+            }
+            times.sort_by(f64::total_cmp);
+            println!(
+                "{tricks_left} tricks left: mean {:.3} s, median {:.3} s, most {:.3} s a deal",
+                times.iter().sum::<f64>() / times.len() as f64,
+                times[times.len() / 2],
+                times[times.len() - 1],
+            );
+        }
+    }
+
     /// West opens 1NT with 15 points in SAYC, and everyone else passes, with
     /// North on lead.  The hands that North cannot see are South's and West's.
     fn one_notrump_by_west() -> GameState<()> {
