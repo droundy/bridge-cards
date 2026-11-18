@@ -28,7 +28,9 @@
 use super::{Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
-use bridge_solver::{Naive, Starting};
+#[cfg(test)]
+use bridge_solver::Naive;
+use bridge_solver::{DoubleDummy, Starting};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -268,6 +270,27 @@ pub(crate) fn trump_of<C>(game: &GameState<C>) -> Option<Suit> {
     }
 }
 
+/// For each card in `legal`, the tricks that the side of whoever leads this
+/// trick wins by playing it, when `starting` has every hand, with best play
+/// after that, where `in_trick` have been played to the trick already.
+pub(crate) fn card_values(
+    starting: Starting,
+    trump: Option<Suit>,
+    in_trick: &[Card],
+    legal: Cards,
+) -> Vec<(Card, f64)> {
+    let mut solver = DoubleDummy::new(trump);
+    let mut plays = in_trick.to_vec();
+    legal
+        .map(|card| {
+            plays.push(card);
+            let value = solver.tricks_after(starting.hands, &plays) as f64;
+            plays.pop();
+            (card, value)
+        })
+        .collect()
+}
+
 /// How many of the tricks left the side of whoever leads this trick wins,
 /// when everything is known, after `plays` have been made to the trick.
 ///
@@ -275,7 +298,8 @@ pub(crate) fn trump_of<C>(game: &GameState<C>) -> Option<Suit> {
 /// pruning: a branch is skipped once it cannot change the value, so the value
 /// is exactly what searching every branch would find.  `alpha` and `beta` are
 /// the best that the leader's side and the other side are already sure of.
-fn trick_value(
+#[cfg(test)]
+fn naive_trick_value(
     solver: &mut Naive,
     starting: Starting,
     trump: Option<Suit>,
@@ -298,7 +322,7 @@ fn trick_value(
     let mut best: Option<f64> = None;
     for card in legal {
         plays.push(card);
-        let value = trick_value(solver, starting, trump, plays, alpha, beta);
+        let value = naive_trick_value(solver, starting, trump, plays, alpha, beta);
         plays.pop();
         let so_far = match best {
             Some(best) if most => best.max(value),
@@ -318,10 +342,10 @@ fn trick_value(
     best.expect("a hand has to have a card to play")
 }
 
-/// For each card in `legal`, the tricks that the side of whoever leads this
-/// trick wins by playing it, when `starting` has every hand, with best play
-/// after that, where `in_trick` have been played to the trick already.
-pub(crate) fn card_values(
+/// [`card_values`] worked out by trying every play to the trick and solving
+/// what follows each with [`Naive`], which the faster solver must agree with.
+#[cfg(test)]
+fn naive_card_values(
     starting: Starting,
     trump: Option<Suit>,
     in_trick: &[Card],
@@ -332,7 +356,7 @@ pub(crate) fn card_values(
     legal
         .map(|card| {
             plays.push(card);
-            let value = trick_value(
+            let value = naive_trick_value(
                 &mut solver,
                 starting,
                 trump,
@@ -612,12 +636,7 @@ mod tests {
                 let (deal, _) = hidden.sample(&mut rng).unwrap();
                 let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
                 let started = std::time::Instant::now();
-                card_values(
-                    starting,
-                    trump_of(&game),
-                    &in_trick,
-                    game.could_be_played(),
-                );
+                card_values(starting, trump_of(&game), &in_trick, game.could_be_played());
                 times.push(started.elapsed().as_secs_f64());
                 eprintln!("{tricks_left} tricks left: {:.3} s", times.last().unwrap());
             }
@@ -756,6 +775,27 @@ mod tests {
     }
 
     #[test]
+    fn card_values_agree_with_solving_every_play_with_naive() {
+        for tricks_left in [2, 3, 4, 5, 6] {
+            for game in games(tricks_left, 8) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let mut rng = StdRng::seed_from_u64(12);
+                let (deal, _) = hidden.sample(&mut rng).unwrap();
+                let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
+                let legal = game.could_be_played();
+                let trump = trump_of(&game);
+                assert_eq!(
+                    naive_card_values(starting, trump, &in_trick, legal),
+                    card_values(starting, trump, &in_trick, legal),
+                    "{:?}",
+                    game.bids
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_player_plays_a_legal_card_whatever_the_stage() {
         let mut player = EnsemblePlay::seeded(1);
         for tricks_left in [13, 8, 7, 4, 2] {
@@ -778,7 +818,11 @@ mod tests {
         let mut checksum = 0u64;
         let mut plays = 0;
         let warm = std::time::Instant::now();
-        for system in [BiddingSystem::Sheets, BiddingSystem::Sayc, BiddingSystem::TwoOverOne] {
+        for system in [
+            BiddingSystem::Sheets,
+            BiddingSystem::Sayc,
+            BiddingSystem::TwoOverOne,
+        ] {
             convention_of(system);
         }
         eprintln!("WARMUP secs={:.3}", warm.elapsed().as_secs_f64());
