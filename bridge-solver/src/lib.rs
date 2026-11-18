@@ -217,16 +217,29 @@ impl Starting {
     pub fn check(&self) {
         let lengths = self.hands.map(|hand| hand.len());
         let n = (self.unknown.len() + lengths.iter().sum::<usize>()) / 4;
-        for length in lengths {
-            if length > n {
-                println!("Thi sis crazy! with {n} tricks left");
-                self.printme();
-            }
-            assert!(length <= n);
+        if lengths.iter().any(|&length| length > n) {
+            self.fail_check(n);
         }
     }
-    pub fn after(mut self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
+    /// Say what is wrong with a position that has too many cards, and panic.
+    ///
+    /// This is kept out of `check` so that `check`, which is run for every
+    /// position the solver solves, stays small enough to be inlined.
+    #[cold]
+    #[inline(never)]
+    fn fail_check(&self, n: usize) -> ! {
+        println!("Thi sis crazy! with {n} tricks left");
+        self.printme();
+        panic!("a hand has more than the {} cards that are left to play", n);
+    }
+    pub fn after(self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
         self.check();
+        self.after_unchecked(plays, trump)
+    }
+    /// [`Starting::after`] for a position that has been checked already,
+    /// which the solver does once for each position it solves, and not again
+    /// for each of the tricks it tries from that position.
+    fn after_unchecked(mut self, plays: [Card; 4], trump: Option<Suit>) -> TrickTaken {
         let played = Cards::singleton(plays[0])
             + Cards::singleton(plays[1])
             + Cards::singleton(plays[2])
@@ -282,7 +295,9 @@ impl Starting {
                 }
             }
         }
-        next.check();
+        if cfg!(debug_assertions) {
+            next.check();
+        }
         if winner & 1 == 1 {
             // They won!
             TrickTaken::Them(next)
@@ -519,7 +534,15 @@ impl PartialOrd for Score {
 }
 impl Ord for Score {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.tricks.partial_cmp(&other.tricks).unwrap()
+        // The number of tricks is never NaN, so this is a plain comparison
+        // that the solver's loops do not need to check for NaN.
+        if self.tricks < other.tricks {
+            std::cmp::Ordering::Less
+        } else if self.tricks > other.tricks {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
     }
 }
 
@@ -586,10 +609,23 @@ type Cache = std::collections::HashMap<Starting, Score, BuildHasherDefault<Posit
 
 /// A fast hash for the few `u64`s that make up a `Starting`
 ///
-/// FxHash combines the words, and then the MurmurHash3 finalizer mixes every
-/// bit into the low bits that `HashMap` uses to pick a bucket.
+/// Each word is multiplied by a constant of its own, so that the multiplies
+/// do not wait for one another, and then the MurmurHash3 finalizer mixes
+/// every bit into the low bits that `HashMap` uses to pick a bucket.
 #[derive(Default)]
-struct PositionHasher(u64);
+struct PositionHasher {
+    sum: u64,
+    words: usize,
+}
+
+/// A different odd constant for each of the five words of a `Starting`.
+const WORD_MULTIPLIERS: [u64; 5] = [
+    0x9e37_79b9_7f4a_7c15,
+    0xc2b2_ae3d_27d4_eb4f,
+    0x1656_67b1_9e37_79f9,
+    0x27d4_eb2f_1656_67c5,
+    0x517c_c1b7_2722_0a95,
+];
 
 impl Hasher for PositionHasher {
     fn write(&mut self, bytes: &[u8]) {
@@ -598,18 +634,16 @@ impl Hasher for PositionHasher {
         }
     }
     fn write_u64(&mut self, word: u64) {
-        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+        let multiplier = WORD_MULTIPLIERS[self.words % WORD_MULTIPLIERS.len()];
+        self.words += 1;
+        self.sum = self.sum.wrapping_add(word.wrapping_mul(multiplier));
     }
     fn write_usize(&mut self, word: usize) {
         self.write_u64(word as u64);
     }
     fn finish(&self) -> u64 {
-        let mut h = self.0;
-        h ^= h >> 33;
-        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        h ^= h >> 33;
-        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        h ^ (h >> 33)
+        let h = (self.sum ^ (self.sum >> 32)).wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^ (h >> 29)
     }
 }
 
@@ -704,13 +738,51 @@ impl Naive {
                 1.0
             };
             Score { tricks }
+        } else if starting.unknown.is_empty() && starting.hands[0].len() == 2 {
+            // The trick after this one is the last, and it is decided by the
+            // cards that are left, so there is no need to look it up.
+            let winner = trick_winner(plays, self.trump);
+            let last = [0, 1, 2, 3].map(|i| {
+                let seat = (winner + i) % 4;
+                (starting.hands[seat] - Cards::singleton(plays[seat]))
+                    .min()
+                    .unwrap()
+            });
+            let last_winner = (winner + trick_winner(last, self.trump)) % 4;
+            let ours = |seat: usize| (seat & 1 == 0) as u8 as f64;
+            Score {
+                tricks: ours(winner) + ours(last_winner),
+            }
         } else {
-            let trick_taken = starting.after(plays, self.trump);
-            self.score(trick_taken.starting()) + trick_taken
+            let trick_taken = starting.after_unchecked(plays, self.trump);
+            self.solve(trick_taken.starting()) + trick_taken
         }
     }
 
     pub fn score(&mut self, starting: Starting) -> Score {
+        starting.check();
+        self.reserve_for(starting);
+        self.solve(starting)
+    }
+
+    /// Make room in the cache for the positions that solving `starting`
+    /// will put there, so that the cache is not grown (and everything in it
+    /// rehashed) over and over as the search fills it.
+    ///
+    /// Each trick that is left multiplies the number of positions by about
+    /// five.
+    fn reserve_for(&mut self, starting: Starting) {
+        let tricks = starting.tricks_remaining();
+        let positions = 4 * 5usize.pow(tricks.saturating_sub(2) as u32);
+        self.cache.reserve(positions.min(1 << 17));
+    }
+
+    /// [`Naive::score`] for a position that has been checked already, as
+    /// every position reached from a position that was checked is.
+    fn solve(&mut self, starting: Starting) -> Score {
+        if cfg!(debug_assertions) {
+            starting.check();
+        }
         if let Some(score) = self.cache.get(&starting) {
             // println!("found score {:?}", score);
             return *score;
@@ -788,6 +860,7 @@ impl Naive {
             starting.unknown -= Cards::singleton(card);
         }
         starting.check();
+        self.reserve_for(starting);
         let mut sampled = Sampled::default();
         let statistics = if starting.unknown.is_empty() {
             1
