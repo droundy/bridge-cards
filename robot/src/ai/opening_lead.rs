@@ -918,6 +918,62 @@ mod tests {
         }
     }
 
+    /// A pruned network for suit contracts, fitted to plain facts about the
+    /// lead (the length, rank and honours of its suit, who bid it and so on),
+    /// written out as its closed-form sum.
+    fn pruned_suit_score(auction: &Auction, hand: Cards, card: Card) -> f64 {
+        let suit = card.suit();
+        let holding = hand.in_suit(suit);
+        let has = |rank: u8| holding.contains(Card::new(suit, rank)) as u8 as f64;
+        let bid = |seat: usize| auction.bid[seat][suit as usize] as u8 as f64;
+        let rank = card.rank();
+        let length = holding.len() as f64 / 4.0;
+        let higher = (holding & Cards::higher_than(card)).len() as f64 / 4.0;
+        let (ace, king, queen, jack, ten) = (has(14), has(13), has(12), has(11), has(10));
+        let points = holding.high_card_points() as f64 / 4.0;
+        let touching_above = if rank < 14 { has(rank + 1) } else { 0.0 };
+        let touching_below = if rank > 2 { has(rank - 1) } else { 0.0 };
+        let trumps = (auction.trump == Some(suit)) as u8 as f64;
+        let level = auction.level as f64 / 7.0;
+        let doubled = auction.doubled_by.is_some() as u8 as f64;
+        let dummy_bid_a_side_suit =
+            (0..4).any(|s| s != suit as usize && auction.bid[1][s]) as u8 as f64;
+        let trump_length = auction.trump.map_or(0.0, |t| hand.in_suit(t).len() as f64 / 4.0);
+        let relu = |x: f64| x.max(0.0);
+        -0.15 * ace - 0.08 * bid(3) - 0.52 * relu(0.12 * ace) - 0.57 * relu(0.14 * ace)
+            + 4.59
+                * relu(
+                    2.69 - 1.74 * length + 0.76 * higher - 0.97 * king + 0.17 * queen - 0.31 * ten
+                        - 0.98 * points
+                        + 0.25 * touching_above
+                        - 0.72 * touching_below
+                        - 0.13 * bid(0)
+                        - 0.44 * bid(1)
+                        + 0.76 * bid(2)
+                        - 1.13 * bid(3)
+                        + 0.42 * level
+                        - 0.16 * dummy_bid_a_side_suit
+                        + 0.91 * trump_length,
+                )
+            + 4.78
+                * relu(
+                    -0.93 - 0.49 * length + 1.34 * (rank as f64 / 14.0) - 3.47 * higher
+                        + 0.06 * ace
+                        + 0.36 * king
+                        - 0.15 * queen
+                        + 0.04 * jack
+                        + 0.25 * ten
+                        + 0.76 * points
+                        + 1.76 * touching_below
+                        - 0.38 * trumps
+                        + 0.16 * bid(0)
+                        - 0.13 * bid(1)
+                        - 0.59 * bid(3)
+                        + 0.04 * level
+                        - 0.40 * doubled,
+                )
+    }
+
     /// How long each model takes to score every lead of a hand and choose
     /// the best, over the hands in `OPENING_LEAD_DATA`, natively: the 35
     /// features with their weights, the n-tuple network (whose weights do
@@ -961,6 +1017,9 @@ mod tests {
         });
         time("  n-tuple entries alone", &|lead| {
             best(lead.hand, &|c| black_box(tuple_entries(&lead.auction, lead.hand, c))[0] as f64)
+        });
+        time("pruned network, closed form", &|lead| {
+            best(lead.hand, &|c| pruned_suit_score(&lead.auction, lead.hand, c))
         });
         time("likely_opening_leads", &|lead| likely_opening_leads(&lead.auction, lead.hand)[0]);
     }
