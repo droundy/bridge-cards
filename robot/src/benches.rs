@@ -2,42 +2,55 @@
 //! `scaling` when the `benchmarks` feature is on.
 //!
 //! A benchmark here is a stage of the play, which is how many tricks are left,
-//! with some situations at that stage.  A situation is a deal that has been
-//! played part of the way through by random legal plays, and has a robot to
+//! with some situations at that stage.  A situation is a deal that the robot
+//! has bid to a contract with one of its bidding systems, and that has been
+//! played part of the way through by random legal plays, and has someone to
 //! choose a card.  It is kept as the JSON that the browser hands to
 //! [`choose_play`](crate::choose_play), so that two versions of this crate are
 //! handed the same situations and the same function.  The same situations are
 //! made every time, so that what is measured is the robot and not the deals.
+//! Sixteen of them in a row cover the four roles that a player can have (the
+//! declarer playing their own hand, the declarer playing the dummy's, and
+//! each of the defenders) with each of the four places in a trick, to play
+//! first, second, third and last.
 //!
-//! Each benchmark reports how long the robot takes to choose a card in every
-//! situation of a stage, and how well it chose, as the double-dummy loss: the
-//! tricks that the best play would win, less those that the card that it
-//! chose would, when the cards in all four hands are known and everyone plays
-//! the best they can.
+//! Each benchmark reports how long a player takes to choose a card in every
+//! situation of a stage, and how well it chose.  A card is valued over an
+//! ensemble of deals of the two hands that the player cannot see, which fit
+//! what is known of them: how many cards each has, the suits each has shown out
+//! of, which cards have been played, and what the auction showed of each hand.
+//! Its value in a deal is the tricks that it wins with the best play of
+//! everyone when all the hands are known, and its value is the mean of that
+//! over the ensemble.  The loss of a choice is the value of the best card,
+//! less the value of the chosen card, in tricks.
 //!
-//! The double-dummy loss is a yardstick and not a measure of how well the
-//! robot plays.  The robot cannot see the hidden hands, so the best card for
-//! the deal that is really there is often not a card that anyone could know
-//! to play, and the robot loses something even if it plays as well as can be.
-//! The best play when the hands are known is the same for every version of the
-//! robot, so what is meaningful is the difference between versions, and
-//! between the robot and the random play that the group also has for scale.
+//! This is a yardstick and not a measure of how well anyone plays.  Best play
+//! with every hand known is not how anyone plays, since a defender who cannot
+//! see the declarer's hand should not play as though they could, and the
+//! ensemble has every deal that fits the auction as likely as any other.  A
+//! player who chooses by the same ensemble will do well by it.  So what is
+//! meaningful is the difference between the players, and between the robot
+//! and the random play that the group also has for scale.  The ensemble is the
+//! same for every player and every version, and is not the one that
+//! [`EnsemblePlay`](crate::EnsemblePlay) uses.
+//!
 //! Working out the best play gets too slow with more than
-//! [`DOUBLE_DUMMY_TRICKS`] tricks left, and the earlier stages report no
-//! loss.  The robot samples deals for the cards that it cannot see, so its
-//! choices vary from run to run, and so does the loss, which is a mean over
-//! the situations of a stage.
+//! [`DOUBLE_DUMMY_TRICKS`] tricks left, and the earlier stages report no loss.
+//! The robot samples deals for the cards that it cannot see, so its choices
+//! vary from run to run, and so does the loss, which is a mean over the
+//! situations of a stage.
 
-use crate::{Action, Bid, GameState, Seat, Seated};
-use bridge_deck::{Card, Cards, Suit};
-use bridge_solver::{Naive, Starting};
+use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden};
+use crate::situations::Generator;
+use crate::{Action, EnsemblePlay, GameState, PlayAI};
+use bridge_deck::Card;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use scaling::Metrics;
 
 /// How many situations make up each stage by default, which is few enough for
 /// a stage to be timed in a reasonable time.
-const SITUATIONS: usize = 8;
+const SITUATIONS: usize = 16;
 
 /// How many situations make up each stage: [`SITUATIONS`], or the number in
 /// the environment variable `PLAY_BENCH_SITUATIONS`.  The situations of a
@@ -55,47 +68,14 @@ fn situations_per_stage() -> usize {
 /// The most tricks left for which the best play is worked out.
 const DOUBLE_DUMMY_TRICKS: usize = 8;
 
-/// A situation with `tricks_left` tricks left, including the one in progress,
-/// as the JSON that the browser hands to `choose_play`.  `game` is any game,
-/// since making one takes a few milliseconds that we do not want to repeat
-/// for every situation.
-fn situation(game: &mut GameState<()>, rng: &mut StdRng, tricks_left: usize) -> Option<String> {
-    let mut deck = Cards::ALL;
-    let mut deal = || deck.pick_rng(rng, 13).unwrap();
-    let hands: Seated<Cards> = [deal(), deal(), deal(), deal()].into();
-    game.redeal();
-    game.hands = hands;
-    game.original_hands = hands;
-    // The contract is a game, bid by the declarer and passed out.
-    let declarer: Seat = rng.gen_range(0..4usize).into();
-    let contract = match rng.gen_range(0..5) {
-        4 => Bid::NT(3),
-        n => Bid::Suit(4, Suit::ALL[n]),
-    };
-    game.dealer = declarer;
-    game.bids = vec![contract, Bid::Pass, Bid::Pass, Bid::Pass];
-    game.lead = Some(declarer.next());
-    // Play to some point in a trick.
-    let cards_before = 4 * (13 - tricks_left) + rng.gen_range(0..4);
-    for _ in 0..cards_before {
-        let legal: Vec<Card> = game.could_be_played().collect();
-        game.play(legal[rng.gen_range(0..legal.len())]);
-    }
-    // There has to be something to choose.
-    if game.could_be_played().len() < 2 {
-        return None;
-    }
-    serde_json::to_string(game).ok()
-}
-
 /// Situations with `tricks_left` tricks left, which are the same every time.
 pub fn play_situations(tricks_left: usize) -> Vec<String> {
-    let mut game = GameState::<()>::new();
+    let mut generator = Generator::new();
     let mut rng = StdRng::seed_from_u64(tricks_left as u64);
     let mut found = Vec::new();
     let wanted = situations_per_stage();
     while found.len() < wanted {
-        found.extend(situation(&mut game, &mut rng, tricks_left));
+        found.extend(generator.situation(&mut rng, found.len(), tricks_left));
     }
     found
 }
@@ -120,6 +100,23 @@ fn choose_plays(situations: &Vec<String>) -> Vec<Option<String>> {
         .collect()
 }
 
+/// The play of [`EnsemblePlay`], which chooses by a smaller ensemble, in the
+/// same way that the loss is measured.  It keeps what it has learnt from one
+/// situation to the next, and so does not read the bidding system again each
+/// time, as `choose_play` does.
+#[scaling::bench(group = "play decision")]
+fn ensemble_plays(situations: &Vec<String>) -> Vec<Option<String>> {
+    let mut player = EnsemblePlay::new();
+    situations
+        .iter()
+        .map(|situation| {
+            let game: GameState<()> = serde_json::from_str(situation).ok()?;
+            let card = player.play(&game);
+            serde_json::to_string(&Action::Play(game.hand_playing()?, card)).ok()
+        })
+        .collect()
+}
+
 /// Plays any legal card, for a sense of how much the double-dummy loss of the
 /// robot is worth.
 #[scaling::bench(group = "play decision")]
@@ -136,9 +133,25 @@ fn random_plays(situations: &Vec<String>) -> Vec<Option<String>> {
         .collect()
 }
 
-/// The tricks that the side of the seat that is choosing would win with the
-/// best play of the legal card `chosen`, less the tricks that it wins with
-/// the best card, or `None` where that is not worked out.
+/// How many deals of the hands that the player cannot see make up the
+/// ensemble that a play is valued over.
+const REFERENCE_DEALS: usize = 48;
+
+/// A number made from `text`, which is the same on every platform.
+fn seed_from(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// How many tricks the best play would win, over an ensemble of the hands that
+/// the player cannot see that fit the auction and the play so far, more than
+/// the play that was chosen would, or `None` where that is not worked out.
+///
+/// The value of a play is the number of tricks that the side of whoever leads
+/// the trick wins with best play by everyone, averaged over the ensemble.  The
+/// ensemble is the same for every play that is chosen in a situation, and for
+/// every version of the robot.
 fn loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
     let game: GameState<()> = serde_json::from_str(situation).ok()?;
     let tricks_left = game.hands.iter().map(|hand| hand.len()).max()?;
@@ -154,90 +167,61 @@ fn loss(situation: &str, chosen: &Option<String>) -> Option<f64> {
         // Nothing is as bad as an illegal play.
         return Some(tricks_left as f64);
     }
-
-    // The deal as the solver has it: the hands in the order of the play, with
-    // each card already played to this trick back in its hand.
-    let lead = game.lead?;
-    let in_trick: &[Card] = if game.played.len() == 4 {
-        &[]
+    let means = reference_values(situation, &game)?;
+    let mine = means.iter().find(|&&(card, _)| card == chosen)?.1;
+    let best = if plays_for_the_leaders(&game) {
+        means.iter().map(|&(_, mean)| mean).fold(f64::MIN, f64::max)
     } else {
-        &game.played
+        means.iter().map(|&(_, mean)| mean).fold(f64::MAX, f64::min)
     };
-    let mut hands = [Cards::EMPTY; 4];
-    for seat in 0..4 {
-        hands[(seat + 4 - lead as usize) % 4] = game.hands[Seat::from(seat)];
-    }
-    for (i, &card) in in_trick.iter().enumerate() {
-        hands[i] += Cards::singleton(card);
-    }
-    let starting = Starting {
-        hands,
-        unknown: Cards::EMPTY,
-    };
-    let trump = match game.highest_contract_bid() {
-        Some(Bid::Suit(_, trump)) => Some(trump),
-        _ => None,
-    };
-    let mut solver = Naive::new(trump);
-    let mut plays = in_trick.to_vec();
-    let mut value = |card: Card| {
-        plays.push(card);
-        let value = trick_value(&mut solver, starting, trump, &mut plays);
-        plays.pop();
-        value
-    };
-    let values: Vec<(Card, f64)> = legal.map(|card| (card, value(card))).collect();
-    let mine = values.iter().find(|&&(card, _)| card == chosen)?.1;
-    // The score is for the side of whoever led the trick.
-    let it_is_the_leaders_side = in_trick.len() & 1 == 0;
-    let best = values
-        .iter()
-        .map(|&(_, value)| value)
-        .fold(f64::NAN, |best, value| {
-            if it_is_the_leaders_side {
-                best.max(value)
-            } else {
-                best.min(value)
-            }
-        });
-    Some(if it_is_the_leaders_side {
-        best - mine
-    } else {
-        mine - best
-    })
+    Some((best - mine).abs())
 }
 
-/// How many of the tricks left the side of whoever leads this trick wins,
-/// when everything is known, after `plays` have been made to the trick.
-fn trick_value(
-    solver: &mut Naive,
-    starting: Starting,
-    trump: Option<Suit>,
-    plays: &mut Vec<Card>,
-) -> f64 {
-    if plays.len() == 4 {
-        let trick = starting.after([plays[0], plays[1], plays[2], plays[3]], trump);
-        return (solver.score(trick.starting()) + trick).mean();
+/// The value of each legal card of a situation.
+type Values = Vec<(Card, f64)>;
+
+thread_local! {
+    /// The values that `reference_values` has worked out, since every player
+    /// of a situation is valued by the same ones.
+    static REFERENCE: std::cell::RefCell<std::collections::HashMap<String, Option<Values>>>
+        = Default::default();
+}
+
+/// The value of each legal card in the situation: the tricks that the side of
+/// whoever leads the trick wins by playing it, with best play by everyone after
+/// that, averaged over the deals of the ensemble.
+fn reference_values(situation: &str, game: &GameState<()>) -> Option<Values> {
+    if let Some(known) = REFERENCE.with(|r| r.borrow().get(situation).cloned()) {
+        return known;
     }
-    let seat = plays.len();
-    let legal = if seat == 0 {
-        starting.hands[0]
-    } else {
-        starting.hands[seat].following_suit(plays[0].suit())
-    };
-    let mut best: Option<f64> = None;
-    for card in legal {
-        plays.push(card);
-        let value = trick_value(solver, starting, trump, plays);
-        plays.pop();
-        best = Some(match best {
-            // The leader and the partner of the leader want the most tricks.
-            Some(best) if seat & 1 == 0 => best.max(value),
-            Some(best) => best.min(value),
-            None => value,
-        });
+    let values = work_out_reference_values(situation, game);
+    REFERENCE.with(|r| r.borrow_mut().insert(situation.to_string(), values.clone()));
+    values
+}
+
+fn work_out_reference_values(situation: &str, game: &GameState<()>) -> Option<Values> {
+    let convention = game.system.convention();
+    let hidden = Hidden::new(game, &convention)?;
+    let mut rng = StdRng::seed_from_u64(seed_from(situation));
+    let trump = trump_of(game);
+    let legal = game.could_be_played();
+    let mut totals: Vec<(Card, f64)> = legal.map(|card| (card, 0.0)).collect();
+    for _ in 0..REFERENCE_DEALS {
+        let (deal, _) = hidden.sample(&mut rng)?;
+        let (starting, in_trick) = starting_with(game, &hidden, deal)?;
+        for (total, (_, value)) in totals
+            .iter_mut()
+            .zip(card_values(starting, trump, &in_trick, legal))
+        {
+            total.1 += value;
+        }
     }
-    best.expect("a hand has to have a card to play")
+    Some(
+        totals
+            .into_iter()
+            .map(|(card, total)| (card, total / REFERENCE_DEALS as f64))
+            .collect(),
+    )
 }
 
 /// How well the robot chose in a stage, as the mean tricks lost to the best
@@ -267,6 +251,7 @@ fn play_quality(situations: &Vec<String>, chosen: Vec<Option<String>>) -> Metric
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge_deck::Cards;
 
     /// The play that `card` is, as the robot would send it for this game.
     fn play_of(game: &GameState<()>, card: Card) -> Option<String> {
@@ -289,6 +274,20 @@ mod tests {
                 assert!(game.turn().is_some());
                 assert!(game.could_be_played().len() > 1);
             }
+        }
+    }
+
+    #[test]
+    fn sixteen_situations_cover_every_role_and_place_in_the_trick() {
+        for tricks_left in [11, 7, 3] {
+            let situations = play_situations(tricks_left);
+            assert_eq!(16, situations_per_stage());
+            let mut seen = std::collections::BTreeSet::new();
+            for situation in &situations {
+                let game: GameState<()> = serde_json::from_str(situation).unwrap();
+                seen.extend(crate::situations::role_and_place(&game));
+            }
+            assert_eq!(16, seen.len(), "{seen:?} with {tricks_left} tricks left");
         }
     }
 
