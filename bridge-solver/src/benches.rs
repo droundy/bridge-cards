@@ -198,3 +198,37 @@ fn high_low(position: &Position) -> f64 {
     let (starting, trump) = from_position(position);
     Naive::high_low(trump).score(starting).mean()
 }
+
+/// The number of deals that the robot samples to choose a play with this many
+/// tricks left, as `robot/src/ai.rs` does.
+fn robot_samples(tricks_left: usize) -> usize {
+    match tricks_left {
+        0..=4 => 16,
+        5 => 4,
+        6 => 2,
+        _ => 1,
+    }
+}
+
+#[scaling::input(
+    group = "robot decision",
+    name = "cards",
+    sizes(2, 3, 4, 5, 6),
+    reusable
+)]
+fn robot_decision_position(n: usize) -> Position {
+    position(single_dummy(n), Some(Suit::Hearts))
+}
+
+/// What the robot does to choose a card to lead: sample deals for the cards
+/// it cannot see, and score each card that it could play, with
+/// [`Naive::score_after`].
+#[scaling::bench(group = "robot decision")]
+fn robot_decision(position: &Position) -> f64 {
+    let (starting, trump) = from_position(position);
+    let samples = robot_samples(starting.tricks_remaining());
+    Naive::statistical(trump, samples)
+        .score_after(starting, &[])
+        .0
+        .mean()
+}
