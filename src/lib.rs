@@ -1178,6 +1178,8 @@ mod markup;
 #[cfg(feature = "benchmarks")]
 mod benches;
 
+mod tuples;
+
 #[test]
 fn all_cards() {
     for c in Cards::ALL {

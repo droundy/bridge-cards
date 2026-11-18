@@ -712,6 +712,100 @@ mod tests {
         weights
     }
 
+    /// The tables of an n-tuple network for the opening lead: their sizes,
+    /// and the plain facts about a lead that index each of them.
+    const TUPLES: [(usize, &str); 6] = [
+        (13 * 64, "the rank, and which of the three ranks above and below it are held"),
+        (32 * 7, "which of the ace to the ten of the suit are held, and its length"),
+        (13 * 7, "the rank and the length of the suit"),
+        (64, "who bid the suit, whether it is trumps, whether the contract is doubled"),
+        (8 * 7, "the level and the length of the suit"),
+        (7 * 7, "the length of the trumps and of the suit"),
+    ];
+
+    /// The entries of the tables of `TUPLES`, laid end to end, that leading
+    /// `card` from `hand` after `auction` looks up, one in each table.
+    fn tuple_entries(auction: &Auction, hand: Cards, card: Card) -> [usize; TUPLES.len()] {
+        let suit = card.suit();
+        let rank = card.rank() as u32;
+        let (above, below) = (hand.above(card, 3) as u32, hand.below(card, 3) as u32);
+        let length = hand.in_suit(suit).len().min(7) as u32 - 1;
+        let bid = (0..4).fold(0, |bits, seat| bits | (auction.bid[seat][suit as usize] as u32) << seat);
+        let trump_length = auction.trump.map_or(0, |t| hand.in_suit(t).len().min(6)) as u32;
+        let indices = [
+            (rank - 2) * 64 + above * 8 + below,
+            hand.top_ranks(suit, 5) as u32 * 7 + length,
+            (rank - 2) * 7 + length,
+            bid | ((auction.trump == Some(suit)) as u32) << 4 | (auction.doubled_by.is_some() as u32) << 5,
+            auction.level as u32 * 7 + length,
+            trump_length * 7 + length,
+        ];
+        let mut entries = [0; TUPLES.len()];
+        let mut offset = 0;
+        for (t, index) in indices.into_iter().enumerate() {
+            debug_assert!((index as usize) < TUPLES[t].0, "{}", TUPLES[t].1);
+            entries[t] = offset + index as usize;
+            offset += TUPLES[t].0;
+        }
+        entries
+    }
+
+    /// The score of a lead in an n-tuple network: the sum of its entries.
+    fn tuple_score(weights: &[f64], entries: &[usize]) -> f64 {
+        entries.iter().map(|&e| weights[e]).sum()
+    }
+
+    /// The weights of the tables of `TUPLES` that make leads with the most
+    /// tricks the likeliest, fitted as `fit` fits its weights (each entry is a
+    /// feature that is 1 when the lead looks it up), by `steps` steps of Adam
+    /// with a step that shrinks to nothing.
+    fn fit_tuples(leads: &[&Lead], penalty: f64, steps: usize) -> Vec<f64> {
+        let size: usize = TUPLES.iter().map(|t| t.0).sum();
+        let data: Vec<Vec<([usize; TUPLES.len()], f64)>> = leads
+            .iter()
+            .map(|lead| {
+                lead.values
+                    .iter()
+                    .map(|&(card, value)| (tuple_entries(&lead.auction, lead.hand, card), value))
+                    .collect()
+            })
+            .collect();
+        let mut weights = vec![0.0; size];
+        let (mut first, mut second) = (vec![0.0; size], vec![0.0; size]);
+        for step in 1..=steps {
+            let mut gradient: Vec<f64> = weights.iter().map(|w| -penalty * w).collect();
+            for cards in &data {
+                let scores: Vec<f64> = cards.iter().map(|(e, _)| tuple_score(&weights, e)).collect();
+                let most = scores.iter().copied().fold(f64::MIN, f64::max);
+                let odds: Vec<f64> = scores.iter().map(|s| (s - most).exp()).collect();
+                let sum: f64 = odds.iter().sum();
+                let mean: f64 = odds.iter().zip(cards).map(|(p, c)| p * c.1).sum::<f64>() / sum;
+                for ((entries, value), p) in cards.iter().zip(&odds) {
+                    let g = p / sum * (value - mean) / data.len() as f64;
+                    for &e in entries {
+                        gradient[e] += g;
+                    }
+                }
+            }
+            let t = step as f64;
+            let rate = 0.05 * (1.0 - (t - 1.0) / steps as f64);
+            for j in 0..size {
+                first[j] = 0.9 * first[j] + 0.1 * gradient[j];
+                second[j] = 0.999 * second[j] + 0.001 * gradient[j] * gradient[j];
+                let a = first[j] / (1.0 - 0.9f64.powf(t));
+                let b = second[j] / (1.0 - 0.999f64.powf(t));
+                weights[j] += rate * a / (b.sqrt() + 1e-8);
+            }
+        }
+        weights
+    }
+
+    /// The lead that an n-tuple network scores highest.
+    fn tuple_choice(lead: &Lead, weights: &[f64]) -> Card {
+        let score = |card| tuple_score(weights, &tuple_entries(&lead.auction, lead.hand, card));
+        lead.hand.max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap()
+    }
+
     fn by_contract(leads: &[Lead], notrump: bool) -> Vec<&Lead> {
         leads
             .iter()
@@ -759,6 +853,68 @@ mod tests {
             for (name, weight) in FEATURES.iter().zip(weights) {
                 println!("    {weight:.3}, // {name}");
             }
+        }
+    }
+
+    /// Fits an n-tuple network (see `fit_tuples`) to the data in
+    /// `OPENING_LEAD_DATA`, picking the penalty by five-fold cross-validation,
+    /// and prints the tricks of its first lead, and those of the linear
+    /// `likely_opening_leads`, on all the deals of the data in
+    /// `OPENING_LEAD_TEST`.  `OPENING_LEAD_STEPS` (500) is the number of steps
+    /// of each fit.
+    #[test]
+    #[ignore]
+    fn fit_opening_lead_tuples() {
+        let leads = read_leads(&std::env::var("OPENING_LEAD_DATA").expect("OPENING_LEAD_DATA"));
+        let test = read_leads(&std::env::var("OPENING_LEAD_TEST").expect("OPENING_LEAD_TEST"));
+        let steps = std::env::var("OPENING_LEAD_STEPS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(500);
+        for notrump in [true, false] {
+            let leads = by_contract(&leads, notrump);
+            let test = by_contract(&test, notrump);
+            println!(
+                "{} {} test leads, likely_opening_leads: {:.4} tricks",
+                test.len(),
+                if notrump { "notrump" } else { "suit" },
+                mean_tricks(&test, |lead| likely_opening_leads(&lead.auction, lead.hand)[0]),
+            );
+            let mut best = (f64::MIN, 0.0);
+            for penalty in [0.0, 0.0001, 0.001, 0.01] {
+                let total: f64 = std::thread::scope(|scope| {
+                    let threads: Vec<_> = (0..5)
+                        .map(|fold| {
+                            let leads = &leads;
+                            scope.spawn(move || {
+                                let split = |keep: bool| -> Vec<&Lead> {
+                                    leads
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(i, _)| (i % 5 == fold) == keep)
+                                        .map(|(_, l)| *l)
+                                        .collect()
+                                };
+                                let (train, held) = (split(false), split(true));
+                                let weights = fit_tuples(&train, penalty, steps);
+                                mean_tricks(&held, |lead| tuple_choice(lead, &weights)) * held.len() as f64
+                            })
+                        })
+                        .collect();
+                    threads.into_iter().map(|t| t.join().unwrap()).sum()
+                });
+                let tricks = total / leads.len() as f64;
+                println!("  penalty {penalty}: {tricks:.4} tricks held out");
+                if tricks > best.0 {
+                    best = (tricks, penalty);
+                }
+            }
+            let weights = fit_tuples(&leads, best.1, steps);
+            println!(
+                "  best penalty {}: {:.4} tricks on the test leads",
+                best.1,
+                mean_tricks(&test, |lead| tuple_choice(lead, &weights)),
+            );
         }
     }
 
