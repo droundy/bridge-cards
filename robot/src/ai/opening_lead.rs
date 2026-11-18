@@ -918,6 +918,53 @@ mod tests {
         }
     }
 
+    /// How long each model takes to score every lead of a hand and choose
+    /// the best, over the hands in `OPENING_LEAD_DATA`, natively: the 35
+    /// features with their weights, the n-tuple network (whose weights do
+    /// not change its speed), each one's features or entries alone, and
+    /// `likely_opening_leads`, which also sorts the leads.
+    #[test]
+    #[ignore]
+    fn time_opening_lead_models() {
+        use std::hint::black_box;
+        let leads = read_leads(&std::env::var("OPENING_LEAD_DATA").expect("OPENING_LEAD_DATA"));
+        let weights = vec![0.01; TUPLES.iter().map(|t| t.0).sum()];
+        let best = |hand: Cards, score: &dyn Fn(Card) -> f64| {
+            let mut best = (f64::MIN, None);
+            for card in hand {
+                let s = score(card);
+                if s > best.0 {
+                    best = (s, Some(card));
+                }
+            }
+            best.1.unwrap()
+        };
+        let time = |name: &str, choose: &dyn Fn(&Lead) -> Card| {
+            let rounds = 200;
+            let started = std::time::Instant::now();
+            for _ in 0..rounds {
+                for lead in &leads {
+                    black_box(choose(black_box(lead)));
+                }
+            }
+            let ns = started.elapsed().as_nanos() as f64 / (rounds * leads.len()) as f64;
+            println!("{name}: {ns:.0} ns a hand");
+        };
+        time("35 features, linear", &|lead| {
+            best(lead.hand, &|c| lead_score(&lead.auction, lead.hand, c, &SUIT_WEIGHTS))
+        });
+        time("  35 features alone", &|lead| {
+            best(lead.hand, &|c| black_box(features(&lead.auction, lead.hand, c))[0])
+        });
+        time("n-tuple", &|lead| {
+            best(lead.hand, &|c| tuple_score(&weights, &tuple_entries(&lead.auction, lead.hand, c)))
+        });
+        time("  n-tuple entries alone", &|lead| {
+            best(lead.hand, &|c| black_box(tuple_entries(&lead.auction, lead.hand, c))[0] as f64)
+        });
+        time("likely_opening_leads", &|lead| likely_opening_leads(&lead.auction, lead.hand)[0]);
+    }
+
     /// Compares the leads of `likely_opening_leads` with those of the robot's
     /// `opening_lead`, a lead at random, and the best lead on the deals of the
     /// data, on the data in the file `OPENING_LEAD_DATA`.  Also says how often
