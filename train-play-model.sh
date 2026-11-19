@@ -3,8 +3,10 @@
 #
 # It takes the play model file that robot/play-model.txt names (fetching it if
 # need be; see fetch-play-model.sh), plays ROUNDS (500) more rounds of
-# self-play from it on THREADS (every core) threads, then plays the new model
-# against the old one in a two-table match of 2000 deals.  If the new model is
+# self-play from it on THREADS (every core) threads, as a population of four
+# learners in a round robin of mixed partnerships on fresh deals (a file with
+# fewer learners gets new ones that start from nothing), then plays the new
+# best model against the old one in a two-table match of 2000 deals.  If the new model is
 # no worse there, or FORCE=1, it uploads the new play model file to the GitHub
 # release play-models and points robot/play-model.txt at it, for you to
 # commit.  Uploading publishes the file: the repository is public.
@@ -22,11 +24,14 @@ cp robot/src/ai/play_model.bin "$old"
 
 echo "Training for $rounds rounds on $threads threads."
 PLAY_SELF_RESUME="$PWD/$old" PLAY_SELF_CHECKPOINT="$PWD/$dir/new.bin" \
-    PLAY_SELF_ROUNDS="$rounds" PLAY_THREADS="$threads" PLAY_SELF_REPORT=10 \
-    PLAY_SELF_PAST=0.2 PLAY_SELF_RANDOM=0.05 PLAY_SELF_SNAPSHOT=50 \
+    PLAY_SELF_ROUNDS="$rounds" PLAY_THREADS="$threads" PLAY_SELF_REPORT=20 \
+    PLAY_SELF_LEARNERS=4 PLAY_SELF_ROUND_ROBIN=1 PLAY_SELF_WILDCARDS=4 \
+    PLAY_SELF_DEALS=128 PLAY_SELF_POOL=128 PLAY_SELF_FRESH=128 \
+    PLAY_SELF_ENTROPY=0.25 PLAY_SELF_DECAY=0.01 \
+    PLAY_SELF_PAST=0.2 PLAY_SELF_RANDOM=0.05 PLAY_SELF_SNAPSHOT=100 PLAY_SELF_TOURNAMENT=200 \
     PLAY_SELF_WATCH="$PWD/$dir/watch.html" \
     cargo test -p robot --release self_play -- --ignored --exact --nocapture ai::fitted_play::tests::self_play \
-    | grep --line-buffered -E "^round|^resuming"
+    | grep --line-buffered -E "^round|^resuming|panicked"
 
 echo "Playing the new model against the old one."
 result=$(PLAY_MATCH_WEIGHTS="$PWD/$dir/new.bin" PLAY_MATCH_AGAINST="$PWD/$old" PLAY_MATCH_DEALS=2000 \
