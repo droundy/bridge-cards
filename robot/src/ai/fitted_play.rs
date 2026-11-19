@@ -1100,7 +1100,8 @@ mod tests {
     /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
     /// the weights to the file `PLAY_SELF_WEIGHTS` if that is set, and
     /// reports the tricks a play its choices lose by the ensemble's values on
-    /// the data in `PLAY_TEST` if that is set.  It uses every core.
+    /// the data in `PLAY_TEST` if that is set.  It uses `PLAY_THREADS`
+    /// threads, or else every core.
     #[test]
     #[ignore]
     fn self_play() {
@@ -1135,7 +1136,11 @@ mod tests {
         let mut watched: Vec<serde_json::Value> = Vec::new();
         let samples = number("PLAY_SELF_SAMPLES", 2);
         let mut rng = StdRng::seed_from_u64(11);
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = number(
+            "PLAY_THREADS",
+            std::thread::available_parallelism().map_or(4, |n| n.get()),
+        );
+        let started = std::time::Instant::now();
         for round in 1..=rounds {
             let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
             let seed = rng.gen::<u64>();
@@ -1237,7 +1242,10 @@ mod tests {
                     );
                     std::fs::write(path, page).unwrap();
                 }
-                print!("round {round}: {decisions} choices, entropy {entropy:.3} a choice");
+                print!(
+                    "round {round} at {:.0} s: {decisions} choices, entropy {entropy:.3} a choice",
+                    started.elapsed().as_secs_f64()
+                );
                 if let Some(test) = &test {
                     let loss: f64 = test
                         .iter()
