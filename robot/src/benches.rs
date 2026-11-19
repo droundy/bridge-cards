@@ -106,6 +106,17 @@ fn choose_plays(situations: &Vec<String>) -> Vec<Option<String>> {
         .collect()
 }
 
+/// The robot with the cards played by the play model that self-play learned
+/// (`choose_play_by_model`), which chooses without searching.  Without the
+/// model's weights it plays as the robot does.
+#[scaling::bench(group = "play decision")]
+fn model_plays(situations: &Vec<String>) -> Vec<Option<String>> {
+    situations
+        .iter()
+        .map(|situation| crate::ai::choose_play_by_model(situation))
+        .collect()
+}
+
 /// The play of [`EnsemblePlay`], which chooses by a smaller ensemble, in the
 /// same way that the loss is measured.  It keeps what it has learnt from one
 /// situation to the next, and so does not read the bidding system again each

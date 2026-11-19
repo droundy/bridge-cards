@@ -89,6 +89,21 @@ pub fn choose_play(serialized_game: &str) -> Option<String> {
     serde_json::to_string(&ai.play(&game)).ok()
 }
 
+/// What [`choose_play`] chooses, except that the cards are played by the
+/// play model learned by self-play ([`fitted_play::ModelPlay`]), which
+/// chooses without searching.  The bids are the same.
+#[wasm_bindgen]
+pub fn choose_play_by_model(serialized_game: &str) -> Option<String> {
+    crate::utils::set_panic_hook();
+    let game = serde_json::from_str::<GameState<()>>(serialized_game).ok()?;
+    let action = if game.bidder().is_some() {
+        BridgeAi::with_system(game.system).play(&game)
+    } else {
+        Action::Play(game.hand_playing()?, fitted_play::ModelPlay.play(&game))
+    };
+    serde_json::to_string(&action).ok()
+}
+
 pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid;
 }
@@ -391,10 +406,8 @@ mod advice;
 mod booklet;
 pub(crate) mod ensemble;
 pub(crate) mod opening_lead;
-#[cfg(test)]
 mod fitting;
-#[cfg(test)]
-mod fitted_play;
+pub(crate) mod fitted_play;
 pub use ensemble::EnsemblePlay;
 #[cfg(test)]
 mod daily_columns;

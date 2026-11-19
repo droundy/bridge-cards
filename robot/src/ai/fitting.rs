@@ -1,5 +1,5 @@
-//! The fit that the robot's n-tuple networks share, for the tests that fit
-//! them.  A network scores each candidate of a choice, such as each card that
+//! The robot's n-tuple networks, and the fit that they share, which only
+//! the tests that fit them use.  A network scores each candidate of a choice, such as each card that
 //! could be played, from the table entries that the candidate looks up: the
 //! sum of a weight for each entry, plus, with hidden units, a layer of them
 //! that each entry also feeds (see [`Network`]).  Fitting makes the
@@ -7,11 +7,14 @@
 //! random with odds that grow exponentially with its score, by gradient
 //! ascent on the mean value of that choice.
 
+#[cfg(test)]
 use rand::rngs::StdRng;
+#[cfg(test)]
 use rand::{Rng, SeedableRng};
 
 /// For each choice, each candidate's entries and its value to the one who
 /// chooses, the more the better.
+#[cfg(test)]
 pub(crate) type Choices = Vec<Vec<(Vec<usize>, f64)>>;
 
 /// An n-tuple network with up to two layers of hidden units.  The score of
@@ -39,19 +42,27 @@ pub(crate) struct Network {
 /// What a network works out on the way to a candidate's score.
 struct Forward {
     /// The first layer's sums, and the larger of each and 0.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
     sums: Vec<f64>,
     active: Vec<f64>,
     /// The same of the second layer, if there is one.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
     second_sums: Vec<f64>,
     second_active: Vec<f64>,
 }
 
 impl Network {
+    /// How many parameters a network of these sizes has.
+    pub(crate) fn size(entries: usize, hidden: usize, second: usize) -> usize {
+        size(entries, hidden, second)
+    }
+
     /// A network of `entries` entries, `hidden` units in its first layer
     /// and `second` in its second (none for one layer), that scores every
     /// candidate the same, so that it starts by choosing at random.  The
     /// units' weights are small and random, the same for the same `seed`, so
     /// that the units can learn different things.
+    #[cfg(test)]
     pub(crate) fn new(entries: usize, hidden: usize, second: usize, seed: u64) -> Network {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut network = Network { entries, hidden, second, params: vec![0.0; size(entries, hidden, second)] };
@@ -122,6 +133,7 @@ impl Network {
 
     /// Adds `coefficient` times the gradient of the score of a candidate with
     /// `entries` to `gradient`.
+    #[cfg(test)]
     pub(crate) fn add_gradient(&self, entries: &[usize], coefficient: f64, gradient: &mut [f64]) {
         for &e in entries {
             gradient[e] += coefficient;
@@ -161,6 +173,7 @@ impl Network {
     }
 
     /// Which of `candidates` it scores highest.
+    #[cfg(test)]
     pub(crate) fn choice(&self, candidates: &[(Vec<usize>, f64)]) -> usize {
         let scores: Vec<f64> = candidates.iter().map(|(e, _)| self.score(e)).collect();
         let mut best = 0;
@@ -173,18 +186,21 @@ impl Network {
     }
 
     /// The mean value of the candidate it chooses, over `choices`.
+    #[cfg(test)]
     pub(crate) fn mean_value(&self, choices: &[&Vec<(Vec<usize>, f64)>]) -> f64 {
         let total: f64 = choices.iter().map(|c| c[self.choice(c)].1).sum();
         total / choices.len() as f64
     }
 
     /// The parameters, one a line, to be read back with [`Network::read`].
+    #[cfg(test)]
     pub(crate) fn write(&self, path: &str) {
         let text: String = self.params.iter().map(|w| format!("{w}\n")).collect();
         std::fs::write(path, text).unwrap();
     }
 
     /// The network of these sizes written to the file `path`.
+    #[cfg(test)]
     pub(crate) fn read(path: &str, entries: usize, hidden: usize, second: usize) -> Network {
         let text = std::fs::read_to_string(path).unwrap();
         Network::with_params(entries, hidden, second, text.lines().map(|l| l.parse().unwrap()).collect())
@@ -192,18 +208,20 @@ impl Network {
 }
 
 /// How many parameters a network of these sizes has.
-fn size(entries: usize, hidden: usize, second: usize) -> usize {
+pub(crate) fn size(entries: usize, hidden: usize, second: usize) -> usize {
     let last = if second > 0 { second } else { hidden };
     entries * (1 + hidden) + hidden + hidden * second + second + last
 }
 
 /// Steps of Adam on a network's parameters, ascending.
+#[cfg(test)]
 pub(crate) struct Adam {
     first: Vec<f64>,
     second: Vec<f64>,
     steps: usize,
 }
 
+#[cfg(test)]
 impl Adam {
     pub(crate) fn new(size: usize) -> Adam {
         Adam { first: vec![0.0; size], second: vec![0.0; size], steps: 0 }
@@ -225,6 +243,7 @@ impl Adam {
 
 /// `network` fitted to `choices` by `steps` steps of Adam, with a step that
 /// shrinks to nothing, less `penalty` times the squares of the parameters.
+#[cfg(test)]
 pub(crate) fn fit(
     choices: &[&Vec<(Vec<usize>, f64)>],
     mut network: Network,
@@ -255,6 +274,7 @@ pub(crate) fn fit(
 /// choose best on held-out choices, by five-fold cross-validation, the folds
 /// running at once, with the mean value held out that each gives.  The
 /// choice `i` is in fold `i % 5`.
+#[cfg(test)]
 pub(crate) fn cross_validate(
     choices: &Choices,
     start: &(dyn Fn() -> Network + Sync),

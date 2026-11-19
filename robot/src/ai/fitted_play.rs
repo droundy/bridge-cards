@@ -66,13 +66,11 @@ pub(crate) const TUPLES: [(usize, &str); 11] = [
 /// How many hidden units the play model has unless `PLAY_HIDDEN` says
 /// otherwise: each table entry feeds them as well as the score, so that the
 /// model can weigh combinations of the facts of different tables.
-#[cfg(test)]
 const HIDDEN: usize = 16;
 
 /// How many units the play model's second hidden layer has unless
 /// `PLAY_SECOND` says otherwise (0 for none): each takes all the units of
 /// the first, so that the model can weigh combinations of combinations.
-#[cfg(test)]
 const SECOND: usize = 8;
 
 /// What the auction and the play show of a hand that cannot be seen.
@@ -396,6 +394,7 @@ fn played_at<C>(game: &GameState<C>, trick: &[Card]) -> Seated<Cards> {
 /// The hands of `game` with the hidden hands of `seats` dealt `deal`, as they
 /// were, or would be, once `trick` (as [`View::at`] takes it) had been
 /// played to the current trick.
+#[cfg(test)]
 pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2], trick: &[Card]) -> Seated<Cards> {
     let mut hands = game.hands;
     for (seat, cards) in seats.into_iter().zip(deal) {
@@ -415,6 +414,7 @@ pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2
 /// by the play model `weights`: the softmax of its scores divided by
 /// `temperature`, which is fitted so that these are chances and not only an
 /// order.
+#[cfg(test)]
 pub(crate) fn chances(view: &View, weights: &Network, temperature: f64) -> Vec<(Card, f64)> {
     let scores: Vec<(Card, f64)> = view
         .legal()
@@ -434,6 +434,7 @@ pub(crate) fn chances(view: &View, weights: &Network, temperature: f64) -> Vec<(
 /// [`chances`] in each of `deals` of the hidden hands of `seats`, each with
 /// its weight, averaged.  A card that they would always play if they held it
 /// has only the chance that they hold it.
+#[cfg(test)]
 pub(crate) fn predicted_plays<C>(
     game: &GameState<C>,
     convention: &Convention,
@@ -462,6 +463,7 @@ pub(crate) fn predicted_plays<C>(
 
 /// The seat whose player chooses the cards of `seat`: the declarer chooses
 /// the dummy's.
+#[cfg(test)]
 fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
     if Some(seat) == game.dummy() {
         seat + 2
@@ -478,6 +480,7 @@ fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
 /// It covers the tricks in `game.tricks` and the current trick: all of the
 /// play, unless the game was saved before tricks were kept.  Weighting
 /// deals of an ensemble by it draws what can be drawn from the play.
+#[cfg(test)]
 pub(crate) fn play_likelihood<C>(
     game: &GameState<C>,
     convention: &Convention,
@@ -525,6 +528,61 @@ pub(crate) fn play_likelihood<C>(
         }
     }
     likelihood
+}
+
+/// The weights of the play model that [`ModelPlay`] plays by, from a
+/// snapshot of self-play (see `self_play`), as little-endian 32-bit floats,
+/// written to `src/ai/play_model.bin` by the ignored test `write_play_model`.
+/// That file is not kept in git, and `build.rs` puts nothing here when it is
+/// missing.
+static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin"));
+
+/// The play model of [`MODEL`], or `None` if there are no weights, or they
+/// are not the size of this model, as when they were written for another.
+fn model() -> Option<&'static Network> {
+    static NETWORK: std::sync::OnceLock<Option<Network>> = std::sync::OnceLock::new();
+    NETWORK
+        .get_or_init(|| {
+            let params: Vec<f64> = MODEL.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b) as f64).collect();
+            let wanted = Network::size(ENTRIES, HIDDEN, SECOND);
+            (params.len() == wanted).then(|| Network::with_params(ENTRIES, HIDDEN, SECOND, params))
+        })
+        .as_ref()
+}
+
+/// A player that chooses each card by the play model, without searching:
+/// the card that it scores highest, from what the player can see.  The
+/// opening lead, before the dummy is seen, is the first of
+/// `likely_opening_leads`.  Without weights (see [`MODEL`]) it plays as the
+/// robot does.
+#[derive(Debug, Default)]
+pub struct ModelPlay;
+
+impl super::PlayAI for ModelPlay {
+    fn play<C>(&mut self, game: &GameState<C>) -> Card {
+        let Some(network) = model() else {
+            return super::RandomPlay.play(game);
+        };
+        let convention = game.system.convention();
+        match View::new(game, &convention) {
+            Some(view) => {
+                view.legal()
+                    .max_by(|&a, &b| {
+                        network
+                            .score(&view.entries(a))
+                            .total_cmp(&network.score(&view.entries(b)))
+                    })
+                    .unwrap()
+            }
+            None => {
+                use super::opening_lead::{likely_opening_leads, Auction};
+                match (Auction::new(game), game.lead) {
+                    (Some(auction), Some(leader)) => likely_opening_leads(&auction, game.hands[leader])[0],
+                    _ => game.could_be_played().min().unwrap(),
+                }
+            }
+        }
+    }
 }
 
 /// Whether `card`, played after `winning`, beats it.
@@ -590,6 +648,36 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_model_plays_legal_cards_to_the_end() {
+        use crate::ai::PlayAI;
+        // Weights that do not fit the model are a mistake, not a choice.
+        assert!(MODEL.is_empty() || model().is_some(), "play_model.bin is not the size of the play model");
+        for json in crate::ai::opening_lead::candidates::opening_leads(5, 6)
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+        {
+            let mut game: GameState<()> = serde_json::from_str(&json).unwrap();
+            while !game.hand_done {
+                let card = ModelPlay.play(&game);
+                assert!(game.could_be_played().contains(card), "{card} in {json}");
+                game.play(card);
+            }
+            assert_eq!(game.ns_tricks + game.ew_tricks, 13);
+        }
+    }
+
+    /// Writes the weights in the file `PLAY_WEIGHTS`, as self-play writes
+    /// them, to `src/ai/play_model.bin`, as [`MODEL`] reads them.
+    #[test]
+    #[ignore]
+    fn write_play_model() {
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+        let network = Network::read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"), ENTRIES, hidden, second);
+        let bytes: Vec<u8> = network.params.iter().flat_map(|&w| (w as f32).to_le_bytes()).collect();
+        std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ai/play_model.bin"), bytes).unwrap();
     }
 
     /// Situations of the play at every stage, as games.
