@@ -69,6 +69,12 @@ pub(crate) const TUPLES: [(usize, &str); 11] = [
 #[cfg(test)]
 const HIDDEN: usize = 16;
 
+/// How many units the play model's second hidden layer has unless
+/// `PLAY_SECOND` says otherwise (0 for none): each takes all the units of
+/// the first, so that the model can weigh combinations of combinations.
+#[cfg(test)]
+const SECOND: usize = 8;
+
 /// What the auction and the play show of a hand that cannot be seen.
 #[derive(Clone, Copy)]
 struct Shown {
@@ -649,7 +655,7 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        let mut weights = Network::new(ENTRIES, 4, 3);
+        let mut weights = Network::new(ENTRIES, 4, 3, 3);
         for p in &mut weights.params {
             *p = rng.gen_range(-1.0..1.0);
         }
@@ -701,7 +707,7 @@ mod tests {
     #[ignore]
     fn fit_play_temperature() {
         let path = std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS");
-        let weights = Network::read(&path, ENTRIES, number("PLAY_HIDDEN", HIDDEN));
+        let weights = Network::read(&path, ENTRIES, number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
         let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), TUPLES.len());
         for temperature in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0] {
             let total: f64 = test
@@ -879,8 +885,8 @@ mod tests {
         let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), tables);
         let steps = number("PLAY_STEPS", 500);
         let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
-        let hidden = number("PLAY_HIDDEN", HIDDEN);
-        let start = || Network::new(ENTRIES, hidden, 1);
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+        let start = || Network::new(ENTRIES, hidden, second, 1);
         let (penalty, held_out) =
             fitting::cross_validate(&choices, &start, &[0.0, 0.0001, 0.001, 0.01], steps);
         for (penalty, value) in held_out {
@@ -1119,10 +1125,10 @@ mod tests {
         let test = std::env::var("PLAY_TEST")
             .ok()
             .map(|paths| read_situations(&paths, TUPLES.len()));
-        let hidden = number("PLAY_HIDDEN", HIDDEN);
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
         let mut weights = match std::env::var("PLAY_SELF_START") {
-            Ok(path) => Network::read(&path, ENTRIES, hidden),
-            Err(_) => Network::new(ENTRIES, hidden, 11),
+            Ok(path) => Network::read(&path, ENTRIES, hidden, second),
+            Err(_) => Network::new(ENTRIES, hidden, second, 11),
         };
         let mut adam = fitting::Adam::new(weights.params.len());
         let mut snapshots: Vec<(usize, Network)> = vec![(0, weights.clone())];
