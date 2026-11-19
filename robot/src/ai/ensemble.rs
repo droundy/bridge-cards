@@ -280,22 +280,20 @@ pub(crate) fn trump_of<C>(game: &GameState<C>) -> Option<Suit> {
 /// For each card in `legal`, the tricks that the side of whoever leads this
 /// trick wins by playing it, when `starting` has every hand, with best play
 /// after that, where `in_trick` have been played to the trick already.
+/// `legal` must be every card that can be played.
 pub(crate) fn card_values(
     starting: Starting,
     trump: Option<Suit>,
     in_trick: &[Card],
     legal: Cards,
 ) -> Vec<(Card, f64)> {
-    let mut solver = DoubleDummy::new(trump);
-    let mut plays = in_trick.to_vec();
-    legal
-        .map(|card| {
-            plays.push(card);
-            let value = solver.tricks_after(starting.hands, &plays) as f64;
-            plays.pop();
-            (card, value)
-        })
-        .collect()
+    let values: Vec<(Card, f64)> = DoubleDummy::new(trump)
+        .tricks_after_each(starting.hands, in_trick)
+        .into_iter()
+        .map(|(card, tricks)| (card, tricks as f64))
+        .collect();
+    debug_assert!(values.iter().map(|&(card, _)| card).eq(legal));
+    values
 }
 
 /// How many of the tricks left the side of whoever leads this trick wins,
