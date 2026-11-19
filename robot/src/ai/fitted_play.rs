@@ -1172,7 +1172,13 @@ mod tests {
     /// the gradient of the tricks its side takes after each of its own
     /// choices, less the mean of that at the same trick over the plays of the
     /// same deal, so that what it learns is what made a play of a deal better
-    /// than the others.
+    /// than the others.  So that the learners keep trying other cards where
+    /// they are unsure, and so keep finding out which are better, each
+    /// update also pushes towards spreading a choice's chances, with a weight
+    /// that grows by 5% a round while the mean entropy of the choices is
+    /// below `PLAY_SELF_ENTROPY` (0.25) and shrinks by 5% while it is above.
+    /// Without that, the choices of the first long run became nearly sure,
+    /// the plays of a deal nearly all the same, and its learning stopped.
     ///
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
@@ -1206,6 +1212,8 @@ mod tests {
         let rate = float("PLAY_SELF_RATE", 0.01);
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
+        let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
+        let mut bonus = 0.01;
         let every = number("PLAY_SELF_SNAPSHOT", 50);
         let population = number("PLAY_SELF_LEARNERS", 4);
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").ok();
@@ -1269,7 +1277,7 @@ mod tests {
             let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
             let seed = rng.gen::<u64>();
             let chunk = batch.div_ceil(threads);
-            let (learners_now, pool, past) = (&learners, &pool, &snapshots);
+            let (learners_now, pool, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
             type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>);
             let results: Vec<Results> = std::thread::scope(|scope| {
@@ -1324,13 +1332,21 @@ mod tests {
                                     for d in decisions {
                                         let to_go = (won[d.side] - d.won_before) as f64;
                                         let advantage = to_go - sums[d.trick][d.side] / seen[d.trick][d.side];
+                                        let spread: f64 = d
+                                            .cards
+                                            .iter()
+                                            .filter(|c| c.1 > 0.0)
+                                            .map(|c| -c.1 * c.1.ln())
+                                            .sum();
+                                        entropy += spread;
                                         for (j, (entries, chance)) in d.cards.iter().enumerate() {
                                             let wanted = if j == d.chosen { 1.0 } else { 0.0 };
-                                            let g = advantage * (wanted - chance) / temperature;
+                                            // The slope of the entropy of the
+                                            // choice with this card's score.
+                                            let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
+                                            let spreading = -chance * (log + spread);
+                                            let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
                                             learners_now[d.learner].add_gradient(entries, g, &mut gradients[d.learner]);
-                                            if *chance > 0.0 {
-                                                entropy -= chance * chance.ln();
-                                            }
                                         }
                                         counts[d.learner] += 1;
                                     }
@@ -1347,6 +1363,7 @@ mod tests {
                 .collect();
             let decisions: usize = counts.iter().sum();
             let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
+            bonus = if entropy < entropy_target { bonus * 1.05 } else { bonus * 0.95 }.clamp(1e-4, 1.0);
             for (i, learner) in learners.iter_mut().enumerate() {
                 let gradient: Vec<f64> = (0..size)
                     .map(|j| results.iter().map(|r| r.0[i][j]).sum::<f64>() / counts[i].max(1) as f64)
@@ -1396,7 +1413,7 @@ mod tests {
                     std::fs::write(path, page).unwrap();
                 }
                 print!(
-                    "round {round} at {:.0} s: {decisions} choices {counts:?}, entropy {entropy:.3} a choice",
+                    "round {round} at {:.0} s: {decisions} choices {counts:?}, entropy {entropy:.3} a choice, bonus {bonus:.4}",
                     started.elapsed().as_secs_f64()
                 );
                 if let Some(test) = &test {
