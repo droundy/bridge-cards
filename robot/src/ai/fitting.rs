@@ -205,6 +205,12 @@ impl Network {
         let text = std::fs::read_to_string(path).unwrap();
         Network::with_params(entries, hidden, second, text.lines().map(|l| l.parse().unwrap()).collect())
     }
+
+    /// The numbers of entries and of the units of each hidden layer.
+    #[cfg(test)]
+    pub(crate) fn shape(&self) -> (usize, usize, usize) {
+        (self.entries, self.hidden, self.second)
+    }
 }
 
 /// How many parameters a network of these sizes has.
@@ -215,6 +221,7 @@ pub(crate) fn size(entries: usize, hidden: usize, second: usize) -> usize {
 
 /// Steps of Adam on a network's parameters, ascending.
 #[cfg(test)]
+#[derive(Clone)]
 pub(crate) struct Adam {
     first: Vec<f64>,
     second: Vec<f64>,
@@ -225,6 +232,17 @@ pub(crate) struct Adam {
 impl Adam {
     pub(crate) fn new(size: usize) -> Adam {
         Adam { first: vec![0.0; size], second: vec![0.0; size], steps: 0 }
+    }
+
+    /// Its state: the first and second moments of the gradients, and the
+    /// steps taken.
+    pub(crate) fn parts(&self) -> (&[f64], &[f64], usize) {
+        (&self.first, &self.second, self.steps)
+    }
+
+    /// Adam with the state that [`Adam::parts`] gives.
+    pub(crate) fn from_parts(first: Vec<f64>, second: Vec<f64>, steps: usize) -> Adam {
+        Adam { first, second, steps }
     }
 
     /// Moves `params` a step of size `rate` up `gradient`.

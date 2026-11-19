@@ -9,6 +9,8 @@
 //! tables (`opening_lead`), since the dummy is not yet in sight then.
 
 use super::fitting::Network;
+#[cfg(test)]
+mod model_file;
 use super::Convention;
 use crate::{Bid, GameState, Seat, Seated};
 use bridge_deck::{Card, Cards, Suit};
@@ -530,11 +532,10 @@ pub(crate) fn play_likelihood<C>(
     likelihood
 }
 
-/// The weights of the play model that [`ModelPlay`] plays by, from a
-/// snapshot of self-play (see `self_play`), as little-endian 32-bit floats,
-/// written to `src/ai/play_model.bin` by the ignored test `write_play_model`.
-/// That file is not kept in git, and `build.rs` puts nothing here when it is
-/// missing.
+/// The weights of the play model that [`ModelPlay`] plays by, as
+/// little-endian 32-bit floats, which `build.rs` takes from the play model
+/// file `src/ai/play_model.bin` (see `fitted_play::model_file`).  That file
+/// is not kept in git, and `build.rs` puts nothing here when it is missing.
 static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin"));
 
 /// The play model of [`MODEL`], or `None` if there are no weights, or they
@@ -667,17 +668,6 @@ mod tests {
             }
             assert_eq!(game.ns_tricks + game.ew_tricks, 13);
         }
-    }
-
-    /// Writes the weights in the file `PLAY_WEIGHTS`, as self-play writes
-    /// them, to `src/ai/play_model.bin`, as [`MODEL`] reads them.
-    #[test]
-    #[ignore]
-    fn write_play_model() {
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let network = Network::read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"), ENTRIES, hidden, second);
-        let bytes: Vec<u8> = network.params.iter().flat_map(|&w| (w as f32).to_le_bytes()).collect();
-        std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ai/play_model.bin"), bytes).unwrap();
     }
 
     /// Situations of the play at every stage, as games.
@@ -1190,6 +1180,16 @@ mod tests {
     /// reports the tricks a play its choices lose by the ensemble's values on
     /// the data in `PLAY_TEST` if that is set.  It uses `PLAY_THREADS`
     /// threads, or else every core.
+    ///
+    /// To train in several runs, each run writes a play model file (see
+    /// `model_file`) at every report to `PLAY_SELF_CHECKPOINT` if that is set:
+    /// the round, the weights, the state of Adam, and as its league, the
+    /// first snapshot and the last seven.  With `PLAY_SELF_RESUME` naming one,
+    /// a run takes up from it, its rounds numbered on from the file's, with
+    /// its league among the past selves.  A file with no state of Adam (see
+    /// `make_play_model_file`) is resumed with steps that grow from nothing
+    /// over the first 20 rounds, so that the weights are not jolted while
+    /// Adam learns their scale.
     #[test]
     #[ignore]
     fn self_play() {
@@ -1221,22 +1221,42 @@ mod tests {
         };
         let mut adam = fitting::Adam::new(weights.params.len());
         let mut snapshots: Vec<(usize, Network)> = vec![(0, weights.clone())];
+        let (mut first_round, mut warmup) = (1, 0);
+        if let Ok(path) = std::env::var("PLAY_SELF_RESUME") {
+            let file = model_file::ModelFile::read(&path, ENTRIES, hidden, second);
+            weights = file.weights;
+            match file.adam {
+                Some(state) => adam = state,
+                None => warmup = 20,
+            }
+            first_round = file.round + 1;
+            snapshots = file.league;
+            if snapshots.last().map(|s| s.0) != Some(file.round) {
+                snapshots.push((file.round, weights.clone()));
+            }
+            println!(
+                "resuming after round {}, with past models from rounds {:?}",
+                file.round,
+                snapshots.iter().map(|s| s.0).collect::<Vec<_>>()
+            );
+        }
+        let last_round = first_round + rounds - 1;
         let mut watched: Vec<serde_json::Value> = Vec::new();
         let samples = number("PLAY_SELF_SAMPLES", 2);
-        let mut rng = StdRng::seed_from_u64(11);
+        let mut rng = StdRng::seed_from_u64(10 + first_round as u64);
         let threads = number(
             "PLAY_THREADS",
             std::thread::available_parallelism().map_or(4, |n| n.get()),
         );
         let started = std::time::Instant::now();
-        for round in 1..=rounds {
+        for round in first_round..=last_round {
             let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
             let seed = rng.gen::<u64>();
             let chunk = batch.div_ceil(threads);
             let weights_now = &weights;
             let pool = &pool;
             let past = &snapshots;
-            let watching = round % report == 0 || round == rounds;
+            let watching = round % report == 0 || round == last_round;
             let results: Vec<(Vec<f64>, usize, f64, Vec<serde_json::Value>)> = std::thread::scope(|scope| {
                 let handles: Vec<_> = deals
                     .chunks(chunk)
@@ -1311,7 +1331,8 @@ mod tests {
             let gradient: Vec<f64> = (0..weights.params.len())
                 .map(|j| results.iter().map(|r| r.0[j]).sum::<f64>() / decisions.max(1) as f64)
                 .collect();
-            adam.step(&mut weights.params, &gradient, rate);
+            let ramp = if warmup > 0 { ((round - first_round + 1) as f64 / warmup as f64).min(1.0) } else { 1.0 };
+            adam.step(&mut weights.params, &gradient, rate * ramp);
             for mut game in results.into_iter().flat_map(|r| r.3) {
                 game["round"] = round.into();
                 watched.push(game);
@@ -1356,6 +1377,69 @@ mod tests {
                     weights.write(&format!("{directory}/round-{round:05}.txt"));
                 }
             }
+            if watching {
+                if let Ok(path) = std::env::var("PLAY_SELF_CHECKPOINT") {
+                    model_file::ModelFile {
+                        round,
+                        weights: weights.clone(),
+                        adam: Some(adam.clone()),
+                        league: league_of(&snapshots),
+                    }
+                    .write(&path);
+                }
+            }
+        }
+    }
+
+    /// The past models that a play model file keeps of `snapshots`: the
+    /// first, and the last seven.
+    fn league_of(snapshots: &[(usize, Network)]) -> Vec<(usize, Network)> {
+        let last = snapshots.len().saturating_sub(7).max(1);
+        snapshots[..1.min(snapshots.len())]
+            .iter()
+            .chain(&snapshots[last.min(snapshots.len())..])
+            .cloned()
+            .collect()
+    }
+
+    /// Writes a play model file (see `model_file`) to `PLAY_MODEL_FILE` for a
+    /// run of self-play that did not write one: the weights in the file
+    /// `PLAY_WEIGHTS` after round `PLAY_ROUND`, no state of Adam, and as its
+    /// league, of the snapshots in the directory `PLAY_SELF_SNAPSHOTS` (named
+    /// `round-NNNNN.txt`), the first and the last seven.
+    #[test]
+    #[ignore]
+    fn make_play_model_file() {
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+        let weights = Network::read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"), ENTRIES, hidden, second);
+        let directory = std::env::var("PLAY_SELF_SNAPSHOTS").expect("PLAY_SELF_SNAPSHOTS");
+        let mut snapshots: Vec<(usize, Network)> = std::fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let round = path.file_stem()?.to_str()?.strip_prefix("round-")?.parse().ok()?;
+                Some((round, Network::read(path.to_str()?, ENTRIES, hidden, second)))
+            })
+            .collect();
+        snapshots.sort_by_key(|s| s.0);
+        model_file::ModelFile {
+            round: number("PLAY_ROUND", 0),
+            weights,
+            adam: None,
+            league: league_of(&snapshots),
+        }
+        .write(&std::env::var("PLAY_MODEL_FILE").expect("PLAY_MODEL_FILE"));
+    }
+
+    /// The play model in `path`: a play model file, or a file of its
+    /// weights one a line, as self-play writes them.
+    fn read_model(path: &str) -> Network {
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+        let start = std::fs::read(path).unwrap().into_iter().take(8).collect::<Vec<u8>>();
+        if start == model_file::MAGIC {
+            model_file::ModelFile::read(path, ENTRIES, hidden, second).weights
+        } else {
+            Network::read(path, ENTRIES, hidden, second)
         }
     }
 
@@ -1419,8 +1503,7 @@ mod tests {
     #[test]
     #[ignore]
     fn match_against_the_robot() {
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let read = |name: &str| std::env::var(name).ok().map(|path| Network::read(&path, ENTRIES, hidden, second));
+        let read = |name: &str| std::env::var(name).ok().map(|path| read_model(&path));
         let model = read("PLAY_MATCH_WEIGHTS").expect("PLAY_MATCH_WEIGHTS");
         let other = read("PLAY_MATCH_AGAINST");
         let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(13, number("PLAY_MATCH_DEALS", 100))
