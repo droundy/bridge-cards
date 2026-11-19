@@ -334,6 +334,25 @@ impl Model {
         Model::with_params(&V2, params)
     }
 
+    /// This model grown into one of `shape`, which scores every card as it
+    /// did until it learns more: a model of [`V1`] is first laid out as one
+    /// of [`V2`], and the tables that `shape` has after this model's start
+    /// with weights of 0.  `None` if `shape` does not start with this model's
+    /// tables or has hidden layers of other widths.
+    #[cfg(test)]
+    pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
+        if self.shape == &V1 {
+            return self.without_room().grown_to(shape);
+        }
+        let tables = self.shape.tables;
+        if !shape.tables.starts_with(tables) || (shape.hidden, shape.second) != (self.shape.hidden, self.shape.second) {
+            return None;
+        }
+        let moved: Vec<Option<usize>> = (0..self.shape.entries()).map(Some).collect();
+        let params = self.network.with_entries_moved(&self.network.params, &moved, shape.entries());
+        Some(Model::with_params(shape, params))
+    }
+
     /// Where each entry of [`V1`] is in [`V2`], if it is there.
     #[cfg(test)]
     fn entries_without_room() -> Vec<Option<usize>> {
@@ -1140,8 +1159,9 @@ mod tests {
         assert_eq!(MODEL.is_empty(), model().is_none());
     }
 
-    /// A model of [`V1`] laid out anew as one of [`V2`] scores every card
-    /// that could be played as it did.
+    /// A model of [`V1`] laid out anew as one of [`V2`], or grown into one of
+    /// a shape with more tables, scores every card that could be played as
+    /// it did.
     #[test]
     fn a_model_without_room_scores_the_same() {
         let mut rng = StdRng::seed_from_u64(5);
@@ -1151,12 +1171,17 @@ mod tests {
         }
         let new = old.without_room();
         assert_eq!(V2.entries(), 2900);
+        let grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
+        assert_eq!(grown.len(), SHAPES.len() - 2, "every shape but v1 and v2-wide grows from v1");
         for game in some_games() {
             let convention = game.system.convention();
             let view = View::new(&game, &convention).unwrap();
             for card in view.legal() {
-                let (a, b) = (old.score(&view, card), new.score(&view, card));
-                assert!((a - b).abs() < 1e-9, "{a} {b}");
+                let a = old.score(&view, card);
+                for model in std::iter::once(&new).chain(&grown) {
+                    let b = model.score(&view, card);
+                    assert!((a - b).abs() < 1e-9, "{}: {a} {b}", model.shape.name);
+                }
             }
         }
     }
@@ -1907,7 +1932,12 @@ mod tests {
     ///
     /// With `PLAY_SELF_RESUME` naming a play model file, a run takes up from
     /// it, its rounds numbered on from the file's, with its learners and
-    /// league; learners that the file lacks start from nothing.  A learner
+    /// league; learners that the file lacks start from nothing.  With
+    /// `PLAY_SELF_START` naming one instead, the run takes its rounds and
+    /// league, and each learner starts from the file's learner of the same
+    /// number (taken again in turn if it has fewer, or its game's model if it
+    /// has none), grown into the learner's shape (see [`Model::grown_to`]),
+    /// or from nothing if it cannot be.  A learner
     /// with no state of Adam (see `make_play_model_file`) starts with steps
     /// that grow from nothing over 20 rounds, so that its weights are not
     /// jolted while Adam learns their scale.
@@ -1975,12 +2005,29 @@ mod tests {
                 snapshots.iter().map(|s| s.0).collect::<Vec<_>>()
             );
         }
+        // Or the models of a file, which the learners grow from.
+        let mut start = Vec::new();
+        if let Ok(path) = std::env::var("PLAY_SELF_START") {
+            let file = model_file::ModelFile::read(&path);
+            first_round = file.round + 1;
+            snapshots = file.league;
+            println!(
+                "starting from the {} learners of round {} of {path}",
+                file.learners.len().max(1),
+                file.round
+            );
+            start = file.learners.into_iter().map(|learner| learner.model).collect();
+            if start.is_empty() {
+                start.push(file.best);
+            }
+        }
         // The learners that the file lacks take the shapes in turn.
         while learners.len() < population {
             let shape = shapes[learners.len() % shapes.len()];
-            let model = Model::new(shape, 11 + learners.len() as u64);
+            let grown = start.get(learners.len() % start.len().max(1)).and_then(|start| start.grown_to(shape));
+            warmups.push(if grown.is_some() { 20 } else { 0 });
+            let model = grown.unwrap_or_else(|| Model::new(shape, 11 + learners.len() as u64));
             adams.push(fitting::Adam::new(model.network.params.len()));
-            warmups.push(0);
             learners.push(model);
         }
         println!(

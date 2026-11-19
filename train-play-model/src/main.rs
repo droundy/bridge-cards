@@ -12,12 +12,18 @@
 //!
 //! ```text
 //! cargo run --release -p train-play-model -- [--rounds 500] [--threads N]
-//!     [--learners 4] [--shapes v2,...] [--from-scratch] [--force]
+//!     [--learners 4] [--shapes v2,...] [--from-scratch | --from-old |
+//!     --start FILE] [--force]
 //! ```
 //!
 //! The learners that the file lacks take the shapes in turn (see `Shape` in
-//! `robot/src/ai/fitted_play.rs`), and with `--from-scratch` every learner
-//! starts from nothing, so that shapes can be compared on the same training.
+//! `robot/src/ai/fitted_play.rs`).  With `--from-scratch` every learner starts
+//! from nothing, and with `--from-old` every learner starts from the old model,
+//! grown into its shape (the entries of tables the old model lacks start at
+//! 0, so it plays as the old one did until it learns to use them), so that
+//! shapes can be compared on the same training.  With `--start FILE`, each
+//! learner starts likewise from the learner of the same number in the play
+//! model file `FILE`, so that each shape starts from a model trained apart.
 //! At each snapshot every learner is also scored against the robot and the old
 //! model, which do not learn.  The files of a run are in
 //! `target/train-play-model`.
@@ -34,6 +40,8 @@ struct Options {
     learners: usize,
     shapes: String,
     from_scratch: bool,
+    from_old: bool,
+    start: Option<PathBuf>,
     force: bool,
 }
 
@@ -45,6 +53,8 @@ impl Options {
             learners: 4,
             shapes: "v2".into(),
             from_scratch: false,
+            from_old: false,
+            start: None,
             force: false,
         };
         let mut args = std::env::args().skip(1);
@@ -57,6 +67,8 @@ impl Options {
                 "--learners" => options.learners = number(value()?)?,
                 "--shapes" => options.shapes = value()?,
                 "--from-scratch" => options.from_scratch = true,
+                "--from-old" => options.from_old = true,
+                "--start" => options.start = Some(PathBuf::from(value()?).canonicalize().map_err(|e| format!("--start: {e}"))?),
                 "--force" => options.force = true,
                 _ => return Err(format!("unknown argument {arg}")),
             }
@@ -83,7 +95,11 @@ fn main() {
 
     println!("Training for {} rounds on {} threads.", options.rounds, options.threads);
     let mut training = robot_test("self_play");
-    if !options.from_scratch {
+    if let Some(start) = &options.start {
+        training.env("PLAY_SELF_START", start);
+    } else if options.from_old {
+        training.env("PLAY_SELF_START", &old);
+    } else if !options.from_scratch {
         training.env("PLAY_SELF_RESUME", &old);
     }
     training
