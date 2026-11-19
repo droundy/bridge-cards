@@ -209,6 +209,15 @@ impl Network {
         best
     }
 
+    /// Which units of each layer are active (above 0) for a candidate with
+    /// `entries`: the first layer's, then the second's.
+    #[cfg(test)]
+    pub(crate) fn active_units(&self, entries: &[usize]) -> (Vec<bool>, Vec<bool>) {
+        let forward = self.forward(entries);
+        let active = |values: &[f64]| values.iter().map(|&v| v > 0.0).collect();
+        (active(&forward.active), active(&forward.second_active))
+    }
+
     /// The mean value of the candidate it chooses, over `choices`.
     #[cfg(test)]
     pub(crate) fn mean_value(&self, choices: &[&Vec<(Vec<usize>, f64)>]) -> f64 {

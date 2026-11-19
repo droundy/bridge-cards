@@ -1022,6 +1022,102 @@ mod tests {
         }
     }
 
+    /// Measures what each table of the play model in `PLAY_WEIGHTS` (see
+    /// [`read_model`]) is worth on the data in `PLAY_TEST`, by the tricks a
+    /// play that its choices lose to the best card by the ensemble's values:
+    /// with every table, and with each table left out of every card's sum
+    /// (its entry dropped, which takes away all it adds, through the units
+    /// too), with the standard error of the difference.  Beside that, how
+    /// much the table's linear weight differs among the cards of a choice
+    /// (only differences within a choice change it), and how many of its
+    /// entries the data looks up.  Then how many of the units of each hidden
+    /// layer are ever active, and how often.
+    #[test]
+    #[ignore]
+    fn measure_play_tables() {
+        let model = read_model(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
+        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), model.shape);
+        let network = &model.network;
+        let n = test.len() as f64;
+        // The tricks that the card scored highest loses to the best one, with
+        // the table `left_out` dropped from every card's entries.
+        let loss = |s: &Situation, left_out: Option<usize>| -> f64 {
+            let scores: Vec<f64> = s
+                .choice
+                .iter()
+                .map(|(entries, _)| {
+                    let kept: Vec<usize> =
+                        entries.iter().enumerate().filter(|&(t, _)| Some(t) != left_out).map(|(_, &e)| e).collect();
+                    network.score(&kept)
+                })
+                .collect();
+            let mut chosen = 0;
+            for (i, &score) in scores.iter().enumerate() {
+                if score > scores[chosen] {
+                    chosen = i;
+                }
+            }
+            let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+            best - s.choice[chosen].1
+        };
+        let full: Vec<f64> = test.iter().map(|s| loss(s, None)).collect();
+        let random: f64 = test
+            .iter()
+            .map(|s| {
+                let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                best - s.choice.iter().map(|c| c.1).sum::<f64>() / s.choice.len() as f64
+            })
+            .sum::<f64>()
+            / n;
+        println!(
+            "{} situations of the shape {}: the model loses {:.4} tricks a play, a card at random {random:.4}",
+            test.len(),
+            model.shape.name,
+            full.iter().sum::<f64>() / n
+        );
+        println!("{:<14} {:>9} {:>7} {:>8} {:>13}", "table", "left out", "error", "spread", "entries used");
+        let mut start = 0;
+        for (t, table) in model.shape.tables.iter().enumerate() {
+            let more: Vec<f64> = test.iter().zip(&full).map(|(s, f)| loss(s, Some(t)) - f).collect();
+            let mean = more.iter().sum::<f64>() / n;
+            let error = (more.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt();
+            let spread = test
+                .iter()
+                .map(|s| {
+                    let weights = s.choice.iter().map(|(e, _)| network.params[e[t]]);
+                    weights.clone().fold(f64::MIN, f64::max) - weights.fold(f64::MAX, f64::min)
+                })
+                .sum::<f64>()
+                / n;
+            let used: std::collections::HashSet<usize> =
+                test.iter().flat_map(|s| s.choice.iter().map(move |(e, _)| e[t])).collect();
+            println!(
+                "{:<14} {mean:>+9.4} {error:>7.4} {spread:>8.3} {:>6} of {:<5}",
+                format!("{table:?}"),
+                used.len(),
+                table.size()
+            );
+            debug_assert!(used.iter().all(|&e| (start..start + table.size()).contains(&e)));
+            start += table.size();
+        }
+        let (mut first, mut second) = (vec![0usize; model.shape.hidden], vec![0usize; model.shape.second]);
+        let mut cards = 0;
+        for s in &test {
+            for (entries, _) in &s.choice {
+                let (a, b) = network.active_units(entries);
+                for (count, on) in first.iter_mut().zip(a).chain(second.iter_mut().zip(b)) {
+                    *count += on as usize;
+                }
+                cards += 1;
+            }
+        }
+        let share = |counts: &[usize]| {
+            counts.iter().map(|&c| format!("{:.0}%", 100.0 * c as f64 / cards as f64)).collect::<Vec<_>>().join(" ")
+        };
+        println!("how often each unit of the first layer is active: {}", share(&first));
+        println!("and of the second: {}", share(&second));
+    }
+
     /// Writes the play model file `PLAY_MODEL_FILE` again to `PLAY_MODEL_OUT`
     /// with each of its models of [`V1`] laid out as one of [`V2`] (see
     /// [`Model::without_room`]), learners with their state of Adam.  They
