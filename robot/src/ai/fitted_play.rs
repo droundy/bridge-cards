@@ -1161,8 +1161,25 @@ mod tests {
     /// of `PLAY_SELF_LEARNERS` (4) learners, each with its own weights and
     /// its own steps of Adam, which share games but are never copied.  Each
     /// round plays `PLAY_SELF_DEALS` (256) deals of a pool of
-    /// `PLAY_SELF_POOL` (4000) deals that the robot bid, each
-    /// `PLAY_SELF_GROUP` (8) times.  Every seat of a game is played by a
+    /// `PLAY_SELF_POOL` (4000) deals that the robot bid (in each of its
+    /// systems in turn), each `PLAY_SELF_GROUP` (8) times, and then replaces
+    /// the `PLAY_SELF_FRESH` (0) oldest deals of the pool with new ones,
+    /// dealt and bid by the threads that play the games, so that no deal is
+    /// played so often that the learners learn it rather than bridge.  When
+    /// the pool is the size of a round, each of its deals is played in each
+    /// round, and with `PLAY_SELF_FRESH` the same size, every deal is new.
+    ///
+    /// With `PLAY_SELF_ROUND_ROBIN` set to 1, each deal is played in a round
+    /// robin in place of `PLAY_SELF_GROUP` plays, as team play between mixed
+    /// partnerships, so that each learner defends beside others and never
+    /// beside itself: four learners (chosen at random if there are more) are
+    /// split into two partnerships in each of the three ways, and each split
+    /// plays each side of the deal, and each of those with the partners in
+    /// either seat, which is twelve plays; and `PLAY_SELF_WILDCARDS` (4) more
+    /// plays, two matches at two tables, of a learner partnered by a past
+    /// model or a player of any card (in the proportions of `PLAY_SELF_PAST`
+    /// and `PLAY_SELF_RANDOM`) against two other learners.  The round robin
+    /// needs at least four learners.  Every seat of a game is played by a
     /// learner chosen at random, or with the chance `PLAY_SELF_PAST` (0) by a
     /// past model of the league, or with the chance `PLAY_SELF_RANDOM` (0) by
     /// a player of any card, partners as well as opponents, so that no
@@ -1230,7 +1247,11 @@ mod tests {
                 .map(|game| serde_json::to_string(game).unwrap())
                 .collect()
         };
-        let pool = deals(7, number("PLAY_SELF_POOL", 4000));
+        let mut pool = deals(7, number("PLAY_SELF_POOL", 4000));
+        let fresh = number("PLAY_SELF_FRESH", 0);
+        let mut oldest = 0;
+        let round_robin = number("PLAY_SELF_ROUND_ROBIN", 0) == 1;
+        let wildcards = number("PLAY_SELF_WILDCARDS", 4);
         let tournament_deals = deals(17, number("PLAY_SELF_TOURNAMENT", 200));
         let test = std::env::var("PLAY_TEST")
             .ok()
@@ -1275,21 +1296,34 @@ mod tests {
             "PLAY_THREADS",
             std::thread::available_parallelism().map_or(4, |n| n.get()),
         );
+        // Each thread deals its share of the fresh deals with its own
+        // generator, which keeps the conventions it has made.
+        let mut dealers: Vec<(Generator, StdRng, usize)> = (0..threads)
+            .map(|t| (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64 * 100 + t as u64), 10))
+            .collect();
         let started = std::time::Instant::now();
         let size = learners[0].params.len();
         for round in first_round..=last_round {
-            let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
+            let deals: Vec<usize> = if pool.len() == batch {
+                (0..batch).collect()
+            } else {
+                (0..batch).map(|_| rng.gen_range(0..pool.len())).collect()
+            };
             let seed = rng.gen::<u64>();
             let chunk = batch.div_ceil(threads);
-            let (learners_now, pool, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
+            let (learners_now, pool_now, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
-            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>);
+            let shares = deals.len().div_ceil(chunk);
+            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<String>);
             let results: Vec<Results> = std::thread::scope(|scope| {
                 let handles: Vec<_> = deals
                     .chunks(chunk)
+                    .zip(dealers.iter_mut())
                     .enumerate()
-                    .map(|(t, deals)| {
+                    .map(|(t, (deals, dealer))| {
                         scope.spawn(move || {
+                            let share = fresh / shares + usize::from(t < fresh % shares);
+                            let new_deals: Vec<String> = (0..share).map(|_| fresh_deal(dealer)).collect();
                             let mut rng = StdRng::seed_from_u64(seed + t as u64);
                             let mut conventions = std::collections::HashMap::new();
                             let mut gradients = vec![vec![0.0; size]; learners_now.len()];
@@ -1297,24 +1331,70 @@ mod tests {
                             let mut entropy = 0.0;
                             let mut sampled = Vec::new();
                             for (d, &deal) in deals.iter().enumerate() {
-                                let json = &pool[deal];
+                                let json = &pool_now[deal];
                                 let system: GameState<()> = serde_json::from_str(json).unwrap();
                                 let convention = conventions
                                     .entry(format!("{:?}", system.system))
                                     .or_insert_with(|| system.system.convention());
-                                let games: Vec<(Vec<Decision>, [usize; 2])> = (0..group)
-                                    .map(|g| {
-                                        let players = [0; 4].map(|_| {
-                                            let draw = rng.gen_range(0.0..1.0);
-                                            if draw < past_share {
-                                                let (round, ref weights) = past[rng.gen_range(0..past.len())];
-                                                Player::Past(weights, round)
-                                            } else if draw < past_share + random_share {
-                                                Player::Random
-                                            } else {
-                                                Player::Learning(rng.gen_range(0..learners_now.len()))
-                                            }
-                                        });
+                                // Who plays each seat (by its index: south,
+                                // west, north, east) in each play of the deal.
+                                let population = learners_now.len();
+                                let lineups: Vec<[Player; 4]> = if round_robin {
+                                    use rand::seq::SliceRandom;
+                                    let mut four: Vec<usize> = (0..population).collect();
+                                    four.shuffle(&mut rng);
+                                    let [a, b, c, d] = [four[0], four[1], four[2], four[3]].map(Player::Learning);
+                                    let mut lineups = Vec::new();
+                                    // A partnership of `one` and `two` against
+                                    // `three` and `four`, at both tables and
+                                    // with the partners in either seat.
+                                    let mut matched = |one, two, three, four| {
+                                        lineups.push([one, three, two, four]);
+                                        lineups.push([two, four, one, three]);
+                                        lineups.push([three, one, four, two]);
+                                        lineups.push([four, two, three, one]);
+                                    };
+                                    matched(a, b, c, d);
+                                    matched(a, c, b, d);
+                                    matched(a, d, b, c);
+                                    for _ in 0..wildcards / 2 {
+                                        four.shuffle(&mut rng);
+                                        let [x, y, z] = [four[0], four[1], four[2]].map(Player::Learning);
+                                        let wild = if rng.gen_range(0.0..past_share + random_share) < past_share
+                                            || random_share == 0.0
+                                        {
+                                            let (round, ref weights) = past[rng.gen_range(0..past.len())];
+                                            Player::Past(weights, round)
+                                        } else {
+                                            Player::Random
+                                        };
+                                        // `x` and the wildcard against `y` and
+                                        // `z`, at both tables.
+                                        lineups.push([x, y, wild, z]);
+                                        lineups.push([y, x, z, wild]);
+                                    }
+                                    lineups
+                                } else {
+                                    (0..group)
+                                        .map(|_| {
+                                            [0; 4].map(|_| {
+                                                let draw = rng.gen_range(0.0..1.0);
+                                                if draw < past_share {
+                                                    let (round, ref weights) = past[rng.gen_range(0..past.len())];
+                                                    Player::Past(weights, round)
+                                                } else if draw < past_share + random_share {
+                                                    Player::Random
+                                                } else {
+                                                    Player::Learning(rng.gen_range(0..population))
+                                                }
+                                            })
+                                        })
+                                        .collect()
+                                };
+                                let games: Vec<(Vec<Decision>, [usize; 2])> = lineups
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(g, players)| {
                                         let record = watching && t == 0 && g == 0 && d < samples;
                                         let (decisions, won, game) =
                                             play_out(json, convention, learners_now, temperature, players, record, &mut rng);
@@ -1356,7 +1436,7 @@ mod tests {
                                     }
                                 }
                             }
-                            (gradients, counts, entropy, sampled)
+                            (gradients, counts, entropy, sampled, new_deals)
                         })
                     })
                     .collect();
@@ -1382,9 +1462,15 @@ mod tests {
                 }
                 adams[i].step(&mut learner.params, &gradient, rate * ramp);
             }
-            for mut game in results.into_iter().flat_map(|r| r.3) {
-                game["round"] = round.into();
-                watched.push(game);
+            for result in results {
+                for mut game in result.3 {
+                    game["round"] = round.into();
+                    watched.push(game);
+                }
+                for deal in result.4 {
+                    pool[oldest] = deal;
+                    oldest = (oldest + 1) % pool.len();
+                }
             }
             if round % every == 0 || round == last_round {
                 for (i, learner) in learners.iter().enumerate() {
@@ -1459,6 +1545,24 @@ mod tests {
                         league: league_of(&snapshots),
                     }
                     .write(&path);
+                }
+            }
+        }
+    }
+
+    /// A new deal that the robot bid, whose opening lead is next, from
+    /// `dealer`: a generator, the random numbers it deals with, and the index
+    /// of the next situation, which picks the bidding system in turn.
+    fn fresh_deal(dealer: &mut (Generator, StdRng, usize)) -> String {
+        let (generator, rng, index) = dealer;
+        loop {
+            // The tenth of each sixteen situations is the defender on lead.
+            let found = generator.situation(rng, *index, 13);
+            *index += 16;
+            if let Some(json) = found {
+                let game: GameState<()> = serde_json::from_str(&json).unwrap();
+                if game.played.is_empty() {
+                    return json;
                 }
             }
         }
