@@ -41,8 +41,10 @@ pub(crate) const TUPLES: [(usize, &str); 11] = [
     ),
     (4 * 4 * 6, "the place, how the card is played, and how many tricks are left"),
     (
-        4 * 4 * 4,
-        "the role, how the card is played, and which sides bid its suit",
+        4 * 4 * 4 * 6,
+        "the role, the place, how the card is played, and how the tricks the \
+         declarer still needs for the contract compare with the tricks left: \
+         already made, beaten, or with none, one, two, or more to spare",
     ),
     (
         4 * 4 * 20,
@@ -156,8 +158,9 @@ pub(crate) struct View {
     lead: Option<Suit>,
     winning: Option<Card>,
     partner_winning: bool,
-    /// Which suits each side has bid: the player's side and the other.
-    bid: [[bool; 4]; 2],
+    /// How the tricks that the declarer still needs compare with the tricks
+    /// left, as a number below 6 (see [`TUPLES`]).
+    contract: usize,
     /// What is shown of the two hidden hands, the first after the player
     /// first.
     shown: [Shown; 2],
@@ -229,14 +232,24 @@ impl View {
                 winner = i;
             }
         }
-        let mut bid = [[false; 4]; 2];
-        for (i, &call) in game.bids.iter().enumerate() {
-            if let Bid::Suit(_, suit) = call {
-                let bidder = game.dealer + i;
-                let theirs = (bidder as usize + 4 - seat as usize) % 2;
-                bid[theirs][suit as usize] = true;
+        let level = match game.highest_contract_bid() {
+            Some(Bid::Suit(level, _)) | Some(Bid::NT(level)) => level,
+            _ => return None,
+        };
+        let won = match declarer {
+            Seat::North | Seat::South => game.ns_tricks,
+            _ => game.ew_tricks,
+        };
+        let left_to_play = 13 - game.ns_tricks - game.ew_tricks;
+        let needed = (level + 6).saturating_sub(won);
+        let contract = if needed == 0 {
+            5
+        } else {
+            match left_to_play as isize - needed as isize {
+                spare if spare < 0 => 0,
+                spare => (spare as usize).min(3) + 1,
             }
-        }
+        };
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
@@ -256,7 +269,7 @@ impl View {
             lead: trick.first().map(|card| card.suit()),
             winning: trick.get(winner).copied(),
             partner_winning: place > 0 && winner % 2 == place % 2,
-            bid,
+            contract,
             shown,
         })
     }
@@ -310,7 +323,6 @@ impl View {
             6..=8 => 4,
             _ => 5,
         };
-        let bid_by = self.bid[0][suit as usize] as usize | (self.bid[1][suit as usize] as usize) << 1;
         let indices = [
             (((role * 4 + place) * 4 + how) * 2 + self.partner_winning as usize) * 2 + beats as usize,
             place * 125 + Cards::holders_above(&in_sight, card_now, 3),
@@ -318,7 +330,7 @@ impl View {
             ((place * 4 + how) * 6 + above) * 2 + lowest as usize,
             ((place * 4 + length) * 4 + other_length) * 2 + trumps as usize,
             (place * 4 + how) * 6 + tricks,
-            (role * 4 + how) * 4 + bid_by,
+            ((role * 4 + place) * 4 + how) * 6 + self.contract,
             (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             (place * 4 + how) * 20 + self.shown[1].length_index(suit),
             ((role * 4 + place) * 20 + self.shown[0].points_index()) * 2 + (card.rank() >= 10) as usize,
@@ -907,8 +919,9 @@ mod tests {
     enum Player<'a> {
         /// By the model that is learning, whose choices are learned from.
         Learning,
-        /// By the model with these weights, a snapshot of an earlier one.
-        Past(&'a [f64]),
+        /// By the model with these weights, a snapshot of an earlier one,
+        /// taken after this many rounds.
+        Past(&'a [f64], usize),
         /// Any card that it could play, at random.
         Random,
     }
@@ -918,19 +931,25 @@ mod tests {
     /// seat that chooses it as its `players` say: a model chooses at random
     /// with its chances at `temperature`, the learning one with `weights`.
     /// Gives the choices that the learning model made and the tricks each
-    /// side won.
+    /// side won, and with `record`, the whole game, for watching.
     fn play_out(
         json: &str,
         convention: &Convention,
         weights: &[f64],
         temperature: f64,
         players: [Player; 4],
+        record: bool,
         rng: &mut StdRng,
-    ) -> (Vec<Decision>, [usize; 2]) {
+    ) -> (Vec<Decision>, [usize; 2], Option<serde_json::Value>) {
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
         let mut game: GameState<()> = serde_json::from_str(json).unwrap();
         let leader = game.turn().unwrap();
         let lead = likely_opening_leads(&Auction::new(&game).unwrap(), game.hands[leader])[0];
+        let mut plays = vec![serde_json::json!({
+            "seat": format!("{leader:?}"),
+            "card": pair(lead),
+            "by": "the order of opening leads",
+        })];
         game.play(lead);
         let mut decisions = Vec::new();
         while !game.hand_done {
@@ -940,11 +959,13 @@ mod tests {
             let seat = game.lead.unwrap() + current_trick(&game).len();
             let side = chooser(&game, seat) as usize % 2;
             let legal: Vec<Card> = view.legal().collect();
-            let weights = match players[chooser(&game, seat) as usize] {
+            let player = players[chooser(&game, seat) as usize];
+            let weights = match player {
                 Player::Random => None,
-                Player::Past(past) => Some((past, false)),
+                Player::Past(past, _) => Some((past, false)),
                 Player::Learning => Some((weights, true)),
             };
+            let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
                 let cards: Vec<([usize; TUPLES.len()], f64)> = chances(&view, weights, temperature)
                     .into_iter()
@@ -959,6 +980,9 @@ mod tests {
                     }
                     pick -= chance;
                 }
+                if record {
+                    considered = legal.iter().zip(&cards).map(|(&card, c)| (pair(card), c.1)).collect();
+                }
                 if learning {
                     decisions.push(Decision {
                         cards,
@@ -972,9 +996,68 @@ mod tests {
             } else {
                 legal[rng.gen_range(0..legal.len())]
             };
+            if record {
+                plays.push(serde_json::json!({
+                    "seat": format!("{seat:?}"),
+                    "card": pair(card),
+                    "by": player_name(player),
+                    "chances": considered,
+                }));
+            }
             game.play(card);
         }
-        (decisions, [game.ns_tricks, game.ew_tricks])
+        let watched = record.then(|| {
+            let start: GameState<()> = serde_json::from_str(json).unwrap();
+            let dummy = start.dummy().unwrap();
+            serde_json::json!({
+                "dealer": format!("{:?}", start.dealer),
+                "hands": (0..4)
+                    .map(|s| {
+                        let seat = Seat::from(s);
+                        (format!("{seat:?}"), start.original_hands[seat].map(pair).collect::<Vec<_>>())
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                "bids": start.bids.iter().map(|&bid| call_name(bid)).collect::<Vec<_>>(),
+                "declarer": format!("{:?}", dummy + 2),
+                "contract": start.highest_contract_bid().map(call_name),
+                "players": (0..4)
+                    .map(|s| {
+                        let seat = Seat::from(s);
+                        let name = if seat == dummy {
+                            "the dummy".to_string()
+                        } else {
+                            player_name(players[s])
+                        };
+                        (format!("{seat:?}"), name)
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                "plays": plays,
+                "tricks": { "NS": game.ns_tricks, "EW": game.ew_tricks },
+            })
+        });
+        (decisions, [game.ns_tricks, game.ew_tricks], watched)
+    }
+
+    /// What a viewer calls a player of self-play.
+    fn player_name(player: Player) -> String {
+        match player {
+            Player::Learning => "the model learning".into(),
+            Player::Past(_, 0) => "the model before it learned".into(),
+            Player::Past(_, round) => format!("the model after {round} rounds"),
+            Player::Random => "a player of any card".into(),
+        }
+    }
+
+    /// A call as the viewer writes it: P, X, XX, 1C to 7S, or 1N to 7N.
+    fn call_name(bid: Bid) -> String {
+        let suit = |suit: Suit| ['C', 'D', 'H', 'S'][suit as usize];
+        match bid {
+            Bid::Pass => "P".into(),
+            Bid::Double => "X".into(),
+            Bid::Redouble => "XX".into(),
+            Bid::Suit(level, s) => format!("{level}{}", suit(s)),
+            Bid::NT(level) => format!("{level}N"),
+        }
     }
 
     /// Learns the weights of the play model from nothing, by playing
@@ -1038,7 +1121,9 @@ mod tests {
             Err(_) => vec![0.0; ENTRIES],
         };
         let (mut first, mut second) = (vec![0.0; ENTRIES], vec![0.0; ENTRIES]);
-        let mut snapshots: Vec<Vec<f64>> = vec![weights.clone()];
+        let mut snapshots: Vec<(usize, Vec<f64>)> = vec![(0, weights.clone())];
+        let mut watched: Vec<serde_json::Value> = Vec::new();
+        let samples = number("PLAY_SELF_SAMPLES", 2);
         let mut rng = StdRng::seed_from_u64(11);
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         for round in 1..=rounds {
@@ -1048,7 +1133,8 @@ mod tests {
             let weights_now = &weights;
             let pool = &pool;
             let past = &snapshots;
-            let results: Vec<(Vec<f64>, usize, f64)> = std::thread::scope(|scope| {
+            let watching = round % report == 0 || round == rounds;
+            let results: Vec<(Vec<f64>, usize, f64, Vec<serde_json::Value>)> = std::thread::scope(|scope| {
                 let handles: Vec<_> = deals
                     .chunks(chunk)
                     .enumerate()
@@ -1058,25 +1144,31 @@ mod tests {
                             let mut conventions = std::collections::HashMap::new();
                             let mut gradient = vec![0.0; ENTRIES];
                             let (mut count, mut entropy) = (0, 0.0);
-                            for &deal in deals {
+                            let mut sampled = Vec::new();
+                            for (d, &deal) in deals.iter().enumerate() {
                                 let json = &pool[deal];
                                 let system: GameState<()> = serde_json::from_str(json).unwrap();
                                 let convention = conventions
                                     .entry(format!("{:?}", system.system))
                                     .or_insert_with(|| system.system.convention());
                                 let games: Vec<(Vec<Decision>, [usize; 2])> = (0..group)
-                                    .map(|_| {
+                                    .map(|g| {
                                         let players = [0; 4].map(|_| {
                                             let draw = rng.gen_range(0.0..1.0);
                                             if draw < past_share {
-                                                Player::Past(&past[rng.gen_range(0..past.len())])
+                                                let (round, ref weights) = past[rng.gen_range(0..past.len())];
+                                                Player::Past(weights, round)
                                             } else if draw < past_share + random_share {
                                                 Player::Random
                                             } else {
                                                 Player::Learning
                                             }
                                         });
-                                        play_out(json, convention, weights_now, temperature, players, &mut rng)
+                                        let record = watching && t == 0 && g == 0 && d < samples;
+                                        let (decisions, won, game) =
+                                            play_out(json, convention, weights_now, temperature, players, record, &mut rng);
+                                        sampled.extend(game);
+                                        (decisions, won)
                                     })
                                     .collect();
                                 // The mean over the plays of this deal of the
@@ -1107,7 +1199,7 @@ mod tests {
                                     }
                                 }
                             }
-                            (gradient, count, entropy)
+                            (gradient, count, entropy, sampled)
                         })
                     })
                     .collect();
@@ -1124,7 +1216,24 @@ mod tests {
                 let b = second[j] / (1.0 - 0.999f64.powf(t));
                 weights[j] += rate * a / (b.sqrt() + 1e-8);
             }
-            if round % report == 0 || round == rounds {
+            for mut game in results.into_iter().flat_map(|r| r.3) {
+                game["round"] = round.into();
+                watched.push(game);
+            }
+            if watching {
+                if let Ok(path) = std::env::var("PLAY_SELF_WATCH") {
+                    // The latest games, enough to watch without the page
+                    // growing without end.
+                    let start = watched.len().saturating_sub(400);
+                    let data = serde_json::to_string(&watched[start..]).unwrap();
+                    // A published page gets the document around it; a file
+                    // opened in a browser needs its own.
+                    let page = format!(
+                        "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n{}",
+                        include_str!("self_play_viewer.html").replace("[/*GAMES*/]", &data)
+                    );
+                    std::fs::write(path, page).unwrap();
+                }
                 print!("round {round}: {decisions} choices, entropy {entropy:.3} a choice");
                 if let Some(test) = &test {
                     let loss: f64 = test
@@ -1143,7 +1252,7 @@ mod tests {
                 }
             }
             if round % every == 0 {
-                snapshots.push(weights.clone());
+                snapshots.push((round, weights.clone()));
                 if let Some(directory) = &directory {
                     write(&format!("{directory}/round-{round:05}.txt"), &weights);
                 }

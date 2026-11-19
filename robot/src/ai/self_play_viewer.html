@@ -1,0 +1,298 @@
+<title>Self-Play Table</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,650&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a score-pad page; the four hands sit round the table by compass
+   point with the trick in the middle, the auction and the last card's
+   chances beside it, stacking to one column on a phone. */
+:root {
+  --paper: #f6f7f4;
+  --card: #ffffff;
+  --ink: #1d2421;
+  --muted: #66706b;
+  --rule: #d6dbd6;
+  --accent: #23664a;
+  --accent-soft: #dcebe3;
+  --red: #b3262e;
+  --black: #1d2421;
+  --display: "Literata", Georgia, "Times New Roman", serif;
+  --body: "Public Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #151a18; --card: #1d2421; --ink: #e8ece9; --muted: #9aa49f;
+    --rule: #323b37; --accent: #6fc39a; --accent-soft: #23352d;
+    --red: #f0777d; --black: #e8ece9; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #151a18; --card: #1d2421; --ink: #e8ece9; --muted: #9aa49f;
+  --rule: #323b37; --accent: #6fc39a; --accent-soft: #23352d;
+  --red: #f0777d; --black: #e8ece9; color-scheme: dark;
+}
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--body);
+  font-size: 15px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 32px;
+}
+main { max-width: 1040px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; justify-content: space-between; }
+h1 { font-family: var(--display); font-weight: 650; font-size: 1.7rem; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+label.pick { display: grid; gap: 4px; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; min-width: 0; }
+select { font: inherit; font-size: 0.95rem; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); color: var(--ink); max-width: 100%; }
+.layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 760px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.table {
+  display: grid; gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-areas: ". north ." "west trick east" ". south .";
+  background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 14px;
+}
+.hand { min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
+.hand.next { border-color: var(--accent); background: var(--accent-soft); }
+.hand h2 { margin: 0 0 4px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
+.hand .who { display: block; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 0.8rem; }
+.suit-line { font-family: var(--mono); font-size: 0.95rem; white-space: nowrap; overflow-x: auto; }
+.played { opacity: 0.25; }
+.r { color: var(--red); } .b { color: var(--black); }
+#north { grid-area: north; } #south { grid-area: south; } #west { grid-area: west; } #east { grid-area: east; }
+.trick {
+  grid-area: trick; display: grid; place-items: center; min-height: 150px;
+  grid-template-areas: ". n ." "w c e" ". s ."; grid-template-columns: 1fr auto 1fr; gap: 4px;
+  border: 1px dashed var(--rule); border-radius: 8px; padding: 8px;
+}
+.trick .slot { font-family: var(--mono); font-size: 1.15rem; font-weight: 600; min-height: 1.6em; }
+.trick .count { grid-area: c; font-size: 0.75rem; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.side { display: grid; gap: 14px; min-width: 0; }
+.panel { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.panel h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 500; font-size: 1.05rem; }
+.auction { overflow-x: auto; }
+.auction table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.auction th { font-family: var(--body); font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; text-align: left; padding: 2px 6px; }
+.auction td { padding: 2px 6px; }
+.chance { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) 3.4em; gap: 8px; align-items: center; font-family: var(--mono); font-size: 0.9rem; }
+.bar { height: 8px; border-radius: 4px; background: var(--rule); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--accent); }
+.chance.picked { font-weight: 600; }
+.chances { display: grid; gap: 4px; }
+.note { color: var(--muted); font-size: 0.88rem; margin: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button {
+  font: inherit; font-size: 0.92rem; padding: 7px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--card); color: var(--ink);
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.step { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.88rem; }
+.result { font-weight: 600; }
+.empty { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 24px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <header>
+    <div>
+      <h1>Self-Play Table</h1>
+      <p class="sub" id="summary">Sample games from the play model learning against itself.</p>
+    </div>
+    <label class="pick" for="game">Game
+      <select id="game"></select>
+    </label>
+  </header>
+
+  <div class="empty" id="empty" hidden>
+    <p class="note">No games yet. Self-play records a few sample games at each report; run it with PLAY_SELF_WATCH set to this file.</p>
+  </div>
+
+  <div class="layout" id="board">
+    <section class="table" aria-label="The table">
+      <div class="hand" id="north"></div>
+      <div class="hand" id="west"></div>
+      <div class="trick" id="trick"></div>
+      <div class="hand" id="east"></div>
+      <div class="hand" id="south"></div>
+    </section>
+    <div class="side">
+      <div class="panel">
+        <div class="controls">
+          <button id="first" aria-label="Back to the start">⏮</button>
+          <button id="prev" aria-label="Back one card">◀</button>
+          <button class="primary" id="play">Play</button>
+          <button id="next" aria-label="Forward one card">▶</button>
+          <button id="last" aria-label="To the end">⏭</button>
+          <span class="step" id="step"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Last card</h3>
+        <div id="last-card"></div>
+      </div>
+      <div class="panel">
+        <h3>Auction</h3>
+        <div class="auction" id="auction"></div>
+        <p class="note" id="contract"></p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const GAMES = [/*GAMES*/];
+const SEATS = ["South", "West", "North", "East"];
+const SUITS = ["♣", "♦", "♥", "♠"];
+const STRAINS = { C: 0, D: 1, H: 2, S: 3 };
+const rankName = (r) => ({ 14: "A", 13: "K", 12: "Q", 11: "J" })[r] || String(r);
+const red = (s) => s === 1 || s === 2;
+const cardHtml = ([s, r]) => `<span class="${red(s) ? "r" : "b"}">${SUITS[s]}${rankName(r)}</span>`;
+const callHtml = (call) => {
+  if (call === "P") return "Pass";
+  if (call === "X" || call === "XX") return call;
+  const level = call[0], strain = call[1];
+  if (strain === "N") return `${level}NT`;
+  const s = STRAINS[strain];
+  return `${level}<span class="${red(s) ? "r" : "b"}">${SUITS[s]}</span>`;
+};
+const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+const seatAfter = (seat, n) => SEATS[(SEATS.indexOf(seat) + n) % 4];
+
+let gameIndex = Math.max(0, GAMES.length - 1);
+let step = 0;
+let timer = null;
+
+function trumpOf(game) {
+  const strain = game.contract ? game.contract[1] : "N";
+  return strain === "N" ? null : STRAINS[strain];
+}
+
+function winnerOf(cards, trump) {
+  let best = 0;
+  for (let i = 1; i < cards.length; i++) {
+    const [s, r] = cards[i].card, [bs, br] = cards[best].card;
+    if ((s === bs && r > br) || (s === trump && bs !== trump)) best = i;
+  }
+  return cards[best].seat;
+}
+
+function render() {
+  const game = GAMES[gameIndex];
+  document.getElementById("empty").hidden = !!game;
+  document.getElementById("board").hidden = !game;
+  if (!game) return;
+  const plays = game.plays.slice(0, step);
+  const trump = trumpOf(game);
+  // Tricks won so far.
+  let ns = 0, ew = 0;
+  for (let t = 0; (t + 1) * 4 <= plays.length; t++) {
+    const winner = winnerOf(plays.slice(t * 4, t * 4 + 4), trump);
+    if (winner === "North" || winner === "South") ns++; else ew++;
+  }
+  const next = game.plays[step];
+  for (const seat of SEATS) {
+    const el = document.getElementById(seat.toLowerCase());
+    const gone = plays.filter((p) => p.seat === seat).map((p) => p.card);
+    const lines = [3, 2, 1, 0].map((s) => {
+      const ranks = game.hands[seat].filter((c) => c[0] === s).sort((a, b) => b[1] - a[1]);
+      const cards = ranks.map((c) => {
+        const played = gone.some((g) => same(g, c));
+        return `<span class="${played ? "played" : ""}">${rankName(c[1])}</span>`;
+      }).join(" ");
+      return `<div class="suit-line"><span class="${red(s) ? "r" : "b"}">${SUITS[s]}</span> ${cards || "—"}</div>`;
+    }).join("");
+    const role = seat === game.declarer ? "declarer" : seat === seatAfter(game.declarer, 2) ? "dummy" : "defender";
+    el.innerHTML = `<h2>${seat} · ${role}<span class="who">${game.players[seat]}</span></h2>${lines}`;
+    el.classList.toggle("next", !!next && next.seat === seat);
+  }
+  // The trick on the table: the one being played, or the last one, complete.
+  const t = step === 0 ? -1 : Math.floor((step - 1) / 4);
+  const inTrick = t < 0 ? [] : plays.slice(t * 4);
+  const slot = (seat) => {
+    const p = inTrick.find((p) => p.seat === seat);
+    return p ? cardHtml(p.card) : "";
+  };
+  document.getElementById("trick").innerHTML =
+    `<div class="slot" style="grid-area:n">${slot("North")}</div>` +
+    `<div class="slot" style="grid-area:w">${slot("West")}</div>` +
+    `<div class="count">NS ${ns} · EW ${ew}</div>` +
+    `<div class="slot" style="grid-area:e">${slot("East")}</div>` +
+    `<div class="slot" style="grid-area:s">${slot("South")}</div>`;
+  // The last card and the chances its player gave each card they could play.
+  const last = plays[plays.length - 1];
+  const lastEl = document.getElementById("last-card");
+  if (!last) {
+    lastEl.innerHTML = `<p class="note">The opening lead comes first. Step forward to start.</p>`;
+  } else if (!last.chances || last.chances.length === 0) {
+    lastEl.innerHTML = `<p class="note">${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}.</p>`;
+  } else {
+    const rows = [...last.chances].sort((a, b) => b[1] - a[1]).map(([card, p]) => {
+      const picked = same(card, last.card);
+      return `<div class="chance ${picked ? "picked" : ""}">${cardHtml(card)}<div class="bar"><span style="width:${(p * 100).toFixed(1)}%"></span></div><span>${(p * 100).toFixed(0)}%</span></div>`;
+    }).join("");
+    lastEl.innerHTML = `<p class="note">${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}, from these chances:</p><div class="chances">${rows}</div>`;
+  }
+  // The auction, in columns from West, starting under the dealer.
+  const order = ["West", "North", "East", "South"];
+  const cells = Array(order.indexOf(game.dealer)).fill("").concat(game.bids.map(callHtml));
+  let rows = "";
+  for (let i = 0; i < cells.length; i += 4) {
+    rows += "<tr>" + order.map((_, j) => `<td>${cells[i + j] ?? ""}</td>`).join("") + "</tr>";
+  }
+  document.getElementById("auction").innerHTML =
+    `<table><thead><tr>${order.map((s) => `<th>${s}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+  const needed = Number(game.contract[0]) + 6;
+  const won = game.declarer === "North" || game.declarer === "South" ? game.tricks.NS : game.tricks.EW;
+  const result = won >= needed ? `made with ${won - needed} over` : `down ${needed - won}`;
+  document.getElementById("contract").innerHTML =
+    `${callHtml(game.contract)} by ${game.declarer}: <span class="result">${result}</span> (${won} tricks).`;
+  document.getElementById("step").textContent = `card ${step} of ${game.plays.length}`;
+  document.getElementById("play").textContent = timer ? "Pause" : "Play";
+}
+
+function go(to) {
+  const game = GAMES[gameIndex];
+  if (!game) return;
+  step = Math.max(0, Math.min(game.plays.length, to));
+  if (step === game.plays.length) stop();
+  render();
+}
+function stop() { if (timer) { clearInterval(timer); timer = null; } }
+function toggle() {
+  if (timer) { stop(); render(); return; }
+  const game = GAMES[gameIndex];
+  if (game && step >= game.plays.length) step = 0;
+  timer = setInterval(() => go(step + 1), 750);
+  render();
+}
+
+const select = document.getElementById("game");
+GAMES.forEach((game, i) => {
+  const option = document.createElement("option");
+  option.value = i;
+  const strain = game.contract[1] === "N" ? "NT" : SUITS[STRAINS[game.contract[1]]];
+  option.textContent = `Round ${game.round} · ${game.contract[0]}${strain} by ${game.declarer} · NS ${game.tricks.NS}, EW ${game.tricks.EW}`;
+  select.appendChild(option);
+});
+select.value = String(gameIndex);
+select.addEventListener("change", () => { stop(); gameIndex = Number(select.value); step = 0; render(); });
+document.getElementById("first").addEventListener("click", () => { stop(); go(0); });
+document.getElementById("prev").addEventListener("click", () => { stop(); go(step - 1); });
+document.getElementById("next").addEventListener("click", () => { stop(); go(step + 1); });
+document.getElementById("last").addEventListener("click", () => { stop(); go(Infinity); });
+document.getElementById("play").addEventListener("click", toggle);
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") { stop(); go(step + 1); }
+  if (e.key === "ArrowLeft") { stop(); go(step - 1); }
+  if (e.key === " ") { e.preventDefault(); toggle(); }
+});
+if (GAMES.length) {
+  const rounds = new Set(GAMES.map((g) => g.round));
+  document.getElementById("summary").textContent =
+    `${GAMES.length} sample games from ${rounds.size} reports of the play model learning against itself, up to round ${Math.max(...rounds)}.`;
+}
+render();
+</script>
