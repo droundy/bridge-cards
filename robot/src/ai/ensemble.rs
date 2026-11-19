@@ -35,7 +35,6 @@ use bridge_solver::{DoubleDummy, Starting};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
-use std::sync::OnceLock;
 
 /// How many deals to try for one that fits the auction before taking one that
 /// does not.
@@ -418,17 +417,9 @@ pub struct EnsemblePlay {
     replay: bool,
 }
 
-/// The convention of `system`, which takes a long time to build (it compiles
-/// regexes), so it is built once for each system and kept.
+/// The convention of `system`, shared (see [`BiddingSystem::table`]).
 fn convention_of(system: BiddingSystem) -> &'static Convention {
-    static SHEETS: OnceLock<Convention> = OnceLock::new();
-    static SAYC: OnceLock<Convention> = OnceLock::new();
-    static TWO_OVER_ONE: OnceLock<Convention> = OnceLock::new();
-    match system {
-        BiddingSystem::Sheets => SHEETS.get_or_init(|| system.convention()),
-        BiddingSystem::Sayc => SAYC.get_or_init(|| system.convention()),
-        BiddingSystem::TwoOverOne => TWO_OVER_ONE.get_or_init(|| system.convention()),
-    }
+    system.table()
 }
 
 impl EnsemblePlay {

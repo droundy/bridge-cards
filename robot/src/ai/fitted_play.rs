@@ -602,6 +602,7 @@ mod tests {
     use crate::ai::fitting;
     use crate::situations::Generator;
     use rand::rngs::StdRng;
+    use rayon::prelude::*;
     use rand::{Rng, SeedableRng};
 
     fn var(name: &str, default: &str) -> String {
@@ -1296,11 +1297,19 @@ mod tests {
             "PLAY_THREADS",
             std::thread::available_parallelism().map_or(4, |n| n.get()),
         );
-        // Each thread deals its share of the fresh deals with its own
-        // generator, which keeps the conventions it has made.
-        let mut dealers: Vec<(Generator, StdRng, usize)> = (0..threads)
-            .map(|t| (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64 * 100 + t as u64), 10))
-            .collect();
+        // One thread deals the fresh deals into a channel that holds two
+        // rounds' worth, keeping ahead of the rounds that take them.  Dealing
+        // takes far less time than playing, so it barely adds to the threads
+        // that play, and the deals are the same whatever their number.
+        let (dealt, fresh_deals) = std::sync::mpsc::sync_channel::<String>(2 * fresh);
+        if fresh > 0 {
+            let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64), 10);
+            std::thread::spawn(move || while dealt.send(fresh_deal(&mut dealer)).is_ok() {});
+        }
+        // The same threads play every round.  Each regex of the bidding
+        // tables keeps a cache for each thread that uses it, so new threads
+        // every round would leave more and more caches behind.
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         let size = learners[0].params.len();
         for round in first_round..=last_round {
@@ -1313,17 +1322,13 @@ mod tests {
             let chunk = batch.div_ceil(threads);
             let (learners_now, pool_now, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
-            let shares = deals.len().div_ceil(chunk);
-            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<String>);
-            let results: Vec<Results> = std::thread::scope(|scope| {
-                let handles: Vec<_> = deals
-                    .chunks(chunk)
-                    .zip(dealers.iter_mut())
+            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>);
+            let results: Vec<Results> = workers.install(|| {
+                deals
+                    .par_chunks(chunk)
                     .enumerate()
-                    .map(|(t, (deals, dealer))| {
-                        scope.spawn(move || {
-                            let share = fresh / shares + usize::from(t < fresh % shares);
-                            let new_deals: Vec<String> = (0..share).map(|_| fresh_deal(dealer)).collect();
+                    .map(|(t, deals)| {
+                        {
                             let mut rng = StdRng::seed_from_u64(seed + t as u64);
                             let mut conventions = std::collections::HashMap::new();
                             let mut gradients = vec![vec![0.0; size]; learners_now.len()];
@@ -1436,11 +1441,10 @@ mod tests {
                                     }
                                 }
                             }
-                            (gradients, counts, entropy, sampled, new_deals)
-                        })
+                            (gradients, counts, entropy, sampled)
+                        }
                     })
-                    .collect();
-                handles.into_iter().map(|h| h.join().unwrap()).collect()
+                    .collect()
             });
             let counts: Vec<usize> = (0..learners.len())
                 .map(|i| results.iter().map(|r| r.1[i]).sum())
@@ -1467,10 +1471,10 @@ mod tests {
                     game["round"] = round.into();
                     watched.push(game);
                 }
-                for deal in result.4 {
-                    pool[oldest] = deal;
-                    oldest = (oldest + 1) % pool.len();
-                }
+            }
+            for deal in fresh_deals.iter().take(fresh) {
+                pool[oldest] = deal;
+                oldest = (oldest + 1) % pool.len();
             }
             if round % every == 0 || round == last_round {
                 for (i, learner) in learners.iter().enumerate() {

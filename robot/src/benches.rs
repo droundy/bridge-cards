@@ -295,7 +295,7 @@ fn work_out_reference_values(situation: &str, game: &GameState<()>) -> Option<Va
     let convention = game.system.convention();
     let hidden = Hidden::new(game, &convention)?;
     let mut rng = StdRng::seed_from_u64(seed_from(situation));
-    let replay = reference_replays().then_some(&convention);
+    let replay = reference_replays().then_some(&*convention);
     let deals = hidden.ensemble(&mut rng, REFERENCE_DEALS, replay);
     if deals.is_empty() {
         return None;

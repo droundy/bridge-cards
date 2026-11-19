@@ -2,6 +2,7 @@ use crate::{bid_follows, Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
 use wasm_bindgen::prelude::*;
 
 /// The bidding system a table plays.
@@ -39,13 +40,24 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "two-over-one",
         }
     }
-    /// The conventions this system bids by.
-    pub fn convention(self) -> Convention {
-        match self {
-            BiddingSystem::Sheets => Convention::sheets(),
-            BiddingSystem::Sayc => Convention::sayc(),
-            BiddingSystem::TwoOverOne => Convention::two_over_one(),
-        }
+    /// The conventions this system bids by, shared.
+    pub fn convention(self) -> Arc<Convention> {
+        self.table().clone()
+    }
+    /// The conventions this system bids by.  A table takes about 12 MB and a
+    /// long time to build, since it compiles many regexes, so each system's
+    /// is built once and shared by every game and robot.
+    pub(crate) fn table(self) -> &'static Arc<Convention> {
+        static TABLES: [OnceLock<Arc<Convention>>; BiddingSystem::ALL.len()] =
+            [const { OnceLock::new() }; BiddingSystem::ALL.len()];
+        let index = BiddingSystem::ALL.iter().position(|&s| s == self).unwrap();
+        TABLES[index].get_or_init(|| {
+            Arc::new(match self {
+                BiddingSystem::Sheets => Convention::sheets(),
+                BiddingSystem::Sayc => Convention::sayc(),
+                BiddingSystem::TwoOverOne => Convention::two_over_one(),
+            })
+        })
     }
 }
 
@@ -136,7 +148,7 @@ fn all_bids() -> Vec<Bid> {
 /// entry describes several legal bids the highest is chosen.  With no such
 /// entry it passes.
 #[derive(Debug)]
-pub struct ConventionalBid(pub Convention);
+pub struct ConventionalBid(pub Arc<Convention>);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
         self.0.bid_for(history, &hand.values())
@@ -2927,7 +2939,7 @@ fn test_bidai() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     let weak_hand = Cards::from_str("C 2345 D 234 H 234 S 234").unwrap();
     assert_eq!(
         Bid::NT(1),
@@ -2947,7 +2959,7 @@ fn test_bidai_rebids_after_strong_two() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     // Each of these opens 2C with 23 lhcp, and must not pass partner's 2D.
     for (hand, rebid) in [
         ("S AK3 H KQ4 D AQ5 C AJ32", NT(2)),
@@ -2969,7 +2981,7 @@ fn test_bidai_third_seat_rule_of_20() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     // With 12 lhcp, third seat opens a five-card major.
     let spades = Cards::from_str("S AQ432 H 32 D KJ2 C J32").unwrap();
     assert_eq!(Suit(1, Spades), sheets.bid(&[Pass, Pass], spades));
@@ -3002,7 +3014,7 @@ fn test_sheets() {
 /// Bid `deals` seeded deals with the robot in all four seats.  Each result is
 /// the seed, the hands (dealer first) and the auction.
 #[cfg(test)]
-fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
+fn seeded_deals(convention: Arc<Convention>, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
     use rand::SeedableRng;
     let mut bidder = ConventionalBid(convention);
     let mut out = Vec::new();
@@ -3031,7 +3043,7 @@ fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec
 
 /// One line per deal with the seed and the auction.
 #[cfg(test)]
-fn seeded_auctions(convention: Convention, deals: u64) -> String {
+fn seeded_auctions(convention: Arc<Convention>, deals: u64) -> String {
     let mut out = String::new();
     for (seed, _, bids) in seeded_deals(convention, deals) {
         out.push_str(&format!("{} {}\n", seed, bids_string(&bids)));
@@ -3077,7 +3089,7 @@ fn test_sayc_openings() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     for (hand, opening) in [
         ("S AK3 H KQ4 D QJ5 C J932", NT(1)),
         ("S AQ432 H K32 D KJ2 C 32", Suit(1, Spades)),
@@ -3100,7 +3112,7 @@ fn test_sayc_responses() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     for (hand, response) in [
         ("S Q32 H K54 D J543 C 654", Suit(2, Spades)),
         ("S AJ43 H Q32 D K32 C 432", Suit(3, Spades)),
@@ -3122,7 +3134,7 @@ fn test_sayc_opener_rebids() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     // Opening 1H, partner responds 1S.
     for (hand, rebid) in [
         ("S K432 H AQ876 D 32 C K2", Suit(2, Spades)),
@@ -3144,8 +3156,8 @@ fn test_two_over_one_differs_from_sayc() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
-    let mut two_over_one = ConventionalBid(Convention::two_over_one());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
+    let mut two_over_one = ConventionalBid(BiddingSystem::TwoOverOne.convention());
     let auction = [Suit(1, Spades), Pass];
     // Ten points with a five card suit: a two level response in SAYC, a
     // forcing notrump in two over one.
@@ -3177,8 +3189,8 @@ fn test_major_raise_with_three_card_support() {
     use Bid::*;
 
     for (name, mut system) in [
-        ("SAYC", ConventionalBid(Convention::sayc())),
-        ("2/1", ConventionalBid(Convention::two_over_one())),
+        ("SAYC", ConventionalBid(BiddingSystem::Sayc.convention())),
+        ("2/1", ConventionalBid(BiddingSystem::TwoOverOne.convention())),
     ] {
         // Three card support and a minimum raises the major, even though
         // the two over one forcing notrump is also available.
@@ -3204,8 +3216,8 @@ fn test_two_over_one_forcing_notrump_and_limit_raise() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut two_over_one = ConventionalBid(Convention::two_over_one());
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut two_over_one = ConventionalBid(BiddingSystem::TwoOverOne.convention());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     // Eleven points with a doubleton in the major still start with 1NT.
     for (hand, opening) in [
         ("S 32 H KQ4 D QJ543 C K54", Spades),
@@ -3687,7 +3699,7 @@ fn bids_with_several_entries_describe_them_all() {
 /// not defaults describe the same bid, or where a default is listed before an
 /// entry that is not, with how often each occurs.
 #[cfg(test)]
-fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
+fn overlaps(convention: &Arc<Convention>, deals: u64) -> Vec<(usize, String)> {
     let mut seen = std::collections::BTreeMap::new();
     for (_, _, bids) in seeded_deals(convention.clone(), deals) {
         for n in 0..bids.len() {
@@ -3731,7 +3743,7 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
 /// bid forces, for want of anything that fits, and a call whose meaning does
 /// not cover the hand that made it, so that partner is told something false.
 #[cfg(test)]
-fn holes(convention: &Convention, deals: u64) -> Vec<String> {
+fn holes(convention: &Arc<Convention>, deals: u64) -> Vec<String> {
     let mut holes = Vec::new();
     for (seed, hands, bids) in seeded_deals(convention.clone(), deals) {
         for n in 0..bids.len() {
@@ -3857,7 +3869,7 @@ fn a_strong_two_rebids_the_longer_suit() {
 fn sheets_entries_do_not_overlap() {
     assert_eq!(
         Vec::<(usize, String)>::new(),
-        overlaps(&Convention::sheets(), 200)
+        overlaps(&BiddingSystem::Sheets.convention(), 200)
     );
 }
 
