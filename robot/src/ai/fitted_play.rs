@@ -889,4 +889,213 @@ mod tests {
             std::fs::write(path, text).unwrap();
         }
     }
+
+    /// One choice of a card in a game of self-play: each card that could
+    /// be played, with its entries and chance, which one was played, the
+    /// side that chose it (0 for north and south) and the tricks that side
+    /// had already won.
+    struct Decision {
+        cards: Vec<([usize; TUPLES.len()], f64)>,
+        chosen: usize,
+        side: usize,
+        trick: usize,
+        won_before: usize,
+    }
+
+    /// Plays `json`, a game whose opening lead is next, out to the end, each
+    /// card chosen at random with the chances of the play model with
+    /// `weights` at `temperature` (the opening lead by `likely_opening_leads`),
+    /// except that each seat in `random` plays any card it could.  Gives the
+    /// choices that the model made and the tricks each side won.
+    fn play_out(
+        json: &str,
+        convention: &Convention,
+        weights: &[f64],
+        temperature: f64,
+        random: [bool; 4],
+        rng: &mut StdRng,
+    ) -> (Vec<Decision>, [usize; 2]) {
+        use crate::ai::opening_lead::{likely_opening_leads, Auction};
+        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let leader = game.turn().unwrap();
+        let lead = likely_opening_leads(&Auction::new(&game).unwrap(), game.hands[leader])[0];
+        game.play(lead);
+        let mut decisions = Vec::new();
+        while !game.hand_done {
+            let Some(view) = View::new(&game, convention) else {
+                break;
+            };
+            let seat = game.lead.unwrap() + current_trick(&game).len();
+            let side = chooser(&game, seat) as usize % 2;
+            let legal: Vec<Card> = view.legal().collect();
+            let card = if random[chooser(&game, seat) as usize] {
+                legal[rng.gen_range(0..legal.len())]
+            } else {
+                let cards: Vec<([usize; TUPLES.len()], f64)> = chances(&view, weights, temperature)
+                    .into_iter()
+                    .map(|(card, chance)| (view.entries(card), chance))
+                    .collect();
+                let mut pick = rng.gen_range(0.0..1.0);
+                let mut chosen = cards.len() - 1;
+                for (i, (_, chance)) in cards.iter().enumerate() {
+                    if pick < *chance {
+                        chosen = i;
+                        break;
+                    }
+                    pick -= chance;
+                }
+                decisions.push(Decision {
+                    cards,
+                    chosen,
+                    side,
+                    trick: game.tricks.len(),
+                    won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
+                });
+                legal[chosen]
+            };
+            game.play(card);
+        }
+        (decisions, [game.ns_tricks, game.ew_tricks])
+    }
+
+    /// Learns the weights of the play model from nothing, by playing
+    /// against itself.  Each round plays `PLAY_SELF_DEALS` (256) deals of a
+    /// pool of `PLAY_SELF_POOL` (4000) deals that the robot bid, each
+    /// `PLAY_SELF_GROUP` (8) times, every seat choosing its cards at random
+    /// with the chances of the model at `PLAY_SELF_TEMPERATURE` (1), and
+    /// moves the weights by a step of Adam of size `PLAY_SELF_RATE` (0.01)
+    /// up the gradient of the tricks each side takes after each of its
+    /// choices, less the mean of that over the plays of the same deal (so
+    /// that what is learned is what made a play of a deal better than the
+    /// others).  Each seat plays any card at random instead in a share
+    /// `PLAY_SELF_RANDOM` (0) of the games, so that the model does not learn
+    /// only to play with itself.  It starts from the weights in the file
+    /// `PLAY_SELF_START` if that is set, and otherwise from nothing.  Every
+    /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
+    /// the weights to the file `PLAY_SELF_WEIGHTS` if that is set, and
+    /// reports the tricks a play its choices lose by the ensemble's values on
+    /// the data in `PLAY_TEST` if that is set.  It uses every core.
+    #[test]
+    #[ignore]
+    fn self_play() {
+        let float = |name: &str, default: f64| -> f64 { var(name, &default.to_string()).parse().unwrap() };
+        let rounds = number("PLAY_SELF_ROUNDS", 100);
+        let batch = number("PLAY_SELF_DEALS", 256);
+        let group = number("PLAY_SELF_GROUP", 8);
+        let report = number("PLAY_SELF_REPORT", 10);
+        let temperature = float("PLAY_SELF_TEMPERATURE", 1.0);
+        let rate = float("PLAY_SELF_RATE", 0.01);
+        let random_share = float("PLAY_SELF_RANDOM", 0.0);
+        let pool: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(7, number("PLAY_SELF_POOL", 4000))
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+            .collect();
+        let test = std::env::var("PLAY_TEST")
+            .ok()
+            .map(|paths| read_situations(&paths, TUPLES.len()));
+        let mut weights = match std::env::var("PLAY_SELF_START") {
+            Ok(path) => std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| line.parse().unwrap())
+                .collect(),
+            Err(_) => vec![0.0; ENTRIES],
+        };
+        let (mut first, mut second) = (vec![0.0; ENTRIES], vec![0.0; ENTRIES]);
+        let mut rng = StdRng::seed_from_u64(11);
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        for round in 1..=rounds {
+            let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
+            let seed = rng.gen::<u64>();
+            let chunk = batch.div_ceil(threads);
+            let weights_now = &weights;
+            let pool = &pool;
+            let results: Vec<(Vec<f64>, usize, f64)> = std::thread::scope(|scope| {
+                let handles: Vec<_> = deals
+                    .chunks(chunk)
+                    .enumerate()
+                    .map(|(t, deals)| {
+                        scope.spawn(move || {
+                            let mut rng = StdRng::seed_from_u64(seed + t as u64);
+                            let mut conventions = std::collections::HashMap::new();
+                            let mut gradient = vec![0.0; ENTRIES];
+                            let (mut count, mut entropy) = (0, 0.0);
+                            for &deal in deals {
+                                let json = &pool[deal];
+                                let system: GameState<()> = serde_json::from_str(json).unwrap();
+                                let convention = conventions
+                                    .entry(format!("{:?}", system.system))
+                                    .or_insert_with(|| system.system.convention());
+                                let games: Vec<(Vec<Decision>, [usize; 2])> = (0..group)
+                                    .map(|_| {
+                                        let random = [0; 4].map(|_| rng.gen_range(0.0..1.0) < random_share);
+                                        play_out(json, convention, weights_now, temperature, random, &mut rng)
+                                    })
+                                    .collect();
+                                // The mean over the plays of this deal of the
+                                // tricks each side took from each trick on.
+                                let mut sums = [[0.0; 2]; 14];
+                                let mut counts = [[0.0; 2]; 14];
+                                for (decisions, won) in &games {
+                                    for d in decisions {
+                                        sums[d.trick][d.side] += (won[d.side] - d.won_before) as f64;
+                                        counts[d.trick][d.side] += 1.0;
+                                    }
+                                }
+                                for (decisions, won) in &games {
+                                    for d in decisions {
+                                        let to_go = (won[d.side] - d.won_before) as f64;
+                                        let advantage = to_go - sums[d.trick][d.side] / counts[d.trick][d.side];
+                                        for (j, (entries, chance)) in d.cards.iter().enumerate() {
+                                            let wanted = if j == d.chosen { 1.0 } else { 0.0 };
+                                            let g = advantage * (wanted - chance) / temperature;
+                                            for &e in entries {
+                                                gradient[e] += g;
+                                            }
+                                            if *chance > 0.0 {
+                                                entropy -= chance * chance.ln();
+                                            }
+                                        }
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            (gradient, count, entropy)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let decisions: usize = results.iter().map(|r| r.1).sum();
+            let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
+            let t = round as f64;
+            for j in 0..ENTRIES {
+                let g: f64 = results.iter().map(|r| r.0[j]).sum::<f64>() / decisions.max(1) as f64;
+                first[j] = 0.9 * first[j] + 0.1 * g;
+                second[j] = 0.999 * second[j] + 0.001 * g * g;
+                let a = first[j] / (1.0 - 0.9f64.powf(t));
+                let b = second[j] / (1.0 - 0.999f64.powf(t));
+                weights[j] += rate * a / (b.sqrt() + 1e-8);
+            }
+            if round % report == 0 || round == rounds {
+                print!("round {round}: {decisions} choices, entropy {entropy:.3} a choice");
+                if let Some(test) = &test {
+                    let loss: f64 = test
+                        .iter()
+                        .map(|s| {
+                            let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                            best - s.choice[fitting::choice(&weights, &s.choice)].1
+                        })
+                        .sum::<f64>()
+                        / test.len() as f64;
+                    print!(", the test data's choices lose {loss:.4} tricks a play");
+                }
+                println!();
+                if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
+                    let text: String = weights.iter().map(|w| format!("{w}\n")).collect();
+                    std::fs::write(path, text).unwrap();
+                }
+            }
+        }
+    }
 }
