@@ -262,9 +262,12 @@ pub(crate) const V2_BIDS: Shape = v2_and("v2-bids", v2_tables_and!(Table::Bids))
 /// paid in the first screen.
 pub(crate) const V2_LATER_HISTORY: Shape =
     v2_and("v2-later-history", v2_tables_and!(Table::Later, Table::History));
+/// [`V2`] and both [`Table::Later`] and [`Table::Trumps`], the two that paid
+/// in the second screen.
+pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
 
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY];
+pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY, &V2_LATER_TRUMPS];
 
 impl Shape {
     /// The shape called `name`, if there is one.
