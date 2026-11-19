@@ -750,11 +750,16 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
 }
 
 /// What the auctions a table has been asked about mean, remembered.  A copy
-/// of a table starts with none remembered.
+/// of a table starts with none remembered.  It forgets them all once it holds
+/// [`Meanings::MOST`], since a table that lives long, such as the one a robot
+/// tab or self-play bids every deal with, would otherwise remember every
+/// auction it has seen.
 #[derive(Default)]
 pub struct Meanings(std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>);
 
 impl Meanings {
+    /// The most auctions remembered at once.
+    const MOST: usize = 1000;
     /// What `bids` mean, from `find` the first time.
     fn get(&self, bids: &[Bid], find: impl FnOnce() -> Option<Convention>) -> Option<Convention> {
         let key = bids_string(bids);
@@ -763,7 +768,11 @@ impl Meanings {
         }
         // Not holding the lock, since finding a meaning asks about others.
         let meaning = find();
-        self.0.lock().unwrap().insert(key, meaning.clone());
+        let mut remembered = self.0.lock().unwrap();
+        if remembered.len() >= Self::MOST {
+            remembered.clear();
+        }
+        remembered.insert(key, meaning.clone());
         meaning
     }
     fn clear(&mut self) {
