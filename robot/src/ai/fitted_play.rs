@@ -86,19 +86,21 @@ struct Shown {
 
 impl Shown {
     /// What the auction of `game` (read by `convention`) and the play show of
-    /// the hand of `seat`, which has `played` and holds some of `hidden`.
+    /// the hand of `seat`, which has `played`, has shown out of the suits of
+    /// `shown_out`, and holds some of `hidden`.
     fn new<C>(
         game: &GameState<C>,
         convention: &Convention,
         seat: Seat,
         played: Cards,
+        shown_out: Cards,
         hidden: Cards,
     ) -> Shown {
         let first = (seat as usize + 4 - game.dealer as usize) % 4;
         let offset = (game.bids.len() + 4 - first) % 4;
         let (min, max) = convention.shown_bounds(&game.bids, offset);
         let length = Suit::ALL.map(|suit| {
-            if !game.shown_out[seat].in_suit(suit).is_empty() {
+            if !shown_out.in_suit(suit).is_empty() {
                 return (0, 0);
             }
             let gone = played.in_suit(suit).len();
@@ -201,9 +203,9 @@ impl View {
     }
 
     /// What the next player to `trick`, which `lead_seat` led, would see,
-    /// with the hands then `hands` and the cards that each had played before
-    /// the trick `played`: any moment of the play of `game`, or one that
-    /// might come.
+    /// with the hands then `hands` and the cards that each had played by then
+    /// `played`, those of `trick` among them: any moment of the play of
+    /// `game`, or one that might come.
     pub(crate) fn at_moment<C>(
         game: &GameState<C>,
         convention: &Convention,
@@ -249,11 +251,43 @@ impl View {
             Some(Bid::Suit(level, _)) | Some(Bid::NT(level)) => level,
             _ => return None,
         };
-        let won = match declarer {
-            Seat::North | Seat::South => game.ns_tricks,
-            _ => game.ew_tricks,
+        // The tricks that declarer's side had won at this moment, which may
+        // be earlier in the play than now, and the suits that each player
+        // had shown out of, from the tricks so far; or now's, if the game
+        // does not keep them.
+        let on_declarers_side = |s: Seat| (s as usize + declarer as usize).is_multiple_of(2);
+        let done = (0..4).map(|s| played[Seat::from(s)].len()).sum::<usize>() / 4;
+        let (won, shown_out) = match game.tricks.get(..done) {
+            Some(tricks) => {
+                let won = tricks
+                    .iter()
+                    .filter(|(leader, cards)| {
+                        let mut winner = 0;
+                        for i in 1..4 {
+                            if beats(trump, cards[i], cards[winner]) {
+                                winner = i;
+                            }
+                        }
+                        on_declarers_side(*leader + winner)
+                    })
+                    .count();
+                let mut shown_out = Seated::new([Cards::EMPTY; 4]);
+                let so_far = tricks.iter().map(|(leader, cards)| (*leader, &cards[..]));
+                for (leader, cards) in so_far.chain([(lead_seat, trick)]) {
+                    if let Some(led) = cards.first().map(|card| card.suit()) {
+                        for (i, card) in cards.iter().enumerate() {
+                            if card.suit() != led {
+                                shown_out[leader + i] += Cards::ALL.in_suit(led);
+                            }
+                        }
+                    }
+                }
+                (won, shown_out)
+            }
+            None if on_declarers_side(Seat::South) => (game.ns_tricks, game.shown_out),
+            None => (game.ew_tricks, game.shown_out),
         };
-        let left_to_play = 13 - game.ns_tricks - game.ew_tricks;
+        let left_to_play = 13 - done;
         let needed = (level + 6).saturating_sub(won);
         let contract = if needed == 0 {
             5
@@ -268,7 +302,7 @@ impl View {
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let mut shown = || {
             let hidden_seat = hidden_seats.next().unwrap();
-            Shown::new(game, convention, hidden_seat, played[hidden_seat], hidden)
+            Shown::new(game, convention, hidden_seat, played[hidden_seat], shown_out[hidden_seat], hidden)
         };
         let shown = [shown(), shown()];
         Some(View {
@@ -524,29 +558,33 @@ pub(crate) fn play_likelihood<C>(
                 likelihood *= chance;
             }
             hands[seat] -= Cards::singleton(card);
-        }
-        for (i, &card) in cards.iter().enumerate() {
-            played[lead + i] += Cards::singleton(card);
+            played[seat] += Cards::singleton(card);
         }
     }
     likelihood
 }
 
-/// The weights of the play model that [`ModelPlay`] plays by, as
-/// little-endian 32-bit floats, which `build.rs` takes from the play model
-/// file `src/ai/play_model.bin` (see `fitted_play::model_file`).  That file
-/// is not kept in git, and `build.rs` puts nothing here when it is missing.
+/// The play model that [`ModelPlay`] plays by, as little-endian 32-bit words:
+/// the number of weights, the network's entries and the sizes of its two
+/// hidden layers, then the weights as floats.  `build.rs` takes them from the
+/// play model file `src/ai/play_model.bin` (see `fitted_play::model_file`).
+/// That file is not kept in git, and `build.rs` puts nothing here when it is
+/// missing.
 static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin"));
 
 /// The play model of [`MODEL`], or `None` if there are no weights, or they
-/// are not the size of this model, as when they were written for another.
+/// are not for a network of this shape, as when they were written for
+/// another.
 fn model() -> Option<&'static Network> {
     static NETWORK: std::sync::OnceLock<Option<Network>> = std::sync::OnceLock::new();
     NETWORK
         .get_or_init(|| {
-            let params: Vec<f64> = MODEL.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b) as f64).collect();
-            let wanted = Network::size(ENTRIES, HIDDEN, SECOND);
-            (params.len() == wanted).then(|| Network::with_params(ENTRIES, HIDDEN, SECOND, params))
+            let words = MODEL.as_chunks::<4>().0;
+            let shape: Vec<usize> = words.iter().take(4).map(|w| u32::from_le_bytes(*w) as usize).collect();
+            let params: Vec<f64> = words.iter().skip(4).map(|w| f32::from_le_bytes(*w) as f64).collect();
+            let wanted = [Network::size(ENTRIES, HIDDEN, SECOND), ENTRIES, HIDDEN, SECOND];
+            (shape == wanted && params.len() == wanted[0])
+                .then(|| Network::with_params(ENTRIES, HIDDEN, SECOND, params))
         })
         .as_ref()
 }
@@ -568,12 +606,10 @@ impl super::PlayAI for ModelPlay {
         match View::new(game, &convention) {
             Some(view) => {
                 view.legal()
-                    .max_by(|&a, &b| {
-                        network
-                            .score(&view.entries(a))
-                            .total_cmp(&network.score(&view.entries(b)))
-                    })
+                    .map(|card| (network.score(&view.entries(card)), card))
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
                     .unwrap()
+                    .1
             }
             None => {
                 use super::opening_lead::{likely_opening_leads, Auction};
@@ -727,6 +763,61 @@ mod tests {
                 let hands = hands_at(&game, seats, real, &current[..i]);
                 let view = View::at(&game, &convention, hands, &current[..i]).unwrap();
                 assert!(view.legal().contains(card), "{card} at {i}");
+            }
+        }
+    }
+
+    /// The model that the build includes, when there is one, is of the shape
+    /// that this code plays by.
+    #[test]
+    fn the_included_model_is_of_this_shape() {
+        assert_eq!(MODEL.is_empty(), model().is_none());
+    }
+
+    /// A view of an earlier moment of the play, such as `play_likelihood`
+    /// takes, is the view that the player had then, though tricks have been
+    /// won since.
+    #[test]
+    fn a_view_of_an_earlier_moment_is_the_view_then() {
+        let mut rng = StdRng::seed_from_u64(4);
+        for mut game in some_games().into_iter().step_by(7) {
+            let convention = game.system.convention();
+            let start = game.tricks.len();
+            // The cards of the trick under way that were played before.
+            let before = current_trick(&game).len();
+            let mut seen = Vec::new();
+            while let Some(view) = View::new(&game, &convention) {
+                let legal: Vec<Card> = view.legal().collect();
+                if legal.is_empty() {
+                    break;
+                }
+                seen.push(legal.iter().map(|&card| view.entries(card)).collect::<Vec<_>>());
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+            // Back to the start of the tricks played since `start`.
+            let mut hands = game.hands;
+            let mut played = played_at(&game, &[]);
+            for (lead, cards) in &game.tricks[start..] {
+                for (i, &card) in cards.iter().enumerate() {
+                    hands[*lead + i] += Cards::singleton(card);
+                    played[*lead + i] -= Cards::singleton(card);
+                }
+            }
+            let mut seen = seen.into_iter();
+            for (t, &(lead, cards)) in game.tricks[start..].iter().enumerate() {
+                for (i, &card) in cards.iter().enumerate() {
+                    if t == 0 && i < before {
+                        hands[lead + i] -= Cards::singleton(card);
+                        played[lead + i] += Cards::singleton(card);
+                        continue;
+                    }
+                    let then = seen.next().unwrap();
+                    let view = View::at_moment(&game, &convention, hands, played, lead, &cards[..i]).unwrap();
+                    let now: Vec<_> = view.legal().map(|card| view.entries(card)).collect();
+                    assert_eq!(then, now, "trick led by {lead:?}, card {i}");
+                    hands[lead + i] -= Cards::singleton(card);
+                    played[lead + i] += Cards::singleton(card);
+                }
             }
         }
     }

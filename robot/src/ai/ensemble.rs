@@ -114,41 +114,19 @@ impl Hidden {
     /// made with the hands of `deal`, bidding by `convention`.  None, when
     /// `deal` is a deal that the robot would have bid the auction with.
     pub(crate) fn calls_missed(&self, deal: &[Cards; 2], convention: &Convention) -> usize {
-        (0..2)
-            .map(|i| {
-                let hand = (deal[i] + self.played[i]).values();
-                self.calls[i]
-                    .iter()
-                    .filter(|&&call| {
-                        convention.bid_for(&self.bids[..call], &hand) != self.bids[call]
-                    })
-                    .count()
-            })
-            .sum()
+        let hands = [0, 1].map(|i| (deal[i] + self.played[i]).values());
+        calls_missed(convention, &self.bids, &self.calls, &hands)
     }
 
     /// The `count` of `deals` that come closest to being bid as the auction
-    /// was, by `convention`: the deals that the robot would have bid the
-    /// auction with, and then those that miss fewest of its calls.  People do
-    /// not always bid as the robot does, so there may be no deal that makes
-    /// every call, and a deal that misses one may be as likely as one that
-    /// makes them all.
+    /// was, by `convention` (see [`closest`]).
     pub(crate) fn closest_to_the_auction(
         &self,
         deals: Vec<[Cards; 2]>,
         convention: &Convention,
         count: usize,
     ) -> Vec<[Cards; 2]> {
-        let mut ranked: Vec<(usize, [Cards; 2])> = deals
-            .into_iter()
-            .map(|deal| (self.calls_missed(&deal, convention), deal))
-            .collect();
-        ranked.sort_by_key(|&(missed, _)| missed);
-        ranked
-            .into_iter()
-            .take(count)
-            .map(|(_, deal)| deal)
-            .collect()
+        closest(deals, count, |deal| self.calls_missed(deal, convention))
     }
 
     /// An ensemble of `count` deals, or fewer if the cards cannot be dealt.
@@ -415,6 +393,38 @@ pub struct EnsemblePlay {
     /// Whether to keep the deals that come closest to being bid as the
     /// auction was.
     replay: bool,
+}
+
+/// How many of the calls made with `hands` the robot would not have made with
+/// them, bidding by `convention`, where `calls[i]` are the places in `bids` of
+/// the calls made with `hands[i]`.
+pub(crate) fn calls_missed(
+    convention: &Convention,
+    bids: &[Bid],
+    calls: &[Vec<usize>],
+    hands: &[HandValuation],
+) -> usize {
+    calls
+        .iter()
+        .zip(hands)
+        .map(|(calls, hand)| {
+            calls
+                .iter()
+                .filter(|&&call| convention.bid_for(&bids[..call], hand) != bids[call])
+                .count()
+        })
+        .sum()
+}
+
+/// The `count` of `deals` that miss fewest calls by `missed`: the deals that
+/// the robot would have bid the auction with, and then those that miss fewest
+/// of its calls.  People do not always bid as the robot does, so there may be
+/// no deal that makes every call, and a deal that misses one may be as likely
+/// as one that makes them all.
+pub(crate) fn closest<D>(mut deals: Vec<D>, count: usize, missed: impl Fn(&D) -> usize) -> Vec<D> {
+    deals.sort_by_cached_key(|deal| missed(deal));
+    deals.truncate(count);
+    deals
 }
 
 /// The convention of `system`, shared (see [`BiddingSystem::table`]).

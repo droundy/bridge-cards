@@ -13,7 +13,7 @@
 //! weights fitted to double-dummy results on deals that fit the auctions that
 //! the robot bids, by the ignored test `fit_opening_lead_weights`.
 
-use super::ensemble::OVERSAMPLE;
+use super::ensemble::{calls_missed, closest, OVERSAMPLE};
 use super::Convention;
 use crate::{Bid, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
@@ -98,24 +98,15 @@ impl Unseen {
     /// How many of the calls of the three hands the robot would not have
     /// made with the hands of `deal`, bidding by `convention`.
     fn calls_missed(&self, deal: &[Cards; 3], convention: &Convention) -> usize {
-        (0..3)
-            .map(|i| {
-                let hand = deal[i].values();
-                self.calls[i]
-                    .iter()
-                    .filter(|&&call| {
-                        convention.bid_for(&self.bids[..call], &hand) != self.bids[call]
-                    })
-                    .count()
-            })
-            .sum()
+        let hands = deal.map(|hand| hand.values());
+        calls_missed(convention, &self.bids, &self.calls, &hands)
     }
 
     /// An ensemble of `count` deals that fit the auction, each of them the
     /// four hands in the order of play from the leader, whose hand is `hand`.
-    /// With `replay`, a convention, it is those of [`OVERSAMPLE`] times as
-    /// many that come closest to being bid as the auction was by that
-    /// convention, up to `count` of them.
+    /// With `replay`, a convention, it is the `count` of [`OVERSAMPLE`] times
+    /// as many that come closest to being bid as the auction was by that
+    /// convention (see [`closest`]).
     pub(crate) fn ensemble(
         &self,
         rng: &mut impl Rng,
@@ -130,18 +121,7 @@ impl Unseen {
         };
         let mut deals: Vec<[Cards; 3]> = (0..sampled).map(|_| self.sample(rng)).collect();
         if let Some(convention) = replay {
-            let missed: Vec<usize> = deals
-                .iter()
-                .map(|deal| self.calls_missed(deal, convention))
-                .collect();
-            let fewest = missed.iter().copied().min().unwrap_or(0);
-            deals = deals
-                .into_iter()
-                .zip(missed)
-                .filter(|&(_, missed)| missed == fewest)
-                .map(|(deal, _)| deal)
-                .take(count)
-                .collect();
+            deals = closest(deals, count, |deal| self.calls_missed(deal, convention));
         }
         deals
             .into_iter()

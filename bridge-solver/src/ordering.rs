@@ -8,6 +8,7 @@
 
 use bridge_deck::{Card, Cards, Suit};
 
+#[cfg(test)]
 pub(crate) mod fitted;
 
 /// The cards worth trying for the next player to `trick`, from `hands`, the

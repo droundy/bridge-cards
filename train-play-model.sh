@@ -11,7 +11,7 @@
 # release play-models and points robot/play-model.txt at it, for you to
 # commit.  Uploading publishes the file: the repository is public.
 
-set -e
+set -eo pipefail
 cd "$(dirname "$0")"
 rounds=${ROUNDS:-500}
 threads=${THREADS:-$(nproc)}
@@ -22,6 +22,8 @@ mkdir -p "$dir"
 old="$dir/old.bin"
 cp robot/src/ai/play_model.bin "$old"
 
+# A file left from an earlier run must not be taken for this one's.
+rm -f "$dir/new.bin"
 echo "Training for $rounds rounds on $threads threads."
 PLAY_SELF_RESUME="$PWD/$old" PLAY_SELF_CHECKPOINT="$PWD/$dir/new.bin" \
     PLAY_SELF_ROUNDS="$rounds" PLAY_THREADS="$threads" PLAY_SELF_REPORT=20 \
@@ -32,6 +34,10 @@ PLAY_SELF_RESUME="$PWD/$old" PLAY_SELF_CHECKPOINT="$PWD/$dir/new.bin" \
     PLAY_SELF_WATCH="$PWD/$dir/watch.html" \
     cargo test -p robot --release self_play -- --ignored --exact --nocapture ai::fitted_play::tests::self_play \
     | grep --line-buffered -E "^round|^resuming|panicked"
+if [ ! -s "$dir/new.bin" ]; then
+    echo "Training wrote no model file." >&2
+    exit 1
+fi
 
 echo "Playing the new model against the old one."
 result=$(PLAY_MATCH_WEIGHTS="$PWD/$dir/new.bin" PLAY_MATCH_AGAINST="$PWD/$old" PLAY_MATCH_DEALS=2000 \
@@ -39,8 +45,12 @@ result=$(PLAY_MATCH_WEIGHTS="$PWD/$dir/new.bin" PLAY_MATCH_AGAINST="$PWD/$old" P
     cargo test -p robot --release match_against_the_robot -- --ignored --exact --nocapture \
     ai::fitted_play::tests::match_against_the_robot | grep "deals in")
 echo "$result"
-gain=$(echo "$result" | sed -E 's/.*took ([-+][0-9.]+) tricks.*/\1/')
-if [ "$(echo "$gain < 0" | bc)" = 1 ] && [ "$FORCE" != 1 ]; then
+gain=$(echo "$result" | sed -nE 's/.*took ([-+]?[0-9.]+) tricks.*/\1/p')
+if [ -z "$gain" ]; then
+    echo "Could not read the gain from the match." >&2
+    exit 1
+fi
+if awk -v gain="$gain" 'BEGIN { exit !(gain + 0 < 0) }' && [ "$FORCE" != 1 ]; then
     echo "The new model is worse than the old one, so it is not published (FORCE=1 publishes it anyway)."
     exit 1
 fi
