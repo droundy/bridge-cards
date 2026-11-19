@@ -335,22 +335,37 @@ impl Model {
     }
 
     /// This model grown into one of `shape`, which scores every card as it
-    /// did until it learns more: a model of [`V1`] is first laid out as one
-    /// of [`V2`], and the tables that `shape` has after this model's start
-    /// with weights of 0.  `None` if `shape` does not start with this model's
-    /// tables or has hidden layers of other widths.
+    /// did until it learns more (see [`Network::grown`]): each of its tables
+    /// becomes the same table of `shape`, wherever that is, the tables that
+    /// it lacks start adding nothing, and so do the units of layers that are
+    /// wider.  A model of [`V1`] is first laid out as one of [`V2`].  `None`
+    /// if `shape` lacks one of its tables, or has a narrower layer, or a
+    /// second layer where it has none or none where it has one.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
         if self.shape == &V1 {
             return self.without_room().grown_to(shape);
         }
-        let tables = self.shape.tables;
-        if !shape.tables.starts_with(tables) || (shape.hidden, shape.second) != (self.shape.hidden, self.shape.second) {
+        let (hidden, second) = (self.shape.hidden, self.shape.second);
+        if shape.hidden < hidden || shape.second < second || (shape.second == 0) != (second == 0) {
             return None;
         }
-        let moved: Vec<Option<usize>> = (0..self.shape.entries()).map(Some).collect();
-        let params = self.network.with_entries_moved(&self.network.params, &moved, shape.entries());
-        Some(Model::with_params(shape, params))
+        // Where each table starts among the entries of `shape`.
+        let starts: Vec<usize> = shape
+            .tables
+            .iter()
+            .scan(0, |start, table| {
+                *start += table.size();
+                Some(*start - table.size())
+            })
+            .collect();
+        let mut moved = Vec::with_capacity(self.shape.entries());
+        for table in self.shape.tables {
+            let at = shape.tables.iter().position(|t| t == table)?;
+            moved.extend((0..table.size()).map(|index| starts[at] + index));
+        }
+        let network = self.network.grown(&moved, shape.entries(), shape.hidden, shape.second, 11);
+        Some(Model { shape, network })
     }
 
     /// Where each entry of [`V1`] is in [`V2`], if it is there.
@@ -1160,8 +1175,8 @@ mod tests {
     }
 
     /// A model of [`V1`] laid out anew as one of [`V2`], or grown into one of
-    /// a shape with more tables, scores every card that could be played as
-    /// it did.
+    /// a shape with more tables, in any order, and wider layers, scores every
+    /// card that could be played as it did, and what is new in it can learn.
     #[test]
     fn a_model_without_room_scores_the_same() {
         let mut rng = StdRng::seed_from_u64(5);
@@ -1171,8 +1186,36 @@ mod tests {
         }
         let new = old.without_room();
         assert_eq!(V2.entries(), 2900);
-        let grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
-        assert_eq!(grown.len(), SHAPES.len() - 2, "every shape but v1 and v2-wide grows from v1");
+        // A shape of more tables, in another order, and wider layers.
+        const MORE: Shape = Shape {
+            name: "more",
+            tables: &[
+                Table::Later,
+                Table::SecondPoints,
+                Table::Trick,
+                Table::Above,
+                Table::Below,
+                Table::Rank,
+                Table::History,
+                Table::Lengths,
+                Table::TricksLeft,
+                Table::Contract,
+                Table::FirstLength,
+                Table::SecondLength,
+                Table::FirstPoints,
+            ],
+            hidden: 20,
+            second: 11,
+        };
+        let mut grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
+        assert_eq!(grown.len(), SHAPES.len() - 1, "every shape but v1 grows from v1");
+        grown.push(old.grown_to(&MORE).unwrap());
+        // Nor can a shape that lacks a table, or has narrower layers.
+        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, hidden: 16, second: 8 };
+        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, hidden: 12, second: 8 };
+        assert!(new.grown_to(&FEWER).is_none() && new.grown_to(&NARROWER).is_none());
+        let more = grown.last().unwrap();
+        let mut gradient = vec![0.0; more.network.params.len()];
         for game in some_games() {
             let convention = game.system.convention();
             let view = View::new(&game, &convention).unwrap();
@@ -1182,8 +1225,13 @@ mod tests {
                     let b = model.score(&view, card);
                     assert!((a - b).abs() < 1e-9, "{}: {a} {b}", model.shape.name);
                 }
+                more.network.add_gradient(&more.entries(&view, card), 1.0, &mut gradient);
             }
         }
+        // The output weights of the new units of the last layer come last,
+        // and some of the time those units are active, so that they learn.
+        let new_outputs = &gradient[gradient.len() - (MORE.second - V2.second)..];
+        assert!(new_outputs.iter().all(|&g| g > 0.0), "{new_outputs:?}");
     }
 
     /// Screens shapes by a supervised fit to the data in `PLAY_DATA`: for each

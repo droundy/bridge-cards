@@ -108,6 +108,55 @@ impl Network {
         result
     }
 
+    /// This network grown into one of `entries` entries, `hidden` units in
+    /// its first layer and `second` in its second, at least as many as it
+    /// has (and a second layer only if it has one), which scores every
+    /// candidate as it did: entry `e` becomes `moved[e]`, with its weights,
+    /// and the entries and units that are new add nothing.  An entry that is
+    /// new has weights only into the new units, and a unit that is new has
+    /// weights of 0 out of it, so that neither changes a score; the new
+    /// weights into the new units are the small random ones of
+    /// [`Network::new`] with `seed`, so that they can learn.
+    #[cfg(test)]
+    pub(crate) fn grown(&self, moved: &[usize], entries: usize, hidden: usize, second: usize, seed: u64) -> Network {
+        assert_eq!(moved.len(), self.entries);
+        assert!(hidden >= self.hidden && second >= self.second && (second == 0) == (self.second == 0));
+        let mut grown = Network::new(entries, hidden, second, seed);
+        let (old_h, old_s) = (self.hidden, self.second);
+        // Every new entry's weights into the old units are 0.
+        for entry in 0..entries {
+            let row = grown.first_weights() + entry * hidden;
+            grown.params[row..row + old_h].fill(0.0);
+        }
+        for (old, &new) in moved.iter().enumerate() {
+            grown.params[new] = self.params[old];
+            let (from, to) = (self.first_weights() + old * old_h, grown.first_weights() + new * hidden);
+            grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
+        }
+        let (from, to) = (self.first_biases(), grown.first_biases());
+        grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
+        for unit in 0..hidden {
+            let to = grown.second_weights() + unit * second;
+            if unit < old_h {
+                let from = self.second_weights() + unit * old_s;
+                grown.params[to..to + old_s].copy_from_slice(&self.params[from..from + old_s]);
+            } else {
+                // A new unit of the first layer feeds only the new units of
+                // the second.
+                grown.params[to..to + old_s].fill(0.0);
+            }
+        }
+        let (from, to) = (self.second_biases(), grown.second_biases());
+        grown.params[to..to + old_s].copy_from_slice(&self.params[from..from + old_s]);
+        // The output weights of the last layer: the old units', and 0 for
+        // the new ones.
+        let last = if second > 0 { old_s } else { old_h };
+        let (from, to) = (self.outputs(), grown.outputs());
+        grown.params[to..].fill(0.0);
+        grown.params[to..to + last].copy_from_slice(&self.params[from..from + last]);
+        grown
+    }
+
     fn first_weights(&self) -> usize {
         self.entries
     }
