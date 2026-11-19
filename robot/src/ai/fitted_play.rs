@@ -997,11 +997,12 @@ mod tests {
         }
     }
 
-    /// One choice of a card in a game of self-play: each card that could
-    /// be played, with its entries and chance, which one was played, the
-    /// side that chose it (0 for north and south) and the tricks that side
-    /// had already won.
+    /// One choice of a card in a game of self-play: the learner that made
+    /// it, each card that could be played, with its entries and chance,
+    /// which one was played, the side that chose it (0 for north and south)
+    /// and the tricks that side had already won.
     struct Decision {
+        learner: usize,
         cards: Vec<([usize; TUPLES.len()], f64)>,
         chosen: usize,
         side: usize,
@@ -1012,8 +1013,8 @@ mod tests {
     /// How a seat chooses its cards in self-play.
     #[derive(Clone, Copy)]
     enum Player<'a> {
-        /// By the model that is learning, whose choices are learned from.
-        Learning,
+        /// By this learner of the population, which learns from its choices.
+        Learning(usize),
         /// By the model with these weights, a snapshot of an earlier one,
         /// taken after this many rounds.
         Past(&'a Network, usize),
@@ -1024,13 +1025,13 @@ mod tests {
     /// Plays `json`, a game whose opening lead is next, out to the end, the
     /// opening lead by `likely_opening_leads` and each other card by the
     /// seat that chooses it as its `players` say: a model chooses at random
-    /// with its chances at `temperature`, the learning one with `weights`.
-    /// Gives the choices that the learning model made and the tricks each
-    /// side won, and with `record`, the whole game, for watching.
+    /// with its chances at `temperature`, a learner by its weights in
+    /// `learners`.  Gives the choices that the learners made and the tricks
+    /// each side won, and with `record`, the whole game, for watching.
     fn play_out(
         json: &str,
         convention: &Convention,
-        weights: &Network,
+        learners: &[Network],
         temperature: f64,
         players: [Player; 4],
         record: bool,
@@ -1057,8 +1058,8 @@ mod tests {
             let player = players[chooser(&game, seat) as usize];
             let weights = match player {
                 Player::Random => None,
-                Player::Past(past, _) => Some((past, false)),
-                Player::Learning => Some((weights, true)),
+                Player::Past(past, _) => Some((past, None)),
+                Player::Learning(learner) => Some((&learners[learner], Some(learner))),
             };
             let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
@@ -1078,8 +1079,9 @@ mod tests {
                 if record {
                     considered = legal.iter().zip(&cards).map(|(&card, c)| (pair(card), c.1)).collect();
                 }
-                if learning {
+                if let Some(learner) = learning {
                     decisions.push(Decision {
+                        learner,
                         cards,
                         chosen,
                         side,
@@ -1136,9 +1138,9 @@ mod tests {
     /// What a viewer calls a player of self-play.
     fn player_name(player: Player) -> String {
         match player {
-            Player::Learning => "the model learning".into(),
-            Player::Past(_, 0) => "the model before it learned".into(),
-            Player::Past(_, round) => format!("the model after {round} rounds"),
+            Player::Learning(learner) => format!("learner {}", learner + 1),
+            Player::Past(_, 0) => "a model before it learned".into(),
+            Player::Past(_, round) => format!("a model after {round} rounds"),
             Player::Random => "a player of any card".into(),
         }
     }
@@ -1155,41 +1157,43 @@ mod tests {
         }
     }
 
-    /// Learns the weights of the play model from nothing, by playing
-    /// against itself.  Each round plays `PLAY_SELF_DEALS` (256) deals of a
-    /// pool of `PLAY_SELF_POOL` (4000) deals that the robot bid, each
-    /// `PLAY_SELF_GROUP` (8) times, every seat choosing its cards at random
-    /// with the chances of the model at `PLAY_SELF_TEMPERATURE` (1), and
-    /// moves the weights by a step of Adam of size `PLAY_SELF_RATE` (0.01)
-    /// up the gradient of the tricks each side takes after each of its
-    /// choices, less the mean of that over the plays of the same deal (so
-    /// that what is learned is what made a play of a deal better than the
-    /// others).  So that the model does not learn only to play with itself,
-    /// each seat of a game is instead played by a snapshot of the model from
-    /// an earlier round, chosen at random, with the chance `PLAY_SELF_PAST`
-    /// (0), or else by a player of any card at random with the chance
-    /// `PLAY_SELF_RANDOM` (0); that is partners as well as opponents, and
-    /// only the learning model's own choices are learned from.  A snapshot is
-    /// kept every `PLAY_SELF_SNAPSHOT` (50) rounds, the first of the model
-    /// before it learned anything, and each is written to the directory
-    /// `PLAY_SELF_SNAPSHOTS` if that is set, as `round-NNNNN.txt`, to play
-    /// against later.  It starts from the weights in the file
-    /// `PLAY_SELF_START` if that is set, and otherwise from nothing.  Every
-    /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
-    /// the weights to the file `PLAY_SELF_WEIGHTS` if that is set, and
-    /// reports the tricks a play its choices lose by the ensemble's values on
-    /// the data in `PLAY_TEST` if that is set.  It uses `PLAY_THREADS`
-    /// threads, or else every core.
+    /// Learns the play model from nothing, by self-play among a population
+    /// of `PLAY_SELF_LEARNERS` (4) learners, each with its own weights and
+    /// its own steps of Adam, which share games but are never copied.  Each
+    /// round plays `PLAY_SELF_DEALS` (256) deals of a pool of
+    /// `PLAY_SELF_POOL` (4000) deals that the robot bid, each
+    /// `PLAY_SELF_GROUP` (8) times.  Every seat of a game is played by a
+    /// learner chosen at random, or with the chance `PLAY_SELF_PAST` (0) by a
+    /// past model of the league, or with the chance `PLAY_SELF_RANDOM` (0) by
+    /// a player of any card, partners as well as opponents, so that no
+    /// learner can count on playing with itself.  A model chooses each card at
+    /// random with its chances at `PLAY_SELF_TEMPERATURE` (1).  Each learner
+    /// moves its weights by a step of Adam of size `PLAY_SELF_RATE` (0.01) up
+    /// the gradient of the tricks its side takes after each of its own
+    /// choices, less the mean of that at the same trick over the plays of the
+    /// same deal, so that what it learns is what made a play of a deal better
+    /// than the others.
     ///
-    /// To train in several runs, each run writes a play model file (see
-    /// `model_file`) at every report to `PLAY_SELF_CHECKPOINT` if that is set:
-    /// the round, the weights, the state of Adam, and as its league, the
-    /// first snapshot and the last seven.  With `PLAY_SELF_RESUME` naming one,
-    /// a run takes up from it, its rounds numbered on from the file's, with
-    /// its league among the past selves.  A file with no state of Adam (see
-    /// `make_play_model_file`) is resumed with steps that grow from nothing
-    /// over the first 20 rounds, so that the weights are not jolted while
-    /// Adam learns their scale.
+    /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
+    /// snapshot of each learner for the league (written to the directory
+    /// `PLAY_SELF_SNAPSHOTS` if that is set, as
+    /// `round-NNNNN-learner-K.txt`), and ranks the learners in a tournament
+    /// of two-table matches between each two of them on `PLAY_SELF_TOURNAMENT`
+    /// (200) other deals; the best is the one that the game plays by.  Every
+    /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
+    /// the best's weights to the file `PLAY_SELF_WEIGHTS` if that is set,
+    /// sample games to `PLAY_SELF_WATCH` (see `self_play_viewer.html`), and a
+    /// play model file (see `model_file`) to `PLAY_SELF_CHECKPOINT`, and
+    /// reports the tricks a play each learner's choices lose by the
+    /// ensemble's values on the data in `PLAY_TEST` if that is set.  It uses
+    /// `PLAY_THREADS` threads, or else every core.
+    ///
+    /// With `PLAY_SELF_RESUME` naming a play model file, a run takes up from
+    /// it, its rounds numbered on from the file's, with its learners and
+    /// league; learners that the file lacks start from nothing.  A learner
+    /// with no state of Adam (see `make_play_model_file`) starts with steps
+    /// that grow from nothing over 20 rounds, so that its weights are not
+    /// jolted while Adam learns their scale.
     #[test]
     #[ignore]
     fn self_play() {
@@ -1203,44 +1207,55 @@ mod tests {
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let every = number("PLAY_SELF_SNAPSHOT", 50);
+        let population = number("PLAY_SELF_LEARNERS", 4);
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").ok();
         if let Some(directory) = &directory {
             std::fs::create_dir_all(directory).unwrap();
         }
-        let pool: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(7, number("PLAY_SELF_POOL", 4000))
-            .iter()
-            .map(|game| serde_json::to_string(game).unwrap())
-            .collect();
+        let deals = |seed: u64, count: usize| -> Vec<String> {
+            crate::ai::opening_lead::candidates::opening_leads(seed, count)
+                .iter()
+                .map(|game| serde_json::to_string(game).unwrap())
+                .collect()
+        };
+        let pool = deals(7, number("PLAY_SELF_POOL", 4000));
+        let tournament_deals = deals(17, number("PLAY_SELF_TOURNAMENT", 200));
         let test = std::env::var("PLAY_TEST")
             .ok()
             .map(|paths| read_situations(&paths, TUPLES.len()));
         let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let mut weights = match std::env::var("PLAY_SELF_START") {
-            Ok(path) => Network::read(&path, ENTRIES, hidden, second),
-            Err(_) => Network::new(ENTRIES, hidden, second, 11),
-        };
-        let mut adam = fitting::Adam::new(weights.params.len());
-        let mut snapshots: Vec<(usize, Network)> = vec![(0, weights.clone())];
-        let (mut first_round, mut warmup) = (1, 0);
+        let mut learners: Vec<Network> = Vec::new();
+        let mut adams: Vec<fitting::Adam> = Vec::new();
+        let mut warmups: Vec<usize> = Vec::new();
+        let mut snapshots: Vec<(usize, Network)> = Vec::new();
+        let mut first_round = 1;
         if let Ok(path) = std::env::var("PLAY_SELF_RESUME") {
             let file = model_file::ModelFile::read(&path, ENTRIES, hidden, second);
-            weights = file.weights;
-            match file.adam {
-                Some(state) => adam = state,
-                None => warmup = 20,
-            }
             first_round = file.round + 1;
-            snapshots = file.league;
-            if snapshots.last().map(|s| s.0) != Some(file.round) {
-                snapshots.push((file.round, weights.clone()));
+            for learner in file.learners {
+                warmups.push(if learner.adam.is_some() { 0 } else { 20 });
+                adams.push(learner.adam.unwrap_or_else(|| fitting::Adam::new(learner.weights.params.len())));
+                learners.push(learner.weights);
             }
+            snapshots = file.league;
             println!(
-                "resuming after round {}, with past models from rounds {:?}",
+                "resuming after round {} with {} learners, and past models from rounds {:?}",
                 file.round,
+                learners.len(),
                 snapshots.iter().map(|s| s.0).collect::<Vec<_>>()
             );
         }
+        while learners.len() < population {
+            let network = Network::new(ENTRIES, hidden, second, 11 + learners.len() as u64);
+            adams.push(fitting::Adam::new(network.params.len()));
+            warmups.push(0);
+            learners.push(network);
+        }
+        if snapshots.is_empty() {
+            snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
+        }
         let last_round = first_round + rounds - 1;
+        let mut best = 0;
         let mut watched: Vec<serde_json::Value> = Vec::new();
         let samples = number("PLAY_SELF_SAMPLES", 2);
         let mut rng = StdRng::seed_from_u64(10 + first_round as u64);
@@ -1249,15 +1264,15 @@ mod tests {
             std::thread::available_parallelism().map_or(4, |n| n.get()),
         );
         let started = std::time::Instant::now();
+        let size = learners[0].params.len();
         for round in first_round..=last_round {
             let deals: Vec<usize> = (0..batch).map(|_| rng.gen_range(0..pool.len())).collect();
             let seed = rng.gen::<u64>();
             let chunk = batch.div_ceil(threads);
-            let weights_now = &weights;
-            let pool = &pool;
-            let past = &snapshots;
+            let (learners_now, pool, past) = (&learners, &pool, &snapshots);
             let watching = round % report == 0 || round == last_round;
-            let results: Vec<(Vec<f64>, usize, f64, Vec<serde_json::Value>)> = std::thread::scope(|scope| {
+            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>);
+            let results: Vec<Results> = std::thread::scope(|scope| {
                 let handles: Vec<_> = deals
                     .chunks(chunk)
                     .enumerate()
@@ -1265,8 +1280,9 @@ mod tests {
                         scope.spawn(move || {
                             let mut rng = StdRng::seed_from_u64(seed + t as u64);
                             let mut conventions = std::collections::HashMap::new();
-                            let mut gradient = vec![0.0; weights_now.params.len()];
-                            let (mut count, mut entropy) = (0, 0.0);
+                            let mut gradients = vec![vec![0.0; size]; learners_now.len()];
+                            let mut counts = vec![0; learners_now.len()];
+                            let mut entropy = 0.0;
                             let mut sampled = Vec::new();
                             for (d, &deal) in deals.iter().enumerate() {
                                 let json = &pool[deal];
@@ -1284,12 +1300,12 @@ mod tests {
                                             } else if draw < past_share + random_share {
                                                 Player::Random
                                             } else {
-                                                Player::Learning
+                                                Player::Learning(rng.gen_range(0..learners_now.len()))
                                             }
                                         });
                                         let record = watching && t == 0 && g == 0 && d < samples;
                                         let (decisions, won, game) =
-                                            play_out(json, convention, weights_now, temperature, players, record, &mut rng);
+                                            play_out(json, convention, learners_now, temperature, players, record, &mut rng);
                                         sampled.extend(game);
                                         (decisions, won)
                                     })
@@ -1297,45 +1313,71 @@ mod tests {
                                 // The mean over the plays of this deal of the
                                 // tricks each side took from each trick on.
                                 let mut sums = [[0.0; 2]; 14];
-                                let mut counts = [[0.0; 2]; 14];
+                                let mut seen = [[0.0; 2]; 14];
                                 for (decisions, won) in &games {
                                     for d in decisions {
                                         sums[d.trick][d.side] += (won[d.side] - d.won_before) as f64;
-                                        counts[d.trick][d.side] += 1.0;
+                                        seen[d.trick][d.side] += 1.0;
                                     }
                                 }
                                 for (decisions, won) in &games {
                                     for d in decisions {
                                         let to_go = (won[d.side] - d.won_before) as f64;
-                                        let advantage = to_go - sums[d.trick][d.side] / counts[d.trick][d.side];
+                                        let advantage = to_go - sums[d.trick][d.side] / seen[d.trick][d.side];
                                         for (j, (entries, chance)) in d.cards.iter().enumerate() {
                                             let wanted = if j == d.chosen { 1.0 } else { 0.0 };
                                             let g = advantage * (wanted - chance) / temperature;
-                                            weights_now.add_gradient(entries, g, &mut gradient);
+                                            learners_now[d.learner].add_gradient(entries, g, &mut gradients[d.learner]);
                                             if *chance > 0.0 {
                                                 entropy -= chance * chance.ln();
                                             }
                                         }
-                                        count += 1;
+                                        counts[d.learner] += 1;
                                     }
                                 }
                             }
-                            (gradient, count, entropy, sampled)
+                            (gradients, counts, entropy, sampled)
                         })
                     })
                     .collect();
                 handles.into_iter().map(|h| h.join().unwrap()).collect()
             });
-            let decisions: usize = results.iter().map(|r| r.1).sum();
-            let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
-            let gradient: Vec<f64> = (0..weights.params.len())
-                .map(|j| results.iter().map(|r| r.0[j]).sum::<f64>() / decisions.max(1) as f64)
+            let counts: Vec<usize> = (0..learners.len())
+                .map(|i| results.iter().map(|r| r.1[i]).sum())
                 .collect();
-            let ramp = if warmup > 0 { ((round - first_round + 1) as f64 / warmup as f64).min(1.0) } else { 1.0 };
-            adam.step(&mut weights.params, &gradient, rate * ramp);
+            let decisions: usize = counts.iter().sum();
+            let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
+            for (i, learner) in learners.iter_mut().enumerate() {
+                let gradient: Vec<f64> = (0..size)
+                    .map(|j| results.iter().map(|r| r.0[i][j]).sum::<f64>() / counts[i].max(1) as f64)
+                    .collect();
+                let ramp = if warmups[i] > 0 {
+                    ((round - first_round + 1) as f64 / warmups[i] as f64).min(1.0)
+                } else {
+                    1.0
+                };
+                adams[i].step(&mut learner.params, &gradient, rate * ramp);
+            }
             for mut game in results.into_iter().flat_map(|r| r.3) {
                 game["round"] = round.into();
                 watched.push(game);
+            }
+            if round % every == 0 || round == last_round {
+                for (i, learner) in learners.iter().enumerate() {
+                    snapshots.push((round, learner.clone()));
+                    if let Some(directory) = &directory {
+                        learner.write(&format!("{directory}/round-{round:05}-learner-{}.txt", i + 1));
+                    }
+                }
+                let standings = tournament(&learners, &tournament_deals);
+                best = (0..learners.len())
+                    .max_by(|&a, &b| standings[a].total_cmp(&standings[b]))
+                    .unwrap();
+                println!(
+                    "round {round}: tournament of the learners, tricks a deal more than the others: {}; the best is learner {}",
+                    standings.iter().map(|s| format!("{s:+.3}")).collect::<Vec<_>>().join(", "),
+                    best + 1
+                );
             }
             if watching {
                 if let Ok(path) = std::env::var("PLAY_SELF_WATCH") {
@@ -1352,37 +1394,42 @@ mod tests {
                     std::fs::write(path, page).unwrap();
                 }
                 print!(
-                    "round {round} at {:.0} s: {decisions} choices, entropy {entropy:.3} a choice",
+                    "round {round} at {:.0} s: {decisions} choices {counts:?}, entropy {entropy:.3} a choice",
                     started.elapsed().as_secs_f64()
                 );
                 if let Some(test) = &test {
-                    let loss: f64 = test
+                    let losses: Vec<String> = learners
                         .iter()
-                        .map(|s| {
-                            let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
-                            best - s.choice[weights.choice(&s.choice)].1
+                        .map(|learner| {
+                            let loss = test
+                                .iter()
+                                .map(|s| {
+                                    let most = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                                    most - s.choice[learner.choice(&s.choice)].1
+                                })
+                                .sum::<f64>()
+                                / test.len() as f64;
+                            format!("{loss:.4}")
                         })
-                        .sum::<f64>()
-                        / test.len() as f64;
-                    print!(", the test data's choices lose {loss:.4} tricks a play");
+                        .collect();
+                    print!(", the test data's choices lose {} tricks a play", losses.join(", "));
                 }
                 println!();
                 if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
-                    weights.write(&path);
+                    learners[best].write(&path);
                 }
-            }
-            if round % every == 0 {
-                snapshots.push((round, weights.clone()));
-                if let Some(directory) = &directory {
-                    weights.write(&format!("{directory}/round-{round:05}.txt"));
-                }
-            }
-            if watching {
                 if let Ok(path) = std::env::var("PLAY_SELF_CHECKPOINT") {
                     model_file::ModelFile {
                         round,
-                        weights: weights.clone(),
-                        adam: Some(adam.clone()),
+                        best: learners[best].clone(),
+                        learners: learners
+                            .iter()
+                            .zip(&adams)
+                            .map(|(weights, adam)| model_file::Learner {
+                                weights: weights.clone(),
+                                adam: Some(adam.clone()),
+                            })
+                            .collect(),
                         league: league_of(&snapshots),
                     }
                     .write(&path);
@@ -1391,22 +1438,44 @@ mod tests {
         }
     }
 
+    /// How many more tricks a deal each of `learners` takes than the others,
+    /// on average over two-table matches against each of them on `deals`,
+    /// each playing the card it scores highest.
+    fn tournament(learners: &[Network], deals: &[String]) -> Vec<f64> {
+        let mut conventions = std::collections::HashMap::new();
+        let mut standings = vec![0.0; learners.len()];
+        for json in deals {
+            let game: GameState<()> = serde_json::from_str(json).unwrap();
+            let convention = conventions
+                .entry(format!("{:?}", game.system))
+                .or_insert_with(|| game.system.convention());
+            for a in 0..learners.len() {
+                for b in a + 1..learners.len() {
+                    let gain = play_at_a_table(json, convention, &learners[a], 0, Some(&learners[b])) as f64
+                        - play_at_a_table(json, convention, &learners[a], 1, Some(&learners[b])) as f64;
+                    let share = (deals.len() * (learners.len() - 1)) as f64;
+                    standings[a] += gain / share;
+                    standings[b] -= gain / share;
+                }
+            }
+        }
+        standings
+    }
+
     /// The past models that a play model file keeps of `snapshots`: the
-    /// first, and the last seven.
+    /// first four, and the last eight.
     fn league_of(snapshots: &[(usize, Network)]) -> Vec<(usize, Network)> {
-        let last = snapshots.len().saturating_sub(7).max(1);
-        snapshots[..1.min(snapshots.len())]
-            .iter()
-            .chain(&snapshots[last.min(snapshots.len())..])
-            .cloned()
-            .collect()
+        let first = snapshots.len().min(4);
+        let last = snapshots.len().saturating_sub(8).max(first);
+        snapshots[..first].iter().chain(&snapshots[last..]).cloned().collect()
     }
 
     /// Writes a play model file (see `model_file`) to `PLAY_MODEL_FILE` for a
     /// run of self-play that did not write one: the weights in the file
-    /// `PLAY_WEIGHTS` after round `PLAY_ROUND`, no state of Adam, and as its
-    /// league, of the snapshots in the directory `PLAY_SELF_SNAPSHOTS` (named
-    /// `round-NNNNN.txt`), the first and the last seven.
+    /// `PLAY_WEIGHTS` after round `PLAY_ROUND`, as the game's model and as a
+    /// learner with no state of Adam, and as its league, of the snapshots in
+    /// the directory `PLAY_SELF_SNAPSHOTS` (whose names start `round-` and
+    /// the round), the first four and the last eight.
     #[test]
     #[ignore]
     fn make_play_model_file() {
@@ -1417,15 +1486,16 @@ mod tests {
             .unwrap()
             .filter_map(|entry| {
                 let path = entry.unwrap().path();
-                let round = path.file_stem()?.to_str()?.strip_prefix("round-")?.parse().ok()?;
-                Some((round, Network::read(path.to_str()?, ENTRIES, hidden, second)))
+                let name = path.file_stem()?.to_str()?;
+                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
+                Some((digits.parse().ok()?, Network::read(path.to_str()?, ENTRIES, hidden, second)))
             })
             .collect();
         snapshots.sort_by_key(|s| s.0);
         model_file::ModelFile {
             round: number("PLAY_ROUND", 0),
-            weights,
-            adam: None,
+            best: weights.clone(),
+            learners: vec![model_file::Learner { weights, adam: None }],
             league: league_of(&snapshots),
         }
         .write(&std::env::var("PLAY_MODEL_FILE").expect("PLAY_MODEL_FILE"));
@@ -1437,7 +1507,7 @@ mod tests {
         let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
         let start = std::fs::read(path).unwrap().into_iter().take(8).collect::<Vec<u8>>();
         if start == model_file::MAGIC {
-            model_file::ModelFile::read(path, ENTRIES, hidden, second).weights
+            model_file::ModelFile::read(path, ENTRIES, hidden, second).best
         } else {
             Network::read(path, ENTRIES, hidden, second)
         }
