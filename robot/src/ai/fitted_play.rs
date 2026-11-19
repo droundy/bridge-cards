@@ -225,14 +225,14 @@ pub(crate) const V2: Shape = Shape {
 /// limits it.
 pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, hidden: 32, second: 16 };
 
-/// [`V2`] and one more table, to see whether it pays.
+/// [`V2`] and more tables, to see whether they pay.
 const fn v2_and(name: &'static str, tables: &'static [Table]) -> Shape {
     Shape { name, tables, hidden: 16, second: 8 }
 }
 
-/// The tables of [`V2`] and then `$table`.
+/// The tables of [`V2`] and then `$table`s.
 macro_rules! v2_tables_and {
-    ($table:expr) => {
+    ($($table:expr),*) => {
         &[
             Table::Trick,
             Table::Above,
@@ -245,7 +245,7 @@ macro_rules! v2_tables_and {
             Table::SecondLength,
             Table::FirstPoints,
             Table::SecondPoints,
-            $table,
+            $($table,)*
         ]
     };
 }
@@ -258,9 +258,13 @@ pub(crate) const V2_TRUMPS: Shape = v2_and("v2-trumps", v2_tables_and!(Table::Tr
 pub(crate) const V2_LATER: Shape = v2_and("v2-later", v2_tables_and!(Table::Later));
 /// [`V2`] and [`Table::Bids`].
 pub(crate) const V2_BIDS: Shape = v2_and("v2-bids", v2_tables_and!(Table::Bids));
+/// [`V2`] and both [`Table::Later`] and [`Table::History`], the two that
+/// paid in the first screen.
+pub(crate) const V2_LATER_HISTORY: Shape =
+    v2_and("v2-later-history", v2_tables_and!(Table::Later, Table::History));
 
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS];
+pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY];
 
 impl Shape {
     /// The shape called `name`, if there is one.

@@ -10,6 +10,13 @@
 # no worse there, or FORCE=1, it uploads the new play model file to the GitHub
 # release play-models and points robot/play-model.txt at it, for you to
 # commit.  Uploading publishes the file: the repository is public.
+#
+# LEARNERS (4) sets the size of the population, and SHAPES (v2) the shapes of
+# the learners that the file lacks, comma-separated and taken in turn (see
+# Shape in robot/src/ai/fitted_play.rs).  With FROM_SCRATCH=1 every learner
+# starts from nothing, so that shapes can be compared on the same training.
+# Every learner is also scored against the robot and against the old model,
+# which do not learn, at each snapshot.
 
 set -eo pipefail
 cd "$(dirname "$0")"
@@ -24,16 +31,21 @@ cp robot/src/ai/play_model.bin "$old"
 
 # A file left from an earlier run must not be taken for this one's.
 rm -f "$dir/new.bin"
+resume=()
+if [ "$FROM_SCRATCH" != 1 ]; then
+    resume=(PLAY_SELF_RESUME="$PWD/$old")
+fi
 echo "Training for $rounds rounds on $threads threads."
-PLAY_SELF_RESUME="$PWD/$old" PLAY_SELF_CHECKPOINT="$PWD/$dir/new.bin" \
+env "${resume[@]}" PLAY_SELF_CHECKPOINT="$PWD/$dir/new.bin" PLAY_SELF_REFERENCE="$PWD/$old" \
     PLAY_SELF_ROUNDS="$rounds" PLAY_THREADS="$threads" PLAY_SELF_REPORT=20 \
-    PLAY_SELF_LEARNERS=4 PLAY_SELF_ROUND_ROBIN=1 PLAY_SELF_WILDCARDS=4 \
+    PLAY_SELF_LEARNERS="${LEARNERS:-4}" PLAY_SELF_SHAPES="${SHAPES:-v2}" \
+    PLAY_SELF_ROUND_ROBIN=1 PLAY_SELF_WILDCARDS=4 \
     PLAY_SELF_DEALS=128 PLAY_SELF_POOL=128 PLAY_SELF_FRESH=128 \
     PLAY_SELF_ENTROPY=0.25 PLAY_SELF_DECAY=0.01 \
     PLAY_SELF_PAST=0.2 PLAY_SELF_RANDOM=0.05 PLAY_SELF_SNAPSHOT=100 PLAY_SELF_TOURNAMENT=200 \
     PLAY_SELF_WATCH="$PWD/$dir/watch.html" \
     cargo test -p robot --release self_play -- --ignored --exact --nocapture ai::fitted_play::tests::self_play \
-    | grep --line-buffered -E "^round|^resuming|panicked"
+    | grep --line-buffered -E "^round|^resuming|^learners|panicked"
 if [ ! -s "$dir/new.bin" ]; then
     echo "Training wrote no model file." >&2
     exit 1
