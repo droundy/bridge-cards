@@ -902,17 +902,29 @@ mod tests {
         won_before: usize,
     }
 
-    /// Plays `json`, a game whose opening lead is next, out to the end, each
-    /// card chosen at random with the chances of the play model with
-    /// `weights` at `temperature` (the opening lead by `likely_opening_leads`),
-    /// except that each seat in `random` plays any card it could.  Gives the
-    /// choices that the model made and the tricks each side won.
+    /// How a seat chooses its cards in self-play.
+    #[derive(Clone, Copy)]
+    enum Player<'a> {
+        /// By the model that is learning, whose choices are learned from.
+        Learning,
+        /// By the model with these weights, a snapshot of an earlier one.
+        Past(&'a [f64]),
+        /// Any card that it could play, at random.
+        Random,
+    }
+
+    /// Plays `json`, a game whose opening lead is next, out to the end, the
+    /// opening lead by `likely_opening_leads` and each other card by the
+    /// seat that chooses it as its `players` say: a model chooses at random
+    /// with its chances at `temperature`, the learning one with `weights`.
+    /// Gives the choices that the learning model made and the tricks each
+    /// side won.
     fn play_out(
         json: &str,
         convention: &Convention,
         weights: &[f64],
         temperature: f64,
-        random: [bool; 4],
+        players: [Player; 4],
         rng: &mut StdRng,
     ) -> (Vec<Decision>, [usize; 2]) {
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
@@ -928,9 +940,12 @@ mod tests {
             let seat = game.lead.unwrap() + current_trick(&game).len();
             let side = chooser(&game, seat) as usize % 2;
             let legal: Vec<Card> = view.legal().collect();
-            let card = if random[chooser(&game, seat) as usize] {
-                legal[rng.gen_range(0..legal.len())]
-            } else {
+            let weights = match players[chooser(&game, seat) as usize] {
+                Player::Random => None,
+                Player::Past(past) => Some((past, false)),
+                Player::Learning => Some((weights, true)),
+            };
+            let card = if let Some((weights, learning)) = weights {
                 let cards: Vec<([usize; TUPLES.len()], f64)> = chances(&view, weights, temperature)
                     .into_iter()
                     .map(|(card, chance)| (view.entries(card), chance))
@@ -944,14 +959,18 @@ mod tests {
                     }
                     pick -= chance;
                 }
-                decisions.push(Decision {
-                    cards,
-                    chosen,
-                    side,
-                    trick: game.tricks.len(),
-                    won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
-                });
+                if learning {
+                    decisions.push(Decision {
+                        cards,
+                        chosen,
+                        side,
+                        trick: game.tricks.len(),
+                        won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
+                    });
+                }
                 legal[chosen]
+            } else {
+                legal[rng.gen_range(0..legal.len())]
             };
             game.play(card);
         }
@@ -967,9 +986,16 @@ mod tests {
     /// up the gradient of the tricks each side takes after each of its
     /// choices, less the mean of that over the plays of the same deal (so
     /// that what is learned is what made a play of a deal better than the
-    /// others).  Each seat plays any card at random instead in a share
-    /// `PLAY_SELF_RANDOM` (0) of the games, so that the model does not learn
-    /// only to play with itself.  It starts from the weights in the file
+    /// others).  So that the model does not learn only to play with itself,
+    /// each seat of a game is instead played by a snapshot of the model from
+    /// an earlier round, chosen at random, with the chance `PLAY_SELF_PAST`
+    /// (0), or else by a player of any card at random with the chance
+    /// `PLAY_SELF_RANDOM` (0); that is partners as well as opponents, and
+    /// only the learning model's own choices are learned from.  A snapshot is
+    /// kept every `PLAY_SELF_SNAPSHOT` (50) rounds, the first of the model
+    /// before it learned anything, and each is written to the directory
+    /// `PLAY_SELF_SNAPSHOTS` if that is set, as `round-NNNNN.txt`, to play
+    /// against later.  It starts from the weights in the file
     /// `PLAY_SELF_START` if that is set, and otherwise from nothing.  Every
     /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
     /// the weights to the file `PLAY_SELF_WEIGHTS` if that is set, and
@@ -986,6 +1012,16 @@ mod tests {
         let temperature = float("PLAY_SELF_TEMPERATURE", 1.0);
         let rate = float("PLAY_SELF_RATE", 0.01);
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
+        let past_share = float("PLAY_SELF_PAST", 0.0);
+        let every = number("PLAY_SELF_SNAPSHOT", 50);
+        let directory = std::env::var("PLAY_SELF_SNAPSHOTS").ok();
+        if let Some(directory) = &directory {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        let write = |path: &str, weights: &[f64]| {
+            let text: String = weights.iter().map(|w| format!("{w}\n")).collect();
+            std::fs::write(path, text).unwrap();
+        };
         let pool: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(7, number("PLAY_SELF_POOL", 4000))
             .iter()
             .map(|game| serde_json::to_string(game).unwrap())
@@ -1002,6 +1038,7 @@ mod tests {
             Err(_) => vec![0.0; ENTRIES],
         };
         let (mut first, mut second) = (vec![0.0; ENTRIES], vec![0.0; ENTRIES]);
+        let mut snapshots: Vec<Vec<f64>> = vec![weights.clone()];
         let mut rng = StdRng::seed_from_u64(11);
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         for round in 1..=rounds {
@@ -1010,6 +1047,7 @@ mod tests {
             let chunk = batch.div_ceil(threads);
             let weights_now = &weights;
             let pool = &pool;
+            let past = &snapshots;
             let results: Vec<(Vec<f64>, usize, f64)> = std::thread::scope(|scope| {
                 let handles: Vec<_> = deals
                     .chunks(chunk)
@@ -1028,8 +1066,17 @@ mod tests {
                                     .or_insert_with(|| system.system.convention());
                                 let games: Vec<(Vec<Decision>, [usize; 2])> = (0..group)
                                     .map(|_| {
-                                        let random = [0; 4].map(|_| rng.gen_range(0.0..1.0) < random_share);
-                                        play_out(json, convention, weights_now, temperature, random, &mut rng)
+                                        let players = [0; 4].map(|_| {
+                                            let draw = rng.gen_range(0.0..1.0);
+                                            if draw < past_share {
+                                                Player::Past(&past[rng.gen_range(0..past.len())])
+                                            } else if draw < past_share + random_share {
+                                                Player::Random
+                                            } else {
+                                                Player::Learning
+                                            }
+                                        });
+                                        play_out(json, convention, weights_now, temperature, players, &mut rng)
                                     })
                                     .collect();
                                 // The mean over the plays of this deal of the
@@ -1092,8 +1139,13 @@ mod tests {
                 }
                 println!();
                 if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
-                    let text: String = weights.iter().map(|w| format!("{w}\n")).collect();
-                    std::fs::write(path, text).unwrap();
+                    write(&path, &weights);
+                }
+            }
+            if round % every == 0 {
+                snapshots.push(weights.clone());
+                if let Some(directory) = &directory {
+                    write(&format!("{directory}/round-{round:05}.txt"), &weights);
                 }
             }
         }
