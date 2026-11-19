@@ -1270,4 +1270,112 @@ mod tests {
             }
         }
     }
+
+    /// The card that the play model `network` scores highest for the player
+    /// to play in `game`, or for the opening lead, the first of
+    /// `likely_opening_leads`.
+    fn best_card(game: &GameState<()>, convention: &Convention, network: &Network) -> Card {
+        use crate::ai::opening_lead::{likely_opening_leads, Auction};
+        match View::new(game, convention) {
+            Some(view) => view
+                .legal()
+                .max_by(|&a, &b| network.score(&view.entries(a)).total_cmp(&network.score(&view.entries(b))))
+                .unwrap(),
+            None => {
+                let leader = game.lead.unwrap();
+                likely_opening_leads(&Auction::new(game).unwrap(), game.hands[leader])[0]
+            }
+        }
+    }
+
+    /// Plays `json`, a game whose opening lead is next, to the end: the side
+    /// `model_side` (0 for north and south) by the play model `model`, and
+    /// the other by `other` if there is one, or else by the robot.  Gives the
+    /// tricks of north and south.
+    fn play_at_a_table(
+        json: &str,
+        convention: &Convention,
+        model: &Network,
+        model_side: usize,
+        other: Option<&Network>,
+    ) -> usize {
+        use crate::ai::PlayAI;
+        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let mut robot = super::super::RandomPlay;
+        while !game.hand_done {
+            let place = current_trick(&game).len();
+            let seat = chooser(&game, game.lead.unwrap() + place);
+            let card = if seat as usize % 2 == model_side {
+                best_card(&game, convention, model)
+            } else {
+                match other {
+                    Some(network) => best_card(&game, convention, network),
+                    None => robot.play(&game),
+                }
+            };
+            game.play(card);
+        }
+        game.ns_tricks
+    }
+
+    /// Plays the play model with the weights in the file
+    /// `PLAY_MATCH_WEIGHTS` against the robot's card play as a team match at
+    /// two tables: on each of `PLAY_MATCH_DEALS` (100) deals that the robot
+    /// bid, the model plays north and south at one table and east and west
+    /// at the other, each time the card it scores highest, and the robot
+    /// plays the other seats.  Prints how many more tricks the model's sides
+    /// took than the robot's on the same cards, a deal, with its standard
+    /// error.  With `PLAY_MATCH_AGAINST` naming other weights, those play in
+    /// the robot's place, to compare two snapshots.  It uses `PLAY_THREADS`
+    /// (1) threads.
+    #[test]
+    #[ignore]
+    fn match_against_the_robot() {
+        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+        let read = |name: &str| std::env::var(name).ok().map(|path| Network::read(&path, ENTRIES, hidden, second));
+        let model = read("PLAY_MATCH_WEIGHTS").expect("PLAY_MATCH_WEIGHTS");
+        let other = read("PLAY_MATCH_AGAINST");
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(13, number("PLAY_MATCH_DEALS", 100))
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+            .collect();
+        let threads = number("PLAY_THREADS", 1);
+        let started = std::time::Instant::now();
+        let gains: Vec<f64> = std::thread::scope(|scope| {
+            let handles: Vec<_> = deals
+                .chunks(deals.len().div_ceil(threads))
+                .map(|deals| {
+                    let (model, other) = (&model, other.as_ref());
+                    scope.spawn(move || {
+                        let mut conventions = std::collections::HashMap::new();
+                        deals
+                            .iter()
+                            .map(|json| {
+                                let game: GameState<()> = serde_json::from_str(json).unwrap();
+                                let convention = conventions
+                                    .entry(format!("{:?}", game.system))
+                                    .or_insert_with(|| game.system.convention());
+                                // North and south's tricks with the model
+                                // playing them, less with the other player.
+                                let model_ns = play_at_a_table(json, convention, model, 0, other);
+                                let other_ns = play_at_a_table(json, convention, model, 1, other);
+                                model_ns as f64 - other_ns as f64
+                            })
+                            .collect::<Vec<f64>>()
+                    })
+                })
+                .collect();
+            handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        });
+        let n = gains.len() as f64;
+        let mean = gains.iter().sum::<f64>() / n;
+        let spread = (gains.iter().map(|g| (g - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        println!(
+            "{} deals in {:.0} s: the model's sides took {mean:+.3} tricks a deal more than {}'s, standard error {:.3}",
+            gains.len(),
+            started.elapsed().as_secs_f64(),
+            if other.is_some() { "the other model" } else { "the robot" },
+            spread / n.sqrt(),
+        );
+    }
 }
