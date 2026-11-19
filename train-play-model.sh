@@ -55,7 +55,9 @@ if awk -v gain="$gain" 'BEGIN { exit !(gain + 0 < 0) }' && [ "$FORCE" != 1 ]; th
     exit 1
 fi
 
-round=$(od -An -tu4 -j24 -N4 "$dir/new.bin" | tr -d ' ')
+# The round is the first number after the 8 bytes of the magic (see
+# robot/src/ai/fitted_play/model_file.rs).
+round=$(od -An -tu4 -j8 -N4 "$dir/new.bin" | tr -d ' ')
 name=$(printf 'play_model-round-%06d.bin' "$round")
 cp "$dir/new.bin" "$dir/$name"
 gh release upload play-models "$dir/$name"

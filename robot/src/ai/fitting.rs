@@ -205,12 +205,6 @@ impl Network {
         let text = std::fs::read_to_string(path).unwrap();
         Network::with_params(entries, hidden, second, text.lines().map(|l| l.parse().unwrap()).collect())
     }
-
-    /// The numbers of entries and of the units of each hidden layer.
-    #[cfg(test)]
-    pub(crate) fn shape(&self) -> (usize, usize, usize) {
-        (self.entries, self.hidden, self.second)
-    }
 }
 
 /// How many parameters a network of these sizes has.

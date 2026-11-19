@@ -15,65 +15,166 @@ use super::Convention;
 use crate::{Bid, GameState, Seat, Seated};
 use bridge_deck::{Card, Cards, Suit};
 
-/// The tables, each with its size and the facts that index it.  The role is
-/// 0 for the declarer playing their own hand, 1 for the declarer playing the
-/// dummy's, and 2 and 3 for the defenders on the declarer's left and right;
-/// the place is how many cards have been played to the trick; how a card is
-/// played is whether it leads, follows suit, ruffs or is discarded.
-pub(crate) const TUPLES: [(usize, &str); 11] = [
-    (
-        4 * 4 * 4 * 2 * 2,
-        "the role, the place, how the card is played, whether partner is \
-         winning the trick, and whether the card beats the trick so far",
-    ),
-    (
-        4 * 125,
-        "the place, and whether each of the three cards just above is the \
-         player's, in the other hand in sight, or hidden",
-    ),
-    (4 * 125, "the place, and the same of the three cards just below"),
-    (
-        4 * 4 * 6 * 2,
-        "the place, how the card is played, how many cards of its suit are left \
-         above it, and whether it is the player's lowest of the suit",
-    ),
-    (
-        4 * 4 * 4 * 2,
-        "the place, the player's length in the suit, the length of the other \
-         hand in sight, and whether the suit is trumps",
-    ),
-    (4 * 4 * 6, "the place, how the card is played, and how many tricks are left"),
-    (
-        4 * 4 * 4 * 6,
-        "the role, the place, how the card is played, and how the tricks the \
-         declarer still needs for the contract compare with the tricks left: \
-         already made, beaten, or with none, one, two, or more to spare",
-    ),
-    (
-        4 * 4 * 20,
-        "the place, how the card is played, and the fewest and most cards of \
-         its suit that the first hidden hand after the player can hold, by the \
-         auction and the play",
-    ),
-    (4 * 4 * 20, "the same of the second hidden hand"),
-    (
-        4 * 4 * 20 * 2,
-        "the role, the place, the fewest and most points that the first hidden \
-         hand can still hold, by the auction and the play, and whether the card \
-         is an honour",
-    ),
-    (4 * 4 * 20 * 2, "the same of the second hidden hand"),
-];
+/// A table of the play model: the facts about a card, and the moment it is
+/// played, that pick its entry.  The role is 0 for the declarer playing
+/// their own hand, 1 for the declarer playing the dummy's, and 2 and 3 for
+/// the defenders on the declarer's left and right; the place is how many
+/// cards have been played to the trick; how a card is played is whether it
+/// leads, follows suit, ruffs or is discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Table {
+    /// The role, the place, how the card is played, whether partner is
+    /// winning the trick, and whether the card beats the trick so far.
+    Trick,
+    /// The place, and whether each of the three cards just above is the
+    /// player's, in the other hand in sight, or hidden.
+    Above,
+    /// The place, and the same of the three cards just below.
+    Below,
+    /// The place, how the card is played, how many cards of its suit are
+    /// left above it, and whether it is the player's lowest of the suit.
+    Rank,
+    /// The place, the player's length in the suit, the length of the other
+    /// hand in sight, and whether the suit is trumps.
+    Lengths,
+    /// The place, how the card is played, and how many tricks are left.
+    TricksLeft,
+    /// The role, the place, how the card is played, and how the tricks the
+    /// declarer still needs for the contract compare with the tricks left:
+    /// already made, beaten, or with none, one, two, or more to spare.
+    Contract,
+    /// The place, how the card is played, and the fewest and most cards of
+    /// its suit that the first hidden hand after the player can hold, by the
+    /// auction and the play.
+    FirstLength,
+    /// The same of the second hidden hand.
+    SecondLength,
+    /// The role, the place, the fewest and most points that the first hidden
+    /// hand can still hold, by the auction and the play, and whether the card
+    /// is an honour.
+    FirstPoints,
+    /// The same of the second hidden hand.
+    SecondPoints,
+}
 
-/// How many hidden units the play model has unless `PLAY_HIDDEN` says
-/// otherwise: each table entry feeds them as well as the score, so that the
-/// model can weigh combinations of the facts of different tables.
-const HIDDEN: usize = 16;
+impl Table {
+    /// How many entries the table has.
+    pub(crate) const fn size(self) -> usize {
+        match self {
+            Table::Trick => 4 * 4 * 4 * 2 * 2,
+            Table::Above | Table::Below => 4 * 125,
+            Table::Rank => 4 * 4 * 6 * 2,
+            Table::Lengths => 4 * 4 * 4 * 2,
+            Table::TricksLeft => 4 * 4 * 6,
+            Table::Contract => 4 * 4 * 4 * 6,
+            Table::FirstLength | Table::SecondLength => 4 * 4 * 20,
+            Table::FirstPoints | Table::SecondPoints => 4 * 4 * 20 * 2,
+        }
+    }
+}
 
-/// How many units the play model's second hidden layer has unless
-/// `PLAY_SECOND` says otherwise (0 for none): each takes all the units of
-/// the first, so that the model can weigh combinations of combinations.
-const SECOND: usize = 8;
+/// A shape of the play model, one version of it: the tables it reads, end to
+/// end, and the widths of its two hidden layers (see [`Network`]).  Weights
+/// fit only the shape they were trained for, so a model file names the shape
+/// of each of its models, and a new table or width is a new shape, which can
+/// be trained beside the others in self-play to see whether it pays.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Shape {
+    /// What a model file calls it.
+    pub(crate) name: &'static str,
+    pub(crate) tables: &'static [Table],
+    /// How many units the first hidden layer has: each table entry feeds
+    /// them as well as the score, so that the model can weigh combinations
+    /// of the facts of different tables.
+    pub(crate) hidden: usize,
+    /// How many units the second hidden layer has (0 for none): each takes
+    /// all the units of the first, so that the model can weigh combinations
+    /// of combinations.
+    pub(crate) second: usize,
+}
+
+/// The first shape, of the model trained by self-play from round 0.
+pub(crate) const V1: Shape = Shape {
+    name: "v1",
+    tables: &[
+        Table::Trick,
+        Table::Above,
+        Table::Below,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::FirstPoints,
+        Table::SecondPoints,
+    ],
+    hidden: 16,
+    second: 8,
+};
+
+/// [`V1`] with hidden layers twice as wide, to see whether its width is what
+/// limits it.
+pub(crate) const V1_WIDE: Shape = Shape { name: "v1-wide", tables: V1.tables, hidden: 32, second: 16 };
+
+/// Every shape there is.
+pub(crate) const SHAPES: &[&Shape] = &[&V1, &V1_WIDE];
+
+impl Shape {
+    /// The shape called `name`, if there is one.
+    pub(crate) fn named(name: &str) -> Option<&'static Shape> {
+        SHAPES.iter().copied().find(|shape| shape.name == name)
+    }
+
+    /// How many entries its tables have, end to end.
+    pub(crate) const fn entries(&self) -> usize {
+        let mut entries = 0;
+        let mut i = 0;
+        while i < self.tables.len() {
+            entries += self.tables[i].size();
+            i += 1;
+        }
+        entries
+    }
+
+    /// How many weights a model of this shape has.
+    pub(crate) fn size(&self) -> usize {
+        Network::size(self.entries(), self.hidden, self.second)
+    }
+}
+
+/// A play model: a network of a shape.
+#[derive(Clone)]
+pub(crate) struct Model {
+    pub(crate) shape: &'static Shape,
+    pub(crate) network: Network,
+}
+
+impl Model {
+    /// The model of `shape` with `params`, such as one written out before.
+    pub(crate) fn with_params(shape: &'static Shape, params: Vec<f64>) -> Model {
+        let network = Network::with_params(shape.entries(), shape.hidden, shape.second, params);
+        Model { shape, network }
+    }
+
+    /// A model of `shape` that starts by choosing at random (see
+    /// [`Network::new`]).
+    #[cfg(test)]
+    pub(crate) fn new(shape: &'static Shape, seed: u64) -> Model {
+        let network = Network::new(shape.entries(), shape.hidden, shape.second, seed);
+        Model { shape, network }
+    }
+
+    /// The entries of its tables that playing `card` looks up in `view`.
+    pub(crate) fn entries(&self, view: &View, card: Card) -> Vec<usize> {
+        view.entries(card, self.shape)
+    }
+
+    /// Its score for playing `card` in `view`.
+    pub(crate) fn score(&self, view: &View, card: Card) -> f64 {
+        self.network.score(&self.entries(view, card))
+    }
+}
 
 /// What the auction and the play show of a hand that cannot be seen.
 #[derive(Clone, Copy)]
@@ -145,17 +246,6 @@ impl Shown {
     }
 }
 
-/// How many entries the tables have, end to end.
-pub(crate) const ENTRIES: usize = {
-    let mut entries = 0;
-    let mut i = 0;
-    while i < TUPLES.len() {
-        entries += TUPLES[i].0;
-        i += 1;
-    }
-    entries
-};
-
 /// What the player to choose a card can see, which every card they could
 /// play shares.
 pub(crate) struct View {
@@ -174,7 +264,7 @@ pub(crate) struct View {
     winning: Option<Card>,
     partner_winning: bool,
     /// How the tricks that the declarer still needs compare with the tricks
-    /// left, as a number below 6 (see [`TUPLES`]).
+    /// left, as a number below 6 (see [`Table::Contract`]).
     contract: usize,
     /// What is shown of the two hidden hands, the first after the player
     /// first.
@@ -330,9 +420,9 @@ impl View {
         }
     }
 
-    /// The entries of the tables of [`TUPLES`], laid end to end, that
-    /// playing `card` looks up, one in each table.
-    pub(crate) fn entries(&self, card: Card) -> [usize; TUPLES.len()] {
+    /// The entries of the tables of `shape`, laid end to end, that playing
+    /// `card` looks up, one in each table.
+    pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {
         let suit = card.suit();
         let (role, place) = (self.role, self.place);
         let how = match self.lead {
@@ -370,27 +460,33 @@ impl View {
             6..=8 => 4,
             _ => 5,
         };
-        let indices = [
-            (((role * 4 + place) * 4 + how) * 2 + self.partner_winning as usize) * 2 + beats as usize,
-            place * 125 + Cards::holders_above(&in_sight, card_now, 3),
-            place * 125 + Cards::holders_below(&in_sight, card_now, 3),
-            ((place * 4 + how) * 6 + above) * 2 + lowest as usize,
-            ((place * 4 + length) * 4 + other_length) * 2 + trumps as usize,
-            (place * 4 + how) * 6 + tricks,
-            ((role * 4 + place) * 4 + how) * 6 + self.contract,
-            (place * 4 + how) * 20 + self.shown[0].length_index(suit),
-            (place * 4 + how) * 20 + self.shown[1].length_index(suit),
-            ((role * 4 + place) * 20 + self.shown[0].points_index()) * 2 + (card.rank() >= 10) as usize,
-            ((role * 4 + place) * 20 + self.shown[1].points_index()) * 2 + (card.rank() >= 10) as usize,
-        ];
-        let mut entries = [0; TUPLES.len()];
+        let honour = (card.rank() >= 10) as usize;
+        let index = |table: Table| match table {
+            Table::Trick => {
+                (((role * 4 + place) * 4 + how) * 2 + self.partner_winning as usize) * 2 + beats as usize
+            }
+            Table::Above => place * 125 + Cards::holders_above(&in_sight, card_now, 3),
+            Table::Below => place * 125 + Cards::holders_below(&in_sight, card_now, 3),
+            Table::Rank => ((place * 4 + how) * 6 + above) * 2 + lowest as usize,
+            Table::Lengths => ((place * 4 + length) * 4 + other_length) * 2 + trumps as usize,
+            Table::TricksLeft => (place * 4 + how) * 6 + tricks,
+            Table::Contract => ((role * 4 + place) * 4 + how) * 6 + self.contract,
+            Table::FirstLength => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
+            Table::SecondLength => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
+            Table::FirstPoints => ((role * 4 + place) * 20 + self.shown[0].points_index()) * 2 + honour,
+            Table::SecondPoints => ((role * 4 + place) * 20 + self.shown[1].points_index()) * 2 + honour,
+        };
         let mut offset = 0;
-        for (t, index) in indices.into_iter().enumerate() {
-            debug_assert!(index < TUPLES[t].0, "{}", TUPLES[t].1);
-            entries[t] = offset + index;
-            offset += TUPLES[t].0;
-        }
-        entries
+        shape
+            .tables
+            .iter()
+            .map(|&table| {
+                let index = index(table);
+                debug_assert!(index < table.size(), "{table:?}");
+                offset += table.size();
+                offset - table.size() + index
+            })
+            .collect()
     }
 }
 
@@ -447,17 +543,14 @@ pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2
 }
 
 /// The chance that the player of `view` plays each card that they could,
-/// by the play model `weights`: the softmax of its scores divided by
+/// by the play model `model`: the softmax of its scores divided by
 /// `temperature`, which is fitted so that these are chances and not only an
 /// order.
 #[cfg(test)]
-pub(crate) fn chances(view: &View, weights: &Network, temperature: f64) -> Vec<(Card, f64)> {
+pub(crate) fn chances(view: &View, model: &Model, temperature: f64) -> Vec<(Card, f64)> {
     let scores: Vec<(Card, f64)> = view
         .legal()
-        .map(|card| {
-            let score = weights.score(&view.entries(card));
-            (card, score / temperature)
-        })
+        .map(|card| (card, model.score(view, card) / temperature))
         .collect();
     let most = scores.iter().map(|s| s.1).fold(f64::MIN, f64::max);
     let odds: Vec<(Card, f64)> = scores.iter().map(|&(c, s)| (c, (s - most).exp())).collect();
@@ -477,7 +570,7 @@ pub(crate) fn predicted_plays<C>(
     seats: [Seat; 2],
     deals: &[([Cards; 2], f64)],
     trick: &[Card],
-    weights: &Network,
+    model: &Model,
     temperature: f64,
 ) -> Vec<(Card, f64)> {
     let mut totals: Vec<(Card, f64)> = Vec::new();
@@ -487,7 +580,7 @@ pub(crate) fn predicted_plays<C>(
         let Some(view) = View::at(game, convention, hands, trick) else {
             continue;
         };
-        for (card, chance) in chances(&view, weights, temperature) {
+        for (card, chance) in chances(&view, model, temperature) {
             match totals.iter_mut().find(|t| t.0 == card) {
                 Some(total) => total.1 += weight * chance / total_weight,
                 None => totals.push((card, weight * chance / total_weight)),
@@ -522,7 +615,7 @@ pub(crate) fn play_likelihood<C>(
     convention: &Convention,
     seats: [Seat; 2],
     deal: [Cards; 2],
-    weights: &Network,
+    model: &Model,
     temperature: f64,
 ) -> f64 {
     let current = current_trick(game);
@@ -550,7 +643,7 @@ pub(crate) fn play_likelihood<C>(
             if seats.contains(&chooser(game, seat)) {
                 let chance = View::at_moment(game, convention, hands, played, lead, &cards[..i])
                     .map_or(1.0, |view| {
-                        chances(&view, weights, temperature)
+                        chances(&view, model, temperature)
                             .into_iter()
                             .find(|c| c.0 == card)
                             .map_or(0.0, |c| c.1)
@@ -564,27 +657,26 @@ pub(crate) fn play_likelihood<C>(
     likelihood
 }
 
-/// The play model that [`ModelPlay`] plays by, as little-endian 32-bit words:
-/// the number of weights, the network's entries and the sizes of its two
-/// hidden layers, then the weights as floats.  `build.rs` takes them from the
-/// play model file `src/ai/play_model.bin` (see `fitted_play::model_file`).
-/// That file is not kept in git, and `build.rs` puts nothing here when it is
-/// missing.
+/// The play model that [`ModelPlay`] plays by: the length of the name of its
+/// shape as a little-endian `u32`, the name, the number of its weights as a
+/// `u32`, and the weights as `f32`s.  `build.rs` takes it from the play model
+/// file `src/ai/play_model.bin` (see `fitted_play::model_file`).  That file is
+/// not kept in git, and `build.rs` puts nothing here when it is missing.
 static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin"));
 
-/// The play model of [`MODEL`], or `None` if there are no weights, or they
-/// are not for a network of this shape, as when they were written for
-/// another.
-fn model() -> Option<&'static Network> {
-    static NETWORK: std::sync::OnceLock<Option<Network>> = std::sync::OnceLock::new();
-    NETWORK
+/// The play model of [`MODEL`], or `None` if there is none, or it is of a
+/// shape that this code does not have, or has the wrong number of weights.
+fn model() -> Option<&'static Model> {
+    static MODEL_PLAYED: std::sync::OnceLock<Option<Model>> = std::sync::OnceLock::new();
+    MODEL_PLAYED
         .get_or_init(|| {
-            let words = MODEL.as_chunks::<4>().0;
-            let shape: Vec<usize> = words.iter().take(4).map(|w| u32::from_le_bytes(*w) as usize).collect();
-            let params: Vec<f64> = words.iter().skip(4).map(|w| f32::from_le_bytes(*w) as f64).collect();
-            let wanted = [Network::size(ENTRIES, HIDDEN, SECOND), ENTRIES, HIDDEN, SECOND];
-            (shape == wanted && params.len() == wanted[0])
-                .then(|| Network::with_params(ENTRIES, HIDDEN, SECOND, params))
+            let number = |at: usize| Some(u32::from_le_bytes(MODEL.get(at..at + 4)?.try_into().ok()?) as usize);
+            let length = number(0)?;
+            let shape = Shape::named(std::str::from_utf8(MODEL.get(4..4 + length)?).ok()?)?;
+            let n = number(4 + length)?;
+            let weights = MODEL.get(8 + length..)?;
+            let params: Vec<f64> = weights.as_chunks::<4>().0.iter().map(|w| f32::from_le_bytes(*w) as f64).collect();
+            (n == shape.size() && params.len() == n).then(|| Model::with_params(shape, params))
         })
         .as_ref()
 }
@@ -599,14 +691,14 @@ pub struct ModelPlay;
 
 impl super::PlayAI for ModelPlay {
     fn play<C>(&mut self, game: &GameState<C>) -> Card {
-        let Some(network) = model() else {
+        let Some(model) = model() else {
             return super::RandomPlay.play(game);
         };
         let convention = game.system.convention();
         match View::new(game, &convention) {
             Some(view) => {
                 view.legal()
-                    .map(|card| (network.score(&view.entries(card)), card))
+                    .map(|card| (model.score(&view, card), card))
                     .max_by(|a, b| a.0.total_cmp(&b.0))
                     .unwrap()
                     .1
@@ -645,6 +737,12 @@ mod tests {
         std::env::var(name).unwrap_or_else(|_| default.into())
     }
 
+    /// The shape named by the variable `name`, `v1` if it is not set.
+    fn shape_of(name: &str) -> &'static Shape {
+        let named = var(name, V1.name);
+        Shape::named(&named).unwrap_or_else(|| panic!("{name}: there is no shape {named}"))
+    }
+
     fn number(name: &str, default: usize) -> usize {
         var(name, &default.to_string()).parse().unwrap()
     }
@@ -679,9 +777,12 @@ mod tests {
                     assert!((least..=most).contains(&hand.high_card_points()), "{json}");
                 }
                 for card in game.could_be_played() {
-                    for (t, entry) in view.entries(card).into_iter().enumerate() {
-                        let start: usize = TUPLES[..t].iter().map(|t| t.0).sum();
-                        assert!((start..start + TUPLES[t].0).contains(&entry));
+                    for shape in SHAPES {
+                        let mut start = 0;
+                        for (table, entry) in shape.tables.iter().zip(view.entries(card, shape)) {
+                            assert!((start..start + table.size()).contains(&entry), "{table:?}");
+                            start += table.size();
+                        }
                     }
                 }
             }
@@ -791,7 +892,7 @@ mod tests {
                 if legal.is_empty() {
                     break;
                 }
-                seen.push(legal.iter().map(|&card| view.entries(card)).collect::<Vec<_>>());
+                seen.push(legal.iter().map(|&card| view.entries(card, &V1)).collect::<Vec<_>>());
                 game.play(legal[rng.gen_range(0..legal.len())]);
             }
             // Back to the start of the tricks played since `start`.
@@ -813,7 +914,7 @@ mod tests {
                     }
                     let then = seen.next().unwrap();
                     let view = View::at_moment(&game, &convention, hands, played, lead, &cards[..i]).unwrap();
-                    let now: Vec<_> = view.legal().map(|card| view.entries(card)).collect();
+                    let now: Vec<_> = view.legal().map(|card| view.entries(card, &V1)).collect();
                     assert_eq!(then, now, "trick led by {lead:?}, card {i}");
                     hands[lead + i] -= Cards::singleton(card);
                     played[lead + i] += Cards::singleton(card);
@@ -825,8 +926,9 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        let mut weights = Network::new(ENTRIES, 4, 3, 3);
-        for p in &mut weights.params {
+        const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+        let mut weights = Model::new(&SMALL, 3);
+        for p in &mut weights.network.params {
             *p = rng.gen_range(-1.0..1.0);
         }
         for game in some_games() {
@@ -871,14 +973,16 @@ mod tests {
 
     /// The temperature for [`chances`] that makes the chance of a best card
     /// likeliest, by the mean log of it, over the data in `PLAY_TEST`, for
-    /// the weights in the file `PLAY_WEIGHTS`: the chances that a player
-    /// who plays as the ensemble's values say would play each card.
+    /// the model in the file `PLAY_WEIGHTS` (see [`read_model`]): the chances
+    /// that a player who plays as the ensemble's values say would play each
+    /// card.
     #[test]
     #[ignore]
     fn fit_play_temperature() {
         let path = std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS");
-        let weights = Network::read(&path, ENTRIES, number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), TUPLES.len());
+        let model = read_model(&path);
+        let weights = &model.network;
+        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), model.shape);
         for temperature in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0] {
             let total: f64 = test
                 .iter()
@@ -998,8 +1102,8 @@ mod tests {
     }
 
     /// The situations in the files `paths`, comma-separated, each card with
-    /// the entries of only the first `tables` of the tables of [`TUPLES`].
-    fn read_situations(paths: &str, tables: usize) -> Vec<Situation> {
+    /// its entries in the tables of `shape`.
+    fn read_situations(paths: &str, shape: &Shape) -> Vec<Situation> {
         let mut conventions = std::collections::HashMap::new();
         let mut situations = Vec::new();
         for path in paths.split(',') {
@@ -1027,7 +1131,7 @@ mod tests {
                         // The tricks of the player's side, up to a number that
                         // is the same for every card.
                         let value = if leaders { mean } else { -mean };
-                        (view.entries(card)[..tables].to_vec(), value)
+                        (view.entries(card, shape), value)
                     })
                     .collect();
                 situations.push(Situation {
@@ -1045,18 +1149,17 @@ mod tests {
     /// card by the ensemble's values, beside those that a card at random
     /// loses.  Writes the weights, one a line, to the file `PLAY_WEIGHTS` if
     /// it is set.  `PLAY_STEPS` (500) is the number of steps of each fit, and
-    /// only the first `PLAY_TABLES` (all) of the tables are used, to see what
-    /// the others add.
+    /// the model is of the shape `PLAY_SHAPE` (`v1`), so that shapes can be
+    /// compared.
     #[test]
     #[ignore]
     fn fit_play_model() {
-        let tables = number("PLAY_TABLES", TUPLES.len());
-        let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), tables);
-        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), tables);
+        let shape = shape_of("PLAY_SHAPE");
+        let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), shape);
+        let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), shape);
         let steps = number("PLAY_STEPS", 500);
         let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let start = || Network::new(ENTRIES, hidden, second, 1);
+        let start = || Model::new(shape, 1).network;
         let (penalty, held_out) =
             fitting::cross_validate(&choices, &start, &[0.0, 0.0001, 0.001, 0.01], steps);
         for (penalty, value) in held_out {
@@ -1095,7 +1198,7 @@ mod tests {
     /// and the tricks that side had already won.
     struct Decision {
         learner: usize,
-        cards: Vec<([usize; TUPLES.len()], f64)>,
+        cards: Vec<(Vec<usize>, f64)>,
         chosen: usize,
         side: usize,
         trick: usize,
@@ -1107,9 +1210,9 @@ mod tests {
     enum Player<'a> {
         /// By this learner of the population, which learns from its choices.
         Learning(usize),
-        /// By the model with these weights, a snapshot of an earlier one,
-        /// taken after this many rounds.
-        Past(&'a Network, usize),
+        /// By this model, a snapshot of an earlier one, taken after this
+        /// many rounds.
+        Past(&'a Model, usize),
         /// Any card that it could play, at random.
         Random,
     }
@@ -1123,7 +1226,7 @@ mod tests {
     fn play_out(
         json: &str,
         convention: &Convention,
-        learners: &[Network],
+        learners: &[Model],
         temperature: f64,
         players: [Player; 4],
         record: bool,
@@ -1155,9 +1258,9 @@ mod tests {
             };
             let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
-                let cards: Vec<([usize; TUPLES.len()], f64)> = chances(&view, weights, temperature)
+                let cards: Vec<(Vec<usize>, f64)> = chances(&view, weights, temperature)
                     .into_iter()
-                    .map(|(card, chance)| (view.entries(card), chance))
+                    .map(|(card, chance)| (weights.entries(&view, card), chance))
                     .collect();
                 let mut pick = rng.gen_range(0.0..1.0);
                 let mut chosen = cards.len() - 1;
@@ -1189,7 +1292,7 @@ mod tests {
                 plays.push(serde_json::json!({
                     "seat": format!("{seat:?}"),
                     "card": pair(card),
-                    "by": player_name(player),
+                    "by": player_name(player, learners),
                     "chances": considered,
                 }));
             }
@@ -1215,7 +1318,7 @@ mod tests {
                         let name = if seat == dummy {
                             "the dummy".to_string()
                         } else {
-                            player_name(players[s])
+                            player_name(players[s], learners)
                         };
                         (format!("{seat:?}"), name)
                     })
@@ -1228,11 +1331,11 @@ mod tests {
     }
 
     /// What a viewer calls a player of self-play.
-    fn player_name(player: Player) -> String {
+    fn player_name(player: Player, learners: &[Model]) -> String {
         match player {
-            Player::Learning(learner) => format!("learner {}", learner + 1),
-            Player::Past(_, 0) => "a model before it learned".into(),
-            Player::Past(_, round) => format!("a model after {round} rounds"),
+            Player::Learning(learner) => format!("learner {} ({})", learner + 1, learners[learner].shape.name),
+            Player::Past(past, 0) => format!("a {} model before it learned", past.shape.name),
+            Player::Past(past, round) => format!("a {} model after {round} rounds", past.shape.name),
             Player::Random => "a player of any card".into(),
         }
     }
@@ -1295,7 +1398,7 @@ mod tests {
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
     /// `PLAY_SELF_SNAPSHOTS` if that is set, as
-    /// `round-NNNNN-learner-K.txt`), up to `PLAY_SELF_LEAGUE` (64) of them:
+    /// `round-NNNNN-learner-K-SHAPE.txt`), up to `PLAY_SELF_LEAGUE` (64) of them:
     /// the first four and the latest, so that a long run does not keep every
     /// snapshot it has taken.  It ranks the learners in a tournament
     /// of two-table matches between each two of them on `PLAY_SELF_TOURNAMENT`
@@ -1350,20 +1453,23 @@ mod tests {
         let tournament_deals = deals(17, number("PLAY_SELF_TOURNAMENT", 200));
         let test = std::env::var("PLAY_TEST")
             .ok()
-            .map(|paths| read_situations(&paths, TUPLES.len()));
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let mut learners: Vec<Network> = Vec::new();
+            .map(|paths| SHAPES.iter().map(|&shape| (shape.name, read_situations(&paths, shape))).collect::<Vec<_>>());
+        let shapes: Vec<&'static Shape> = var("PLAY_SELF_SHAPES", V1.name)
+            .split(',')
+            .map(|name| Shape::named(name.trim()).unwrap_or_else(|| panic!("PLAY_SELF_SHAPES: there is no shape {name}")))
+            .collect();
+        let mut learners: Vec<Model> = Vec::new();
         let mut adams: Vec<fitting::Adam> = Vec::new();
         let mut warmups: Vec<usize> = Vec::new();
-        let mut snapshots: Vec<(usize, Network)> = Vec::new();
+        let mut snapshots: Vec<(usize, Model)> = Vec::new();
         let mut first_round = 1;
         if let Ok(path) = std::env::var("PLAY_SELF_RESUME") {
-            let file = model_file::ModelFile::read(&path, ENTRIES, hidden, second);
+            let file = model_file::ModelFile::read(&path);
             first_round = file.round + 1;
             for learner in file.learners {
                 warmups.push(if learner.adam.is_some() { 0 } else { 20 });
-                adams.push(learner.adam.unwrap_or_else(|| fitting::Adam::new(learner.weights.params.len())));
-                learners.push(learner.weights);
+                adams.push(learner.adam.unwrap_or_else(|| fitting::Adam::new(learner.model.network.params.len())));
+                learners.push(learner.model);
             }
             snapshots = file.league;
             println!(
@@ -1373,12 +1479,18 @@ mod tests {
                 snapshots.iter().map(|s| s.0).collect::<Vec<_>>()
             );
         }
+        // The learners that the file lacks take the shapes in turn.
         while learners.len() < population {
-            let network = Network::new(ENTRIES, hidden, second, 11 + learners.len() as u64);
-            adams.push(fitting::Adam::new(network.params.len()));
+            let shape = shapes[learners.len() % shapes.len()];
+            let model = Model::new(shape, 11 + learners.len() as u64);
+            adams.push(fitting::Adam::new(model.network.params.len()));
             warmups.push(0);
-            learners.push(network);
+            learners.push(model);
         }
+        println!(
+            "learners of the shapes {}",
+            learners.iter().map(|l| l.shape.name).collect::<Vec<_>>().join(", ")
+        );
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
         }
@@ -1405,7 +1517,6 @@ mod tests {
         // every round would leave more and more caches behind.
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
-        let size = learners[0].params.len();
         for round in first_round..=last_round {
             let deals: Vec<usize> = if pool.len() == batch {
                 (0..batch).collect()
@@ -1425,7 +1536,8 @@ mod tests {
                         {
                             let mut rng = StdRng::seed_from_u64(seed + t as u64);
                             let mut conventions = std::collections::HashMap::new();
-                            let mut gradients = vec![vec![0.0; size]; learners_now.len()];
+                            let mut gradients: Vec<Vec<f64>> =
+                                learners_now.iter().map(|l| vec![0.0; l.network.params.len()]).collect();
                             let mut counts = vec![0; learners_now.len()];
                             let mut entropy = 0.0;
                             let mut sampled = Vec::new();
@@ -1529,7 +1641,7 @@ mod tests {
                                             let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
                                             let spreading = -chance * (log + spread);
                                             let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
-                                            learners_now[d.learner].add_gradient(entries, g, &mut gradients[d.learner]);
+                                            learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
                                         }
                                         counts[d.learner] += 1;
                                     }
@@ -1547,7 +1659,7 @@ mod tests {
             let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
             bonus = if entropy < entropy_target { bonus * 1.05 } else { bonus * 0.95 }.clamp(1e-4, 1.0);
             for (i, learner) in learners.iter_mut().enumerate() {
-                let gradient: Vec<f64> = (0..size)
+                let gradient: Vec<f64> = (0..learner.network.params.len())
                     .map(|j| results.iter().map(|r| r.0[i][j]).sum::<f64>() / counts[i].max(1) as f64)
                     .collect();
                 let ramp = if warmups[i] > 0 {
@@ -1555,10 +1667,10 @@ mod tests {
                 } else {
                     1.0
                 };
-                for p in &mut learner.params {
+                for p in &mut learner.network.params {
                     *p *= 1.0 - rate * ramp * decay;
                 }
-                adams[i].step(&mut learner.params, &gradient, rate * ramp);
+                adams[i].step(&mut learner.network.params, &gradient, rate * ramp);
             }
             for result in results {
                 for mut game in result.3 {
@@ -1574,7 +1686,8 @@ mod tests {
                 for (i, learner) in learners.iter().enumerate() {
                     snapshots.push((round, learner.clone()));
                     if let Some(directory) = &directory {
-                        learner.write(&format!("{directory}/round-{round:05}-learner-{}.txt", i + 1));
+                        let name = learner.shape.name;
+                        learner.network.write(&format!("{directory}/round-{round:05}-learner-{}-{name}.txt", i + 1));
                     }
                 }
                 // The first four, and the latest.
@@ -1615,11 +1728,12 @@ mod tests {
                     let losses: Vec<String> = learners
                         .iter()
                         .map(|learner| {
+                            let test = &test.iter().find(|t| t.0 == learner.shape.name).unwrap().1;
                             let loss = test
                                 .iter()
                                 .map(|s| {
                                     let most = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
-                                    most - s.choice[learner.choice(&s.choice)].1
+                                    most - s.choice[learner.network.choice(&s.choice)].1
                                 })
                                 .sum::<f64>()
                                 / test.len() as f64;
@@ -1630,7 +1744,7 @@ mod tests {
                 }
                 println!();
                 if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
-                    learners[best].write(&path);
+                    learners[best].network.write(&path);
                 }
                 if let Ok(path) = std::env::var("PLAY_SELF_CHECKPOINT") {
                     model_file::ModelFile {
@@ -1639,8 +1753,8 @@ mod tests {
                         learners: learners
                             .iter()
                             .zip(&adams)
-                            .map(|(weights, adam)| model_file::Learner {
-                                weights: weights.clone(),
+                            .map(|(model, adam)| model_file::Learner {
+                                model: model.clone(),
                                 adam: Some(adam.clone()),
                             })
                             .collect(),
@@ -1673,7 +1787,7 @@ mod tests {
     /// How many more tricks a deal each of `learners` takes than the others,
     /// on average over two-table matches against each of them on `deals`,
     /// each playing the card it scores highest.
-    fn tournament(learners: &[Network], deals: &[String]) -> Vec<f64> {
+    fn tournament(learners: &[Model], deals: &[String]) -> Vec<f64> {
         let mut conventions = std::collections::HashMap::new();
         let mut standings = vec![0.0; learners.len()];
         for json in deals {
@@ -1696,7 +1810,7 @@ mod tests {
 
     /// The past models that a play model file keeps of `snapshots`: the
     /// first four, and the last eight.
-    fn league_of(snapshots: &[(usize, Network)]) -> Vec<(usize, Network)> {
+    fn league_of(snapshots: &[(usize, Model)]) -> Vec<(usize, Model)> {
         let first = snapshots.len().min(4);
         let last = snapshots.len().saturating_sub(8).max(first);
         snapshots[..first].iter().chain(&snapshots[last..]).cloned().collect()
@@ -1707,54 +1821,63 @@ mod tests {
     /// `PLAY_WEIGHTS` after round `PLAY_ROUND`, as the game's model and as a
     /// learner with no state of Adam, and as its league, of the snapshots in
     /// the directory `PLAY_SELF_SNAPSHOTS` (whose names start `round-` and
-    /// the round), the first four and the last eight.
+    /// the round), the first four and the last eight, all of the shape
+    /// `PLAY_SHAPE` (`v1`).
     #[test]
     #[ignore]
     fn make_play_model_file() {
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
-        let weights = Network::read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"), ENTRIES, hidden, second);
+        let shape = shape_of("PLAY_SHAPE");
+        let read = |path: &str| {
+            let network = Network::read(path, shape.entries(), shape.hidden, shape.second);
+            Model { shape, network }
+        };
+        let weights = read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").expect("PLAY_SELF_SNAPSHOTS");
-        let mut snapshots: Vec<(usize, Network)> = std::fs::read_dir(&directory)
+        let mut snapshots: Vec<(usize, Model)> = std::fs::read_dir(&directory)
             .unwrap()
             .filter_map(|entry| {
                 let path = entry.unwrap().path();
                 let name = path.file_stem()?.to_str()?;
                 let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
-                Some((digits.parse().ok()?, Network::read(path.to_str()?, ENTRIES, hidden, second)))
+                Some((digits.parse().ok()?, read(path.to_str()?)))
             })
             .collect();
         snapshots.sort_by_key(|s| s.0);
         model_file::ModelFile {
             round: number("PLAY_ROUND", 0),
             best: weights.clone(),
-            learners: vec![model_file::Learner { weights, adam: None }],
+            learners: vec![model_file::Learner { model: weights, adam: None }],
             league: league_of(&snapshots),
         }
         .write(&std::env::var("PLAY_MODEL_FILE").expect("PLAY_MODEL_FILE"));
     }
 
-    /// The play model in `path`: a play model file, or a file of its
-    /// weights one a line, as self-play writes them.
-    fn read_model(path: &str) -> Network {
-        let (hidden, second) = (number("PLAY_HIDDEN", HIDDEN), number("PLAY_SECOND", SECOND));
+    /// The play model in `path`: the game's model of a play model file, or
+    /// a file of its weights one a line, as self-play writes them, of the
+    /// shape `PLAY_SHAPE` (`v1`).
+    fn read_model(path: &str) -> Model {
         let start = std::fs::read(path).unwrap().into_iter().take(8).collect::<Vec<u8>>();
-        if start == model_file::MAGIC {
-            model_file::ModelFile::read(path, ENTRIES, hidden, second).best
+        if start.starts_with(b"PLAYMDL") {
+            model_file::ModelFile::read(path).best
         } else {
-            Network::read(path, ENTRIES, hidden, second)
+            let shape = shape_of("PLAY_SHAPE");
+            Model { shape, network: Network::read(path, shape.entries(), shape.hidden, shape.second) }
         }
     }
 
-    /// The card that the play model `network` scores highest for the player
+    /// The card that the play model `model` scores highest for the player
     /// to play in `game`, or for the opening lead, the first of
     /// `likely_opening_leads`.
-    fn best_card(game: &GameState<()>, convention: &Convention, network: &Network) -> Card {
+    fn best_card(game: &GameState<()>, convention: &Convention, model: &Model) -> Card {
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
         match View::new(game, convention) {
-            Some(view) => view
-                .legal()
-                .max_by(|&a, &b| network.score(&view.entries(a)).total_cmp(&network.score(&view.entries(b))))
-                .unwrap(),
+            Some(view) => {
+                view.legal()
+                    .map(|card| (model.score(&view, card), card))
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
+                    .unwrap()
+                    .1
+            }
             None => {
                 let leader = game.lead.unwrap();
                 likely_opening_leads(&Auction::new(game).unwrap(), game.hands[leader])[0]
@@ -1769,9 +1892,9 @@ mod tests {
     fn play_at_a_table(
         json: &str,
         convention: &Convention,
-        model: &Network,
+        model: &Model,
         model_side: usize,
-        other: Option<&Network>,
+        other: Option<&Model>,
     ) -> usize {
         use crate::ai::PlayAI;
         let mut game: GameState<()> = serde_json::from_str(json).unwrap();
