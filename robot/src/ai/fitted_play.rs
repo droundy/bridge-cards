@@ -181,7 +181,21 @@ impl View {
         hands: Seated<Cards>,
         trick: &[Card],
     ) -> Option<View> {
-        let lead_seat = game.lead?;
+        View::at_moment(game, convention, hands, played_at(game, trick), game.lead?, trick)
+    }
+
+    /// What the next player to `trick`, which `lead_seat` led, would see,
+    /// with the hands then `hands` and the cards that each had played before
+    /// the trick `played`: any moment of the play of `game`, or one that
+    /// might come.
+    pub(crate) fn at_moment<C>(
+        game: &GameState<C>,
+        convention: &Convention,
+        hands: Seated<Cards>,
+        played: Seated<Cards>,
+        lead_seat: Seat,
+        trick: &[Card],
+    ) -> Option<View> {
         let dummy = game.dummy()?;
         let declarer = dummy + 2;
         let place = trick.len();
@@ -223,7 +237,6 @@ impl View {
                 bid[theirs][suit as usize] = true;
             }
         }
-        let played = played_at(game, trick);
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
@@ -432,14 +445,15 @@ fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
     }
 }
 
-/// How likely the cards that players whose hands are `seats` have chosen
-/// for the current trick of `game` are, by the play model, if those hands
-/// were dealt `deal`: the product of the chance of each, as it was played.
-/// That includes the dummy's cards when the declarer is hidden, since how
-/// the declarer plays the dummy shows something of their own hand.
-/// Weighting deals of an ensemble by it draws what can be drawn from those
-/// plays.
-pub(crate) fn trick_likelihood<C>(
+/// How likely the cards that the players whose hands are `seats` have
+/// chosen are, by the play model, if those hands were dealt `deal`: the
+/// product of the chance of each card, in the view its player had when they
+/// played it.  That includes the dummy's cards when the declarer is hidden,
+/// since how the declarer plays the dummy shows something of their own hand.
+/// It covers the tricks in `game.tricks` and the current trick: all of the
+/// play, unless the game was saved before tricks were kept.  Weighting
+/// deals of an ensemble by it draws what can be drawn from the play.
+pub(crate) fn play_likelihood<C>(
     game: &GameState<C>,
     convention: &Convention,
     seats: [Seat; 2],
@@ -448,21 +462,42 @@ pub(crate) fn trick_likelihood<C>(
     temperature: f64,
 ) -> f64 {
     let current = current_trick(game);
-    let mut likelihood = 1.0;
-    for (i, &card) in current.iter().enumerate() {
-        if !seats.contains(&chooser(game, seat_of(game, i))) {
-            continue;
+    let mut tricks: Vec<(Seat, &[Card])> = game
+        .tricks
+        .iter()
+        .map(|(lead, cards)| (*lead, &cards[..]))
+        .collect();
+    if let Some(lead) = game.lead.filter(|_| !current.is_empty()) {
+        tricks.push((lead, current));
+    }
+    // The hands and what each had played before the first of those tricks.
+    let mut hands = hands_at(game, seats, deal, current);
+    let mut played = played_at(game, current);
+    for &(lead, cards) in &tricks {
+        for (i, &card) in cards.iter().enumerate() {
+            hands[lead + i] += Cards::singleton(card);
+            played[lead + i] -= Cards::singleton(card);
         }
-        let trick = &current[..i];
-        let hands = hands_at(game, seats, deal, trick);
-        let Some(view) = View::at(game, convention, hands, trick) else {
-            continue;
-        };
-        let chance = chances(&view, weights, temperature)
-            .into_iter()
-            .find(|c| c.0 == card)
-            .map_or(0.0, |c| c.1);
-        likelihood *= chance;
+    }
+    let mut likelihood = 1.0;
+    for (lead, cards) in tricks {
+        for (i, &card) in cards.iter().enumerate() {
+            let seat = lead + i;
+            if seats.contains(&chooser(game, seat)) {
+                let chance = View::at_moment(game, convention, hands, played, lead, &cards[..i])
+                    .map_or(1.0, |view| {
+                        chances(&view, weights, temperature)
+                            .into_iter()
+                            .find(|c| c.0 == card)
+                            .map_or(0.0, |c| c.1)
+                    });
+                likelihood *= chance;
+            }
+            hands[seat] -= Cards::singleton(card);
+        }
+        for (i, &card) in cards.iter().enumerate() {
+            played[lead + i] += Cards::singleton(card);
+        }
     }
     likelihood
 }
@@ -548,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn the_tricks_kept_are_the_play_so_far() {
+        for game in some_games() {
+            let current = current_trick(&game);
+            assert_eq!(game.tricks.len(), game.ns_tricks + game.ew_tricks);
+            let mut played = Seated::new([Cards::EMPTY; 4]);
+            let mut lead = game.dummy().unwrap() + 3;
+            for &(leader, cards) in &game.tricks {
+                assert_eq!(leader, lead);
+                let mut winner = 0;
+                for (i, &card) in cards.iter().enumerate() {
+                    played[leader + i] += Cards::singleton(card);
+                    if beats(trump_of(&game), card, cards[winner]) {
+                        winner = i;
+                    }
+                }
+                lead = leader + winner;
+            }
+            assert_eq!(Some(lead), game.lead);
+            for (i, &card) in current.iter().enumerate() {
+                played[lead + i] += Cards::singleton(card);
+            }
+            for s in 0..4 {
+                let seat = Seat::from(s);
+                assert_eq!(played[seat], game.original_hands[seat] - game.hands[seat]);
+            }
+        }
+    }
+
+    #[test]
     fn a_view_earlier_in_the_trick_could_play_the_card_that_was_played() {
         for game in some_games() {
             let convention = game.system.convention();
@@ -575,7 +639,7 @@ mod tests {
             let hidden = Hidden::new(&game, &convention).unwrap();
             let seats = hidden.seats();
             let real = seats.map(|seat| game.hands[seat]);
-            assert!(trick_likelihood(&game, &convention, seats, real, &weights, 1.0) > 0.0);
+            assert!(play_likelihood(&game, &convention, seats, real, &weights, 1.0) > 0.0);
             // After the first card we could play, what would the next
             // player play, if we cannot see their hand?
             let trick: Vec<Card> = current_trick(&game)

@@ -212,6 +212,12 @@ pub struct GameState<C> {
     /// not following suit.  The robot deals that seat none of them.
     #[serde(default = "no_cards")]
     pub shown_out: Seated<Cards>,
+    /// The tricks played so far, before any that is still being played:
+    /// who led each, and its cards in the order they were played, which is
+    /// what a player who remembers the play knows.  Games saved before this
+    /// was kept have none.
+    #[serde(default)]
+    pub tricks: Vec<(Seat, [Card; 4])>,
 
     #[serde(skip)]
     pub last_action: Option<std::time::Instant>,
@@ -269,6 +275,7 @@ impl<C> GameState<C> {
             ns_tricks: 0,
             ew_tricks: 0,
             shown_out: no_cards(),
+            tricks: Vec::new(),
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
             conventions,
@@ -561,6 +568,8 @@ impl<C> GameState<C> {
 
     pub fn trick_finish(&mut self) {
         if self.played.len() == 4 {
+            let cards = [self.played[0], self.played[1], self.played[2], self.played[3]];
+            self.tricks.push((self.lead.unwrap(), cards));
             let led = self.played[0].suit();
             let mut cards = Cards::EMPTY;
             for c in self.played.iter().cloned() {
@@ -877,13 +886,17 @@ fn declarer_tricks(
             defenders_remember
         };
         let shown_out = game.shown_out;
+        let tricks = std::mem::take(&mut game.tricks);
         if !remembers {
             game.shown_out = no_cards();
+        } else {
+            game.tricks = tricks.clone();
         }
         let Action::Play(_, card) = ai.play(game) else {
             unreachable!()
         };
         game.shown_out = shown_out;
+        game.tricks = tricks;
         game.play(card);
     }
     Some(match declarer {
