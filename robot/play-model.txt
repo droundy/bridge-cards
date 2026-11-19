@@ -1,0 +1,5 @@
+# The play model file that the robot's build includes, kept as an asset of the
+# GitHub release play-models rather than in git: fetch-play-model.sh fetches it
+# and checks it against this SHA-256, and train-play-model.sh replaces it.
+url https://github.com/droundy/bridge-cards/releases/download/play-models/play_model-round-002000.bin
+sha256 2afe26716d7ace604c0d595c55a2f9a6733ec508cbaa76576a02c75de68d93cd
