@@ -84,6 +84,30 @@ impl Network {
         Network { entries, hidden, second, params }
     }
 
+    /// `values`, laid out as this network's weights are (its weights, or
+    /// Adam's moments of them), with the entries renumbered: entry `e`
+    /// becomes `moved[e]` of `entries`, keeping its values, or is dropped if
+    /// that is `None`.  An entry that none moves to has values of 0.  The
+    /// units' values are as they were.
+    #[cfg(test)]
+    pub(crate) fn with_entries_moved(&self, values: &[f64], moved: &[Option<usize>], entries: usize) -> Vec<f64> {
+        assert_eq!(moved.len(), self.entries);
+        assert_eq!(values.len(), self.params.len());
+        let h = self.hidden;
+        let new = Network { entries, hidden: h, second: self.second, params: Vec::new() };
+        let mut result = vec![0.0; size(entries, h, self.second)];
+        for (old, to) in moved.iter().enumerate() {
+            if let Some(to) = *to {
+                result[to] = values[old];
+                let (from, to) = (self.first_weights() + old * h, new.first_weights() + to * h);
+                result[to..to + h].copy_from_slice(&values[from..from + h]);
+            }
+        }
+        let start = new.first_biases();
+        result[start..].copy_from_slice(&values[self.first_biases()..]);
+        result
+    }
+
     fn first_weights(&self) -> usize {
         self.entries
     }

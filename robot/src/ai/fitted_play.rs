@@ -20,32 +20,38 @@ use bridge_deck::{Card, Cards, Suit};
 /// their own hand, 1 for the declarer playing the dummy's, and 2 and 3 for
 /// the defenders on the declarer's left and right; the place is how many
 /// cards have been played to the trick; how a card is played is whether it
-/// leads, follows suit, ruffs or is discarded.
+/// leads, follows suit, ruffs or is discarded.  The play is the place and
+/// how, of which there are ten: a lead, or a card that follows, ruffs or is
+/// discarded in second, third or fourth place.
+///
+/// The tables that end in 1 are those of [`V1`], laid out with room for
+/// combinations that cannot happen (the place and how as 16 rather than the
+/// 10 plays, and five holders of a card where there are four).  Each is
+/// otherwise the table of the same name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Table {
-    /// The role, the place, how the card is played, whether partner is
-    /// winning the trick, and whether the card beats the trick so far.
+    /// The role, the play, whether partner is winning the trick, and
+    /// whether the card beats the trick so far.
     Trick,
     /// The place, and whether each of the three cards just above is the
-    /// player's, in the other hand in sight, or hidden.
+    /// player's, in the other hand in sight, hidden, or not left at all.
     Above,
     /// The place, and the same of the three cards just below.
     Below,
-    /// The place, how the card is played, how many cards of its suit are
-    /// left above it, and whether it is the player's lowest of the suit.
+    /// The play, how many cards of its suit are left above it, and whether
+    /// it is the player's lowest of the suit.
     Rank,
     /// The place, the player's length in the suit, the length of the other
     /// hand in sight, and whether the suit is trumps.
     Lengths,
-    /// The place, how the card is played, and how many tricks are left.
+    /// The play, and how many tricks are left.
     TricksLeft,
-    /// The role, the place, how the card is played, and how the tricks the
-    /// declarer still needs for the contract compare with the tricks left:
-    /// already made, beaten, or with none, one, two, or more to spare.
+    /// The role, the play, and how the tricks the declarer still needs for
+    /// the contract compare with the tricks left: already made, beaten, or
+    /// with none, one, two, or more to spare.
     Contract,
-    /// The place, how the card is played, and the fewest and most cards of
-    /// its suit that the first hidden hand after the player can hold, by the
-    /// auction and the play.
+    /// The play, and the fewest and most cards of its suit that the first
+    /// hidden hand after the player can hold, by the auction and the play.
     FirstLength,
     /// The same of the second hidden hand.
     SecondLength,
@@ -55,20 +61,79 @@ pub(crate) enum Table {
     FirstPoints,
     /// The same of the second hidden hand.
     SecondPoints,
+    Trick1,
+    Above1,
+    Below1,
+    Rank1,
+    TricksLeft1,
+    Contract1,
+    FirstLength1,
+    SecondLength1,
+}
+
+/// How many plays there are: see [`Table`].
+const PLAYS: usize = 10;
+
+/// The play of a card in `place` played as `how` (see [`Table`]), or `None`
+/// if no card is played so.
+fn play_of(place: usize, how: usize) -> Option<usize> {
+    match (place, how) {
+        (0, 0) => Some(0),
+        (1..=3, 1..=3) => Some(1 + (place - 1) * 3 + how - 1),
+        _ => None,
+    }
+}
+
+/// The holders of three cards as [`Table::Above`] has them, from the base-5
+/// number of [`Cards::holders_above`], or `None` if a card is held by the
+/// fourth hand, which [`View::entries`] never has.
+fn holders_of(base_5: usize) -> Option<usize> {
+    let digits = [base_5 % 5, base_5 / 5 % 5, base_5 / 25];
+    digits.iter().all(|&d| d < 4).then(|| digits[0] + 4 * digits[1] + 16 * digits[2])
 }
 
 impl Table {
     /// How many entries the table has.
     pub(crate) const fn size(self) -> usize {
         match self {
-            Table::Trick => 4 * 4 * 4 * 2 * 2,
-            Table::Above | Table::Below => 4 * 125,
-            Table::Rank => 4 * 4 * 6 * 2,
+            Table::Trick => 4 * PLAYS * 2 * 2,
+            Table::Above | Table::Below => 4 * 64,
+            Table::Rank => PLAYS * 6 * 2,
             Table::Lengths => 4 * 4 * 4 * 2,
-            Table::TricksLeft => 4 * 4 * 6,
-            Table::Contract => 4 * 4 * 4 * 6,
-            Table::FirstLength | Table::SecondLength => 4 * 4 * 20,
+            Table::TricksLeft => PLAYS * 6,
+            Table::Contract => 4 * PLAYS * 6,
+            Table::FirstLength | Table::SecondLength => PLAYS * 20,
             Table::FirstPoints | Table::SecondPoints => 4 * 4 * 20 * 2,
+            Table::Trick1 => 4 * 4 * 4 * 2 * 2,
+            Table::Above1 | Table::Below1 => 4 * 125,
+            Table::Rank1 => 4 * 4 * 6 * 2,
+            Table::TricksLeft1 => 4 * 4 * 6,
+            Table::Contract1 => 4 * 4 * 4 * 6,
+            Table::FirstLength1 | Table::SecondLength1 => 4 * 4 * 20,
+        }
+    }
+
+    /// The table that this one of [`V1`] is laid out anew as, and the entry
+    /// of that table that its entry `index` becomes, or `None` for an entry
+    /// that no card looks up.  The other tables are as they were.
+    #[cfg(test)]
+    fn without_room(self, index: usize) -> (Table, Option<usize>) {
+        // The play of a v1 index whose lowest digits are `rest` values and
+        // whose next are the place and how.
+        let play = |index: usize, rest: usize| {
+            let (high, low) = (index / rest, index % rest);
+            Some((high / 16, play_of(high / 4 % 4, high % 4)? * rest + low))
+        };
+        match self {
+            Table::Trick1 => (Table::Trick, play(index, 4).map(|(role, p)| role * PLAYS * 4 + p)),
+            Table::Above1 => (Table::Above, holders_of(index % 125).map(|h| index / 125 * 64 + h)),
+            Table::Below1 => (Table::Below, holders_of(index % 125).map(|h| index / 125 * 64 + h)),
+            Table::Rank1 => (Table::Rank, play(index, 12).map(|(_, p)| p)),
+            Table::TricksLeft1 => (Table::TricksLeft, play(index, 6).map(|(_, p)| p)),
+            Table::Contract1 => (Table::Contract, play(index, 6).map(|(role, p)| role * PLAYS * 6 + p)),
+            Table::FirstLength1 => (Table::FirstLength, play(index, 20).map(|(_, p)| p)),
+            Table::SecondLength1 => (Table::SecondLength, play(index, 20).map(|(_, p)| p)),
+            table => (table, Some(index)),
         }
     }
 }
@@ -97,6 +162,28 @@ pub(crate) struct Shape {
 pub(crate) const V1: Shape = Shape {
     name: "v1",
     tables: &[
+        Table::Trick1,
+        Table::Above1,
+        Table::Below1,
+        Table::Rank1,
+        Table::Lengths,
+        Table::TricksLeft1,
+        Table::Contract1,
+        Table::FirstLength1,
+        Table::SecondLength1,
+        Table::FirstPoints,
+        Table::SecondPoints,
+    ],
+    hidden: 16,
+    second: 8,
+};
+
+/// [`V1`] without the entries that no card looks up: the same facts, and
+/// the same model, in 2,900 entries rather than 3,976 (see
+/// [`Model::without_room`]).
+pub(crate) const V2: Shape = Shape {
+    name: "v2",
+    tables: &[
         Table::Trick,
         Table::Above,
         Table::Below,
@@ -113,12 +200,12 @@ pub(crate) const V1: Shape = Shape {
     second: 8,
 };
 
-/// [`V1`] with hidden layers twice as wide, to see whether its width is what
+/// [`V2`] with hidden layers twice as wide, to see whether its width is what
 /// limits it.
-pub(crate) const V1_WIDE: Shape = Shape { name: "v1-wide", tables: V1.tables, hidden: 32, second: 16 };
+pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, hidden: 32, second: 16 };
 
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] = &[&V1, &V1_WIDE];
+pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE];
 
 impl Shape {
     /// The shape called `name`, if there is one.
@@ -173,6 +260,33 @@ impl Model {
     /// Its score for playing `card` in `view`.
     pub(crate) fn score(&self, view: &View, card: Card) -> f64 {
         self.network.score(&self.entries(view, card))
+    }
+
+    /// This model of [`V1`] as a model of [`V2`], which scores every card
+    /// the same: each entry that a card can look up keeps its weights, and
+    /// the others are dropped.
+    #[cfg(test)]
+    pub(crate) fn without_room(&self) -> Model {
+        let moved = Model::entries_without_room();
+        let params = self.network.with_entries_moved(&self.network.params, &moved, V2.entries());
+        Model::with_params(&V2, params)
+    }
+
+    /// Where each entry of [`V1`] is in [`V2`], if it is there.
+    #[cfg(test)]
+    fn entries_without_room() -> Vec<Option<usize>> {
+        let mut moved = vec![None; V1.entries()];
+        let (mut from, mut to) = (0, 0);
+        for (&old, &new) in V1.tables.iter().zip(V2.tables) {
+            for index in 0..old.size() {
+                let (table, entry) = old.without_room(index);
+                assert_eq!(table, new);
+                moved[from + index] = entry.map(|e| to + e);
+            }
+            from += old.size();
+            to += new.size();
+        }
+        moved
     }
 }
 
@@ -461,20 +575,32 @@ impl View {
             _ => 5,
         };
         let honour = (card.rank() >= 10) as usize;
+        let play = play_of(place, how).unwrap();
+        let (above3, below3) = (
+            Cards::holders_above(&in_sight, card_now, 3),
+            Cards::holders_below(&in_sight, card_now, 3),
+        );
+        let trick = (self.partner_winning as usize) * 2 + beats as usize;
         let index = |table: Table| match table {
-            Table::Trick => {
-                (((role * 4 + place) * 4 + how) * 2 + self.partner_winning as usize) * 2 + beats as usize
-            }
-            Table::Above => place * 125 + Cards::holders_above(&in_sight, card_now, 3),
-            Table::Below => place * 125 + Cards::holders_below(&in_sight, card_now, 3),
-            Table::Rank => ((place * 4 + how) * 6 + above) * 2 + lowest as usize,
+            Table::Trick => (role * PLAYS + play) * 4 + trick,
+            Table::Above => place * 64 + holders_of(above3).unwrap(),
+            Table::Below => place * 64 + holders_of(below3).unwrap(),
+            Table::Rank => (play * 6 + above) * 2 + lowest as usize,
             Table::Lengths => ((place * 4 + length) * 4 + other_length) * 2 + trumps as usize,
-            Table::TricksLeft => (place * 4 + how) * 6 + tricks,
-            Table::Contract => ((role * 4 + place) * 4 + how) * 6 + self.contract,
-            Table::FirstLength => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
-            Table::SecondLength => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
+            Table::TricksLeft => play * 6 + tricks,
+            Table::Contract => (role * PLAYS + play) * 6 + self.contract,
+            Table::FirstLength => play * 20 + self.shown[0].length_index(suit),
+            Table::SecondLength => play * 20 + self.shown[1].length_index(suit),
             Table::FirstPoints => ((role * 4 + place) * 20 + self.shown[0].points_index()) * 2 + honour,
             Table::SecondPoints => ((role * 4 + place) * 20 + self.shown[1].points_index()) * 2 + honour,
+            Table::Trick1 => ((role * 4 + place) * 4 + how) * 4 + trick,
+            Table::Above1 => place * 125 + above3,
+            Table::Below1 => place * 125 + below3,
+            Table::Rank1 => ((place * 4 + how) * 6 + above) * 2 + lowest as usize,
+            Table::TricksLeft1 => (place * 4 + how) * 6 + tricks,
+            Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
+            Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
+            Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
         };
         let mut offset = 0;
         shape
@@ -873,6 +999,65 @@ mod tests {
     #[test]
     fn the_included_model_is_of_this_shape() {
         assert_eq!(MODEL.is_empty(), model().is_none());
+    }
+
+    /// A model of [`V1`] laid out anew as one of [`V2`] scores every card
+    /// that could be played as it did.
+    #[test]
+    fn a_model_without_room_scores_the_same() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut old = Model::new(&V1, 6);
+        for p in &mut old.network.params {
+            *p = rng.gen_range(-1.0..1.0);
+        }
+        let new = old.without_room();
+        assert_eq!(V2.entries(), 2900);
+        for game in some_games() {
+            let convention = game.system.convention();
+            let view = View::new(&game, &convention).unwrap();
+            for card in view.legal() {
+                let (a, b) = (old.score(&view, card), new.score(&view, card));
+                assert!((a - b).abs() < 1e-9, "{a} {b}");
+            }
+        }
+    }
+
+    /// Writes the play model file `PLAY_MODEL_FILE` again to `PLAY_MODEL_OUT`
+    /// with each of its models of [`V1`] laid out as one of [`V2`] (see
+    /// [`Model::without_room`]), learners with their state of Adam.  They
+    /// play just as they did, with a quarter fewer weights.
+    #[test]
+    #[ignore]
+    fn convert_play_model_file() {
+        let file = model_file::ModelFile::read(&std::env::var("PLAY_MODEL_FILE").expect("PLAY_MODEL_FILE"));
+        let moved = Model::entries_without_room();
+        let convert = |model: Model| if model.shape == &V1 { model.without_room() } else { model };
+        let learners = file
+            .learners
+            .into_iter()
+            .map(|learner| {
+                let adam = learner.adam.map(|adam| {
+                    if learner.model.shape != &V1 {
+                        return adam;
+                    }
+                    let (first, second, steps) = adam.parts();
+                    let network = &learner.model.network;
+                    fitting::Adam::from_parts(
+                        network.with_entries_moved(first, &moved, V2.entries()),
+                        network.with_entries_moved(second, &moved, V2.entries()),
+                        steps,
+                    )
+                });
+                model_file::Learner { model: convert(learner.model), adam }
+            })
+            .collect();
+        model_file::ModelFile {
+            round: file.round,
+            best: convert(file.best),
+            learners,
+            league: file.league.into_iter().map(|(round, model)| (round, convert(model))).collect(),
+        }
+        .write(&std::env::var("PLAY_MODEL_OUT").expect("PLAY_MODEL_OUT"));
     }
 
     /// A view of an earlier moment of the play, such as `play_likelihood`

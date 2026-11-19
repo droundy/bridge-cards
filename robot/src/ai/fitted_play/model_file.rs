@@ -184,16 +184,16 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::fitted_play::V1_WIDE;
+    use crate::ai::fitted_play::V2_WIDE;
 
     /// A file holds models of several shapes, and reads back as it was
     /// written, to the precision of an `f32`.
     #[test]
     fn a_file_of_several_shapes_reads_back() {
         let model = |shape: &'static Shape, seed| Model::new(shape, seed);
-        let mut adam = Adam::new(V1_WIDE.size());
-        let mut wide = model(&V1_WIDE, 2);
-        adam.step(&mut wide.network.params, &vec![0.5; V1_WIDE.size()], 0.01);
+        let mut adam = Adam::new(V2_WIDE.size());
+        let mut wide = model(&V2_WIDE, 2);
+        adam.step(&mut wide.network.params, &vec![0.5; V2_WIDE.size()], 0.01);
         let file = ModelFile {
             round: 7,
             best: model(&V1, 1),
@@ -201,7 +201,7 @@ mod tests {
                 Learner { model: model(&V1, 1), adam: None },
                 Learner { model: wide, adam: Some(adam) },
             ],
-            league: vec![(5, model(&V1_WIDE, 3)), (6, model(&V1, 4))],
+            league: vec![(5, model(&V2_WIDE, 3)), (6, model(&V1, 4))],
         };
         let path = std::env::temp_dir().join(format!("play-model-{}.bin", std::process::id()));
         let path = path.to_str().unwrap();
