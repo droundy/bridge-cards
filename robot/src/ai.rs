@@ -124,21 +124,27 @@ fn all_bids() -> Vec<Bid> {
 pub struct ConventionalBid(pub Convention);
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
-        let hand = hand.values();
+        self.0.bid_for(history, &hand.values())
+    }
+}
+
+impl Convention {
+    /// The bid that the robot makes by this table with `hand` after
+    /// `history`, as [`ConventionalBid`] says.
+    pub(crate) fn bid_for(&self, history: &[Bid], hand: &HandValuation) -> Bid {
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
         let mut best: Option<(usize, Bid, Convention)> = None;
         for b in legal_bids(history).into_iter().rev() {
             *bids.last_mut().unwrap() = b;
             let before = best.as_ref().map_or(usize::MAX, |&(j, _, _)| j);
-            if let Some((i, c)) = self.0.first_fit(&bids, &hand, before) {
+            if let Some((i, c)) = self.first_fit(&bids, hand, before) {
                 best = Some((i, b, c));
             }
         }
         if best.is_none() {
             best = self
-                .0
-                .contract_known(history, &hand)
+                .contract_known(history, hand)
                 .map(|(b, c)| (usize::MAX, b, c));
         }
         if let Some((_, b, _)) = best {
@@ -147,9 +153,7 @@ impl BidAI for ConventionalBid {
             Bid::Pass
         }
     }
-}
 
-impl Convention {
     /// When no entry fits `hand` after `history`, the contract the rules know
     /// for it, though they would rather have explored: the highest bid of
     /// the rules that fits it, if any.  A game with no fit, in a suit the hand

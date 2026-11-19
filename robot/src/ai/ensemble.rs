@@ -11,15 +11,22 @@
 //! it wins with best play by everyone in every deal of the ensemble, and plays
 //! the card whose mean is best.
 //!
+//! The bounds that the auction shows are only the extremes of each hand: a hand
+//! of 14 points with five spades fits an opening of 1♠, and so does one that
+//! would have opened 1♥.  So the ensemble can also be narrowed to the deals
+//! that the robot would have bid the auction with, by bidding each of them
+//! again ([`Hidden::closest_to_the_auction`]).  People do not always bid as the
+//! robot does, so it keeps the deals that make every call and then those that
+//! miss fewest, as many as it wants.
+//!
 //! Two things in this are not true to the game.  Best play by everyone with
 //! every hand known is not how anyone plays, since a defender who cannot see
 //! the declarer's hand would not play as though they could.  And the ensemble
-//! gives every deal that fits the same weight, as though each hand were as
-//! likely as any other that has the same shape and strength, which is not how
-//! people bid.
+//! gives every deal that it keeps the same weight, as though each hand were as
+//! likely as any other that would have been bid the same way.
 
 use super::{Convention, PlayAI, RandomPlay};
-use crate::{BiddingSystem, GameState, Seat};
+use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use bridge_solver::{Naive, Starting};
 use rand::rngs::StdRng;
@@ -29,6 +36,10 @@ use rand::{Rng, SeedableRng};
 /// How many deals to try for one that fits the auction before taking one that
 /// does not.
 const ATTEMPTS: usize = 1000;
+
+/// How many deals are sampled for each one wanted in an ensemble that is to be
+/// bid as the auction was, since many of them are not.
+pub(crate) const OVERSAMPLE: usize = 4;
 
 /// The two hands that a player cannot see, and what they know of them.
 #[derive(Debug)]
@@ -48,6 +59,10 @@ pub(crate) struct Hidden {
     /// What the bids of each hand show of the hand that it bid with, as a
     /// minimum and a maximum.
     bounds: [(HandValuation, HandValuation); 2],
+    /// The auction.
+    bids: Vec<Bid>,
+    /// Where in the auction each hand made its calls.
+    calls: [Vec<usize>; 2],
 }
 
 impl Hidden {
@@ -77,7 +92,84 @@ impl Hidden {
             forbidden: seats.map(|seat| game.shown_out[seat]),
             played: seats.map(|seat| game.original_hands[seat] - game.hands[seat]),
             bounds: seats.map(|seat| convention.shown_bounds(&game.bids, bid_offset(seat))),
+            bids: game.bids.clone(),
+            calls: seats.map(|seat| {
+                (0..game.bids.len())
+                    .filter(|&i| game.dealer + i == seat)
+                    .collect()
+            }),
         })
+    }
+
+    /// The seats of the two hands.
+    #[cfg(feature = "benchmarks")]
+    pub(crate) fn seats(&self) -> [Seat; 2] {
+        self.seats
+    }
+
+    /// How many of the calls that the two hands made the robot would not have
+    /// made with the hands of `deal`, bidding by `convention`.  None, when
+    /// `deal` is a deal that the robot would have bid the auction with.
+    pub(crate) fn calls_missed(&self, deal: &[Cards; 2], convention: &Convention) -> usize {
+        (0..2)
+            .map(|i| {
+                let hand = (deal[i] + self.played[i]).values();
+                self.calls[i]
+                    .iter()
+                    .filter(|&&call| {
+                        convention.bid_for(&self.bids[..call], &hand) != self.bids[call]
+                    })
+                    .count()
+            })
+            .sum()
+    }
+
+    /// The `count` of `deals` that come closest to being bid as the auction
+    /// was, by `convention`: the deals that the robot would have bid the
+    /// auction with, and then those that miss fewest of its calls.  People do
+    /// not always bid as the robot does, so there may be no deal that makes
+    /// every call, and a deal that misses one may be as likely as one that
+    /// makes them all.
+    pub(crate) fn closest_to_the_auction(
+        &self,
+        deals: Vec<[Cards; 2]>,
+        convention: &Convention,
+        count: usize,
+    ) -> Vec<[Cards; 2]> {
+        let mut ranked: Vec<(usize, [Cards; 2])> = deals
+            .into_iter()
+            .map(|deal| (self.calls_missed(&deal, convention), deal))
+            .collect();
+        ranked.sort_by_key(|&(missed, _)| missed);
+        ranked
+            .into_iter()
+            .take(count)
+            .map(|(_, deal)| deal)
+            .collect()
+    }
+
+    /// An ensemble of `count` deals, or fewer if the cards cannot be dealt.
+    /// With `replay`, a convention, it is the deals of `count` times
+    /// [`OVERSAMPLE`] that come closest to being bid as the auction was by
+    /// that convention.
+    pub(crate) fn ensemble(
+        &self,
+        rng: &mut impl Rng,
+        count: usize,
+        replay: Option<&Convention>,
+    ) -> Vec<[Cards; 2]> {
+        let sampled = if replay.is_some() {
+            count * OVERSAMPLE
+        } else {
+            count
+        };
+        let mut deals: Vec<[Cards; 2]> = (0..sampled)
+            .map_while(|_| self.sample(rng).map(|(deal, _)| deal))
+            .collect();
+        if let Some(convention) = replay {
+            deals = self.closest_to_the_auction(deals, convention, count);
+        }
+        deals
     }
 
     /// Whether `hands` are hands that the auction could have been made with.
@@ -265,12 +357,20 @@ fn deals_for(tricks_left: usize) -> usize {
 /// ensemble of the hands that cannot be seen, which fit the auction and the
 /// play so far.  With more tricks left than [`MOST_TRICKS`] it is too slow to
 /// work the values out, and it plays as [`RandomPlay`] does.
+///
+/// The hands of the ensemble fit the bounds that the auction shows.  One that
+/// [replays the auction](EnsemblePlay::replaying_the_auction) also keeps only
+/// the deals that the robot would have bid the auction with, or that come
+/// closest to it.
 #[derive(Debug)]
 pub struct EnsemblePlay {
     rng: StdRng,
     /// The conventions that auctions have been read with, each with the system
     /// it is the convention of, so that each is built only once.
     conventions: Vec<(BiddingSystem, Convention)>,
+    /// Whether to keep the deals that come closest to being bid as the
+    /// auction was.
+    replay: bool,
 }
 
 impl EnsemblePlay {
@@ -287,18 +387,36 @@ impl EnsemblePlay {
         EnsemblePlay {
             rng,
             conventions: Vec::new(),
+            replay: false,
         }
     }
 
-    /// What the player knows of the hands that they cannot see.
-    fn hidden<C>(&mut self, game: &GameState<C>) -> Option<Hidden> {
+    /// This player, choosing by an ensemble of the deals that the robot would
+    /// have bid the auction with, or that miss as few of its calls as any.
+    pub fn replaying_the_auction(self) -> Self {
+        EnsemblePlay {
+            replay: true,
+            ..self
+        }
+    }
+
+    /// The ensemble of `count` deals of the hands that the player cannot see,
+    /// with what the player knows of them.
+    fn ensemble<C>(
+        &mut self,
+        game: &GameState<C>,
+        count: usize,
+    ) -> Option<(Hidden, Vec<[Cards; 2]>)> {
         let known = self.conventions.iter().position(|(s, _)| *s == game.system);
         let i = known.unwrap_or_else(|| {
             let convention = game.system.convention();
             self.conventions.push((game.system, convention));
             self.conventions.len() - 1
         });
-        Hidden::new(game, &self.conventions[i].1)
+        let convention = &self.conventions[i].1;
+        let hidden = Hidden::new(game, convention)?;
+        let deals = hidden.ensemble(&mut self.rng, count, self.replay.then_some(convention));
+        Some((hidden, deals))
     }
 }
 
@@ -315,16 +433,16 @@ impl PlayAI for EnsemblePlay {
         if legal.len() == 1 {
             return legal.min().unwrap();
         }
-        let Some(hidden) = self.hidden(game).filter(|_| tricks_left <= MOST_TRICKS) else {
+        if tricks_left > MOST_TRICKS {
+            return RandomPlay.play(game);
+        }
+        let Some((hidden, deals)) = self.ensemble(game, deals_for(tricks_left)) else {
             return RandomPlay.play(game);
         };
         let trump = trump_of(game);
         let mut totals: Vec<(Card, f64)> = legal.map(|card| (card, 0.0)).collect();
         let mut dealt = 0;
-        for _ in 0..deals_for(tricks_left) {
-            let Some((deal, _)) = hidden.sample(&mut self.rng) else {
-                break;
-            };
+        for deal in deals {
             let Some((starting, in_trick)) = starting_with(game, &hidden, deal) else {
                 break;
             };
@@ -438,27 +556,7 @@ mod tests {
 
     #[test]
     fn the_opener_of_one_notrump_is_dealt_the_points_that_it_shows() {
-        // West opens 1NT, and everyone else passes.
-        let mut game = GameState::<()>::new();
-        game.set_system(BiddingSystem::Sayc);
-        let hands: Seated<Cards> = [
-            // South, East and North are given what is left of the deck, and
-            // West is given 15 points.
-            Cards::from_str("S T98 H T98 D T98 C T987").unwrap(),
-            Cards::from_str("S AK2 H KQ3 D Q42 C J543").unwrap(),
-            Cards::from_str("S Q76 H J76 D J76 C Q62").unwrap(),
-            Cards::EMPTY,
-        ]
-        .into();
-        let mut hands = hands;
-        hands[Seat::East] =
-            Cards::ALL - hands[Seat::South] - hands[Seat::West] - hands[Seat::North];
-        game.hands = hands;
-        game.original_hands = hands;
-        game.dealer = Seat::South;
-        game.bids = vec![Bid::Pass, Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
-        // West is the declarer, East the dummy, and North is on lead.
-        game.lead = Some(Seat::North);
+        let game = one_notrump_by_west();
         let convention = BiddingSystem::Sayc.convention();
         let hidden = Hidden::new(&game, &convention).unwrap();
         assert_eq!(Seat::North, game.turn().unwrap());
@@ -474,6 +572,165 @@ mod tests {
             }
         }
         assert!(fitted > 10, "only {fitted} of 40 deals fit");
+    }
+
+    /// How long it takes to value every legal card in one deal, which is what
+    /// a choice of `EnsemblePlay` costs for each deal of its ensemble, for the
+    /// stages in `ENSEMBLE_STAGES` (by default 8 to 11 tricks left).
+    #[test]
+    #[ignore]
+    fn report_the_time_to_value_the_cards_of_a_deal() {
+        let stages: Vec<usize> = std::env::var("ENSEMBLE_STAGES")
+            .ok()
+            .map(|s| s.split(',').filter_map(|n| n.parse().ok()).collect())
+            .unwrap_or(vec![8, 9, 10, 11]);
+        for tricks_left in stages {
+            let mut times = Vec::new();
+            for game in games(tricks_left, 8) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let mut rng = StdRng::seed_from_u64(1);
+                let (deal, _) = hidden.sample(&mut rng).unwrap();
+                let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
+                let started = std::time::Instant::now();
+                card_values(starting, trump_of(&game), &in_trick, game.could_be_played());
+                times.push(started.elapsed().as_secs_f64());
+                eprintln!("{tricks_left} tricks left: {:.3} s", times.last().unwrap());
+            }
+            times.sort_by(f64::total_cmp);
+            println!(
+                "{tricks_left} tricks left: mean {:.3} s, median {:.3} s, most {:.3} s a deal",
+                times.iter().sum::<f64>() / times.len() as f64,
+                times[times.len() / 2],
+                times[times.len() - 1],
+            );
+        }
+    }
+
+    /// West opens 1NT with 15 points in SAYC, and everyone else passes, with
+    /// North on lead.  The hands that North cannot see are South's and West's.
+    fn one_notrump_by_west() -> GameState<()> {
+        let mut game = GameState::<()>::new();
+        game.set_system(BiddingSystem::Sayc);
+        let mut hands: Seated<Cards> = [
+            Cards::from_str("S T98 H T98 D T98 C T987").unwrap(),
+            Cards::from_str("S AK2 H KQ3 D Q42 C J543").unwrap(),
+            Cards::from_str("S Q76 H J76 D J76 C Q62").unwrap(),
+            Cards::EMPTY,
+        ]
+        .into();
+        hands[Seat::East] =
+            Cards::ALL - hands[Seat::South] - hands[Seat::West] - hands[Seat::North];
+        game.hands = hands;
+        game.original_hands = hands;
+        game.dealer = Seat::South;
+        game.bids = vec![Bid::Pass, Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+        game.lead = Some(Seat::North);
+        game
+    }
+
+    #[test]
+    fn the_hands_that_were_bid_make_every_call_of_their_auction() {
+        for tricks_left in [12, 7, 3] {
+            for game in games(tricks_left, 6) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let actual = hidden.seats.map(|seat| game.hands[seat]);
+                assert_eq!(
+                    0,
+                    hidden.calls_missed(&actual, &convention),
+                    "{:?}",
+                    game.bids
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_replayed_ensemble_makes_every_call_when_it_can() {
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        assert_eq!(vec![0, 4], hidden.calls[0]);
+        assert_eq!(vec![1], hidden.calls[1]);
+        let mut rng = StdRng::seed_from_u64(4);
+        let deals = hidden.ensemble(&mut rng, 20, Some(&convention));
+        assert!(deals.len() > 5, "only {} deals", deals.len());
+        for deal in &deals {
+            assert_eq!(0, hidden.calls_missed(deal, &convention));
+            // South passed as dealer, so it has no opening bid.
+            assert!(deal[0].high_card_points() < 13, "{}", deal[0]);
+        }
+        // Without the replay, the ensemble is as large as was asked for, and
+        // has deals with which some call would not have been made.
+        let deals = hidden.ensemble(&mut rng, 40, None);
+        assert_eq!(40, deals.len());
+        assert!(deals
+            .iter()
+            .any(|deal| hidden.calls_missed(deal, &convention) > 0));
+    }
+
+    #[test]
+    fn a_replayed_ensemble_keeps_the_closest_deals_when_none_makes_every_call() {
+        // West opens 7♣, which the robot would never do with any hand.
+        let mut game = one_notrump_by_west();
+        game.bids[1] = Bid::Suit(7, Suit::Clubs);
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let mut rng = StdRng::seed_from_u64(6);
+        let sampled = hidden.ensemble(&mut rng, 40, None);
+        let mut missed: Vec<usize> = sampled
+            .iter()
+            .map(|deal| hidden.calls_missed(deal, &convention))
+            .collect();
+        assert!(missed.iter().all(|&m| m > 0));
+        let deals = hidden.closest_to_the_auction(sampled, &convention, 10);
+        // The ten that miss fewest, whether or not they tie.
+        missed.sort();
+        let kept: Vec<usize> = deals
+            .iter()
+            .map(|deal| hidden.calls_missed(deal, &convention))
+            .collect();
+        assert_eq!(missed[..10], kept[..]);
+    }
+
+    /// How many sampled deals the robot would have bid the auction with, and
+    /// how long it takes to find out.
+    #[test]
+    #[ignore]
+    fn report_how_many_deals_make_the_auction() {
+        for tricks_left in [12, 7, 3] {
+            let games = games(tricks_left, 48);
+            let mut sampled = 0;
+            let mut fit = 0;
+            let mut missed = [0usize; 6];
+            let mut exact_per_game = Vec::new();
+            let mut time = std::time::Duration::ZERO;
+            for game in &games {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(game, &convention).unwrap();
+                let mut rng = StdRng::seed_from_u64(8);
+                let mut exact = 0;
+                for _ in 0..100 {
+                    let (deal, fits) = hidden.sample(&mut rng).unwrap();
+                    let started = std::time::Instant::now();
+                    let m = hidden.calls_missed(&deal, &convention);
+                    time += started.elapsed();
+                    sampled += 1;
+                    fit += fits as usize;
+                    missed[m.min(5)] += 1;
+                    exact += (m == 0) as usize;
+                }
+                exact_per_game.push(exact);
+            }
+            exact_per_game.sort();
+            println!(
+                "{tricks_left} tricks left: {fit} of {sampled} fit the bounds; calls missed {missed:?}; \
+                 deals of 100 that make the auction, by situation {exact_per_game:?}; \
+                 {:?} a replay",
+                time / sampled as u32
+            );
+        }
     }
 
     #[test]
