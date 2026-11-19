@@ -1295,7 +1295,9 @@ mod tests {
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
     /// `PLAY_SELF_SNAPSHOTS` if that is set, as
-    /// `round-NNNNN-learner-K.txt`), and ranks the learners in a tournament
+    /// `round-NNNNN-learner-K.txt`), up to `PLAY_SELF_LEAGUE` (64) of them:
+    /// the first four and the latest, so that a long run does not keep every
+    /// snapshot it has taken.  It ranks the learners in a tournament
     /// of two-table matches between each two of them on `PLAY_SELF_TOURNAMENT`
     /// (200) other deals; the best is the one that the game plays by.  Every
     /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
@@ -1329,6 +1331,7 @@ mod tests {
         let mut bonus = 0.01;
         let every = number("PLAY_SELF_SNAPSHOT", 50);
         let population = number("PLAY_SELF_LEARNERS", 4);
+        let league = number("PLAY_SELF_LEAGUE", 64).max(5);
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").ok();
         if let Some(directory) = &directory {
             std::fs::create_dir_all(directory).unwrap();
@@ -1573,6 +1576,10 @@ mod tests {
                     if let Some(directory) = &directory {
                         learner.write(&format!("{directory}/round-{round:05}-learner-{}.txt", i + 1));
                     }
+                }
+                // The first four, and the latest.
+                if snapshots.len() > league {
+                    snapshots.drain(4..snapshots.len() - league + 4);
                 }
                 let standings = tournament(&learners, &tournament_deals);
                 best = (0..learners.len())
