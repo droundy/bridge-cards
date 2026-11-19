@@ -19,6 +19,7 @@ cargo test -p bridge-deck -p bridge-solver -p robot -p wording   # all real test
 cargo test -p robot test_sheets                        # single test by name filter
 cargo run -p bridge-solver --release --bin time        # quick solver timing
 ./run.sh                                               # build robot wasm, then run the server on :8087
+cargo run --release -p train-play-model -- --rounds 500  # more self-play for the play model; publishes it if no worse
 prek run --all-files                                   # quick checks, including clippy with warnings as errors
 ```
 

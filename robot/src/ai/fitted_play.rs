@@ -1892,10 +1892,11 @@ mod tests {
     /// of two-table matches between each two of them on `PLAY_SELF_TOURNAMENT`
     /// (200) other deals; the best is the one that the game plays by.  On
     /// the same deals it plays each learner in two-table matches against the
-    /// robot, and against the model of `PLAY_SELF_REFERENCE` if that names a
-    /// file (see [`read_model`]), which do not learn and so cannot be beaten
-    /// by learning their habits, and prints the tricks a deal each learner
-    /// takes more, with the standard error.  Every
+    /// model of `PLAY_SELF_REFERENCE` if that names a file (see
+    /// [`read_model`]), and every `PLAY_SELF_ROBOT_EVERY` (1000) rounds and
+    /// at the end against the robot, which is slow, and prints the tricks a
+    /// deal each learner takes more, with the standard error.  Those do not
+    /// learn, and so cannot be beaten by learning their habits.  Every
     /// `PLAY_SELF_REPORT` (10) rounds of `PLAY_SELF_ROUNDS` (100), it writes
     /// the best's weights to the file `PLAY_SELF_WEIGHTS` if that is set,
     /// sample games to `PLAY_SELF_WATCH` (see `self_play_viewer.html`), and a
@@ -1945,6 +1946,7 @@ mod tests {
         let wildcards = number("PLAY_SELF_WILDCARDS", 4);
         let tournament_deals = deals(17, number("PLAY_SELF_TOURNAMENT", 200));
         let reference = std::env::var("PLAY_SELF_REFERENCE").ok().map(|path| read_model(&path));
+        let robot_every = number("PLAY_SELF_ROBOT_EVERY", 1000);
         let test = std::env::var("PLAY_TEST")
             .ok()
             .map(|paths| SHAPES.iter().map(|&shape| (shape.name, read_situations(&paths, shape))).collect::<Vec<_>>());
@@ -2200,13 +2202,14 @@ mod tests {
                 );
                 // Against opponents that do not learn, which a learner cannot
                 // beat by learning the habits of the others.
+                let robot_too = round % robot_every == 0 || round == last_round;
                 for (name, opponent) in [("the robot", None), ("the reference", reference.as_ref())] {
-                    if name == "the reference" && opponent.is_none() {
+                    if (name == "the reference" && opponent.is_none()) || (name == "the robot" && !robot_too) {
                         continue;
                     }
                     let results: Vec<String> = workers.install(|| {
                         learners
-                            .par_iter()
+                            .iter()
                             .map(|learner| {
                                 let (mean, error) = match_at_two_tables(learner, opponent, &tournament_deals);
                                 format!("{mean:+.3} ({error:.3})")
@@ -2322,18 +2325,16 @@ mod tests {
 
     /// How many more tricks a deal `model` takes than `other` (or the robot,
     /// if there is none), in two-table matches on `deals`, each playing the
-    /// card it scores highest, with the standard error.
+    /// card it scores highest, with the standard error.  The deals are played
+    /// on rayon's threads, since the robot is slow.
     fn match_at_two_tables(model: &Model, other: Option<&Model>, deals: &[String]) -> (f64, f64) {
-        let mut conventions = std::collections::HashMap::new();
         let gains: Vec<f64> = deals
-            .iter()
+            .par_iter()
             .map(|json| {
                 let game: GameState<()> = serde_json::from_str(json).unwrap();
-                let convention = conventions
-                    .entry(format!("{:?}", game.system))
-                    .or_insert_with(|| game.system.convention());
-                play_at_a_table(json, convention, model, 0, other) as f64
-                    - play_at_a_table(json, convention, model, 1, other) as f64
+                let convention = game.system.convention();
+                play_at_a_table(json, &convention, model, 0, other) as f64
+                    - play_at_a_table(json, &convention, model, 1, other) as f64
             })
             .collect();
         let n = gains.len() as f64;
