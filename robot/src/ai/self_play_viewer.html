@@ -1,100 +1,78 @@
 <title>Self-Play Table</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,650&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto&display=swap">
 <style>
-/* Layout: a score-pad page; the four hands sit round the table by compass
-   point with the trick in the middle, the auction and the last card's
-   chances beside it, stacking to one column on a phone. */
+/* The game's own stylesheet, abridge/src/style.css, which the harness puts
+   here, so that the hands, the trick and the auction look as they do in the
+   game. */
+/*GAME_CSS*/
+</style>
+<style>
+/* What the viewer adds to the game's look: the page around the board, the
+   controls, and the chances of the last card.  Layout: as the game's board,
+   the auction at the side and the hands in the middle, with the controls
+   and chances on the other side; in a narrow window it is one column, the
+   auction first. */
 :root {
-  --paper: #f6f7f4;
-  --card: #ffffff;
-  --ink: #1d2421;
-  --muted: #66706b;
-  --rule: #d6dbd6;
-  --accent: #23664a;
-  --accent-soft: #dcebe3;
-  --red: #b3262e;
-  --black: #1d2421;
-  --display: "Literata", Georgia, "Times New Roman", serif;
-  --body: "Public Sans", "Helvetica Neue", Arial, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --rule: color-mix(in srgb, var(--text) 25%, var(--background));
+  --bar: color-mix(in srgb, var(--table) 70%, var(--text));
+}
+/* The game follows the system's light or dark; the published page can also
+   be told which, and these say the same as the game's two palettes. */
+:root[data-theme="dark"] {
+  --background: #1A120B; --text: #eec; --alert: #d5cea3; --dummy-background: #3C2A21;
+  --table: #3C2A21; --spades: #eeeeee; --hearts: #ee3333; --diamonds: #dd8800;
+  --clubs: lightgreen; --turn1: green; --turn2: blue; color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #151a18; --card: #1d2421; --ink: #e8ece9; --muted: #9aa49f;
-    --rule: #323b37; --accent: #6fc39a; --accent-soft: #23352d;
-    --red: #f0777d; --black: #e8ece9; color-scheme: dark;
+  :root[data-theme="light"] {
+    --background: white; --text: black; --alert: darkorange; --dummy-background: #d3d3d3;
+    --table: lightgreen; --spades: black; --hearts: red; --diamonds: #dd8800;
+    --clubs: green; --turn1: lightskyblue; --turn2: yellow; color-scheme: light;
   }
-}
-:root[data-theme="dark"] {
-  --paper: #151a18; --card: #1d2421; --ink: #e8ece9; --muted: #9aa49f;
-  --rule: #323b37; --accent: #6fc39a; --accent-soft: #23352d;
-  --red: #f0777d; --black: #e8ece9; color-scheme: dark;
+  :root:not([data-theme="light"]) { color-scheme: dark; }
 }
 body {
-  background: var(--paper); color: var(--ink); font-family: var(--body);
-  font-size: 15px; line-height: 1.45;
+  font-size: 18px;
+  background: var(--background);
+  color: var(--text);
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 20px 32px;
+  padding-block: 12px 28px;
 }
-main { max-width: 1040px; margin: 0 auto; display: grid; gap: 18px; }
-header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; justify-content: space-between; }
-h1 { font-family: var(--display); font-weight: 650; font-size: 1.7rem; margin: 0; text-wrap: balance; }
-.sub { color: var(--muted); margin: 2px 0 0; }
-label.pick { display: grid; gap: 4px; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; min-width: 0; }
-select { font: inherit; font-size: 0.95rem; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--card); color: var(--ink); max-width: 100%; }
-.layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 18px; align-items: start; }
-@media (max-width: 760px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-.table {
-  display: grid; gap: 10px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr);
-  grid-template-areas: ". north ." "west trick east" ". south .";
-  background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 14px;
+.page { max-width: 70em; margin: 0 auto; display: grid; gap: 0.75em; }
+header { display: flex; flex-wrap: wrap; gap: 0.5em 1.5em; align-items: end; justify-content: space-between; }
+h1 { font-size: 1.3em; margin: 0; }
+.sub { font-size: small; margin: 0.2em 0 0; opacity: 0.8; }
+.pick { display: grid; gap: 0.2em; min-width: 0; max-width: 100%; }
+select { font: inherit; font-size: 0.85em; max-width: 100%; color: var(--text); background: var(--background); border: 1px solid var(--rule); border-radius: 3px; padding: 0.2em; }
+.view { display: grid; gap: 0.75em; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 60em) {
+  .view { grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr); align-items: start; }
 }
-.hand { min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
-.hand.next { border-color: var(--accent); background: var(--accent-soft); }
-.hand h2 { margin: 0 0 4px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
-.hand .who { display: block; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 0.8rem; }
-.suit-line { font-family: var(--mono); font-size: 0.95rem; white-space: nowrap; overflow-x: auto; }
-.played { opacity: 0.25; }
-.r { color: var(--red); } .b { color: var(--black); }
-#north { grid-area: north; } #south { grid-area: south; } #west { grid-area: west; } #east { grid-area: east; }
-.trick {
-  grid-area: trick; display: grid; place-items: center; min-height: 150px;
-  grid-template-areas: ". n ." "w c e" ". s ."; grid-template-columns: 1fr auto 1fr; gap: 4px;
-  border: 1px dashed var(--rule); border-radius: 8px; padding: 8px;
-}
-.trick .slot { font-family: var(--mono); font-size: 1.15rem; font-weight: 600; min-height: 1.6em; }
-.trick .count { grid-area: c; font-size: 0.75rem; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
-.side { display: grid; gap: 14px; min-width: 0; }
-.panel { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; min-width: 0; }
-.panel h3 { margin: 0 0 8px; font-family: var(--display); font-weight: 500; font-size: 1.05rem; }
-.auction { overflow-x: auto; }
-.auction table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.auction th { font-family: var(--body); font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; text-align: left; padding: 2px 6px; }
-.auction td { padding: 2px 6px; }
-.chance { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) 3.4em; gap: 8px; align-items: center; font-family: var(--mono); font-size: 0.9rem; }
-.bar { height: 8px; border-radius: 4px; background: var(--rule); overflow: hidden; }
-.bar span { display: block; height: 100%; background: var(--accent); }
-.chance.picked { font-weight: 600; }
-.chances { display: grid; gap: 4px; }
-.note { color: var(--muted); font-size: 0.88rem; margin: 0; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-button {
-  font: inherit; font-size: 0.92rem; padding: 7px 12px; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--rule); background: var(--card); color: var(--ink);
-}
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
-button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.step { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 0.88rem; }
-.result { font-weight: 600; }
-.empty { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 24px; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.auction { min-width: 0; }
+.auction .bidhistory { float: none; margin: 0 auto 0.4em; }
+.contract { font-size: small; text-align: center; margin: 0; }
+.hands { min-width: 0; overflow-x: auto; }
+.hands > table td { vertical-align: middle; }
+.hand .name { white-space: nowrap; }
+.tricks { text-align: center; font-size: small; }
+.side-info { display: grid; gap: 0.6em; min-width: 0; align-content: start; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.3em; align-items: center; }
+.controls button { width: auto; min-width: 2.6em; margin: 0; padding: 0.2em 0.5em; font: inherit; font-size: 0.9em; cursor: pointer; }
+.controls .step { margin-left: auto; font-size: small; font-variant-numeric: tabular-nums; }
+.last p { margin: 0 0 0.4em; font-size: small; }
+.chances { display: grid; gap: 0.2em; }
+.chance { display: grid; grid-template-columns: 3em minmax(0, 1fr) 3em; gap: 0.5em; align-items: center; font-size: 0.9em; font-variant-numeric: tabular-nums; }
+.chance.picked { font-weight: bold; }
+.bar { height: 0.45em; border-radius: 0.25em; background: var(--rule); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--bar); }
+.empty { font-size: small; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--turn1); outline-offset: 2px; }
 </style>
 
-<main>
+<div class="page">
   <header>
     <div>
       <h1>Self-Play Table</h1>
@@ -105,57 +83,53 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); o
     </label>
   </header>
 
-  <div class="empty" id="empty" hidden>
-    <p class="note">No games yet. Self-play records a few sample games at each report; run it with PLAY_SELF_WATCH set to this file.</p>
-  </div>
+  <p class="empty" id="empty" hidden>No games yet. Self-play records a few sample games at each report; run it with PLAY_SELF_WATCH set to this file.</p>
 
-  <div class="layout" id="board">
-    <section class="table" aria-label="The table">
+  <div class="view" id="view">
+    <div class="auction">
+      <div id="auction"></div>
+      <p class="contract" id="contract"></p>
+    </div>
+    <div class="hands">
       <div class="hand" id="north"></div>
-      <div class="hand" id="west"></div>
-      <div class="trick" id="trick"></div>
-      <div class="hand" id="east"></div>
+      <table><tr>
+        <td><div class="hand" id="west"></div></td>
+        <td><div class="table" id="trick"></div></td>
+        <td><div class="hand" id="east"></div></td>
+      </tr></table>
       <div class="hand" id="south"></div>
-    </section>
-    <div class="side">
-      <div class="panel">
-        <div class="controls">
-          <button id="first" aria-label="Back to the start">⏮</button>
-          <button id="prev" aria-label="Back one card">◀</button>
-          <button class="primary" id="play">Play</button>
-          <button id="next" aria-label="Forward one card">▶</button>
-          <button id="last" aria-label="To the end">⏭</button>
-          <span class="step" id="step"></span>
-        </div>
+      <div class="tricks" id="tricks"></div>
+    </div>
+    <div class="side-info">
+      <div class="controls">
+        <button id="first" aria-label="Back to the start">⏮</button>
+        <button id="prev" aria-label="Back one card">◀</button>
+        <button id="play">Play</button>
+        <button id="next" aria-label="Forward one card">▶</button>
+        <button id="last" aria-label="To the end">⏭</button>
+        <span class="step" id="step"></span>
       </div>
-      <div class="panel">
-        <h3>Last card</h3>
-        <div id="last-card"></div>
-      </div>
-      <div class="panel">
-        <h3>Auction</h3>
-        <div class="auction" id="auction"></div>
-        <p class="note" id="contract"></p>
-      </div>
+      <div class="last" id="last-card"></div>
     </div>
   </div>
-</main>
+</div>
 
 <script>
 const GAMES = [/*GAMES*/];
 const SEATS = ["South", "West", "North", "East"];
-const SUITS = ["♣", "♦", "♥", "♠"];
+// Suits from clubs (0) to spades (3), with the game's class names.
+const SUIT_CLASS = ["clubs", "diamonds", "hearts", "spades"];
+const SUIT_SIGN = ["♣", "♦", "♥", "♠"];
 const STRAINS = { C: 0, D: 1, H: 2, S: 3 };
 const rankName = (r) => ({ 14: "A", 13: "K", 12: "Q", 11: "J" })[r] || String(r);
-const red = (s) => s === 1 || s === 2;
-const cardHtml = ([s, r]) => `<span class="${red(s) ? "r" : "b"}">${SUITS[s]}${rankName(r)}</span>`;
+const cardHtml = ([s, r]) => `<span class="${SUIT_CLASS[s]}">${SUIT_SIGN[s]}${rankName(r)}</span>`;
 const callHtml = (call) => {
   if (call === "P") return "Pass";
   if (call === "X" || call === "XX") return call;
   const level = call[0], strain = call[1];
   if (strain === "N") return `${level}NT`;
   const s = STRAINS[strain];
-  return `${level}<span class="${red(s) ? "r" : "b"}">${SUITS[s]}</span>`;
+  return `${level}<span class="${SUIT_CLASS[s]}">${SUIT_SIGN[s]}</span>`;
 };
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 const seatAfter = (seat, n) => SEATS[(SEATS.indexOf(seat) + n) % 4];
@@ -178,14 +152,27 @@ function winnerOf(cards, trump) {
   return cards[best].seat;
 }
 
+// A hand as the game draws it: a line a suit, spades first, the cards
+// played already faded.
+function handHtml(cards, gone) {
+  return [3, 2, 1, 0].map((s) => {
+    const ranks = cards.filter((c) => c[0] === s).sort((a, b) => b[1] - a[1]);
+    const shown = ranks.map((c) => {
+      const played = gone.some((g) => same(g, c)) ? " playedalready" : "";
+      return `<span class="cardinhand${played}">${rankName(c[1])}</span>`;
+    }).join("");
+    return `<span class="${SUIT_CLASS[s]}"><span class="cardinhand">${SUIT_SIGN[s]}</span>${shown}</span>`;
+  }).join("<br/>");
+}
+
 function render() {
   const game = GAMES[gameIndex];
   document.getElementById("empty").hidden = !!game;
-  document.getElementById("board").hidden = !game;
+  document.getElementById("view").hidden = !game;
   if (!game) return;
   const plays = game.plays.slice(0, step);
   const trump = trumpOf(game);
-  // Tricks won so far.
+  const dummy = seatAfter(game.declarer, 2);
   let ns = 0, ew = 0;
   for (let t = 0; (t + 1) * 4 <= plays.length; t++) {
     const winner = winnerOf(plays.slice(t * 4, t * 4 + 4), trump);
@@ -195,59 +182,44 @@ function render() {
   for (const seat of SEATS) {
     const el = document.getElementById(seat.toLowerCase());
     const gone = plays.filter((p) => p.seat === seat).map((p) => p.card);
-    const lines = [3, 2, 1, 0].map((s) => {
-      const ranks = game.hands[seat].filter((c) => c[0] === s).sort((a, b) => b[1] - a[1]);
-      const cards = ranks.map((c) => {
-        const played = gone.some((g) => same(g, c));
-        return `<span class="${played ? "played" : ""}">${rankName(c[1])}</span>`;
-      }).join(" ");
-      return `<div class="suit-line"><span class="${red(s) ? "r" : "b"}">${SUITS[s]}</span> ${cards || "—"}</div>`;
-    }).join("");
-    const role = seat === game.declarer ? "declarer" : seat === seatAfter(game.declarer, 2) ? "dummy" : "defender";
-    el.innerHTML = `<h2>${seat} · ${role}<span class="who">${game.players[seat]}</span></h2>${lines}`;
-    el.classList.toggle("next", !!next && next.seat === seat);
+    const role = seat === game.declarer ? "declarer" : seat === dummy ? "dummy" : "defender";
+    el.className = "hand" + (seat === dummy ? " dummy" : "") + (next && next.seat === seat ? " turn" : "");
+    el.innerHTML = `<span class="name">${seat} · ${role} · ${game.players[seat]}</span>${handHtml(game.hands[seat], gone)}`;
   }
-  // The trick on the table: the one being played, or the last one, complete.
+  // The trick on the table, in the game's order: north, west, east, south.
   const t = step === 0 ? -1 : Math.floor((step - 1) / 4);
   const inTrick = t < 0 ? [] : plays.slice(t * 4);
-  const slot = (seat) => {
+  document.getElementById("trick").innerHTML = ["North", "West", "East", "South"].map((seat) => {
     const p = inTrick.find((p) => p.seat === seat);
-    return p ? cardHtml(p.card) : "";
-  };
-  document.getElementById("trick").innerHTML =
-    `<div class="slot" style="grid-area:n">${slot("North")}</div>` +
-    `<div class="slot" style="grid-area:w">${slot("West")}</div>` +
-    `<div class="count">NS ${ns} · EW ${ew}</div>` +
-    `<div class="slot" style="grid-area:e">${slot("East")}</div>` +
-    `<div class="slot" style="grid-area:s">${slot("South")}</div>`;
-  // The last card and the chances its player gave each card they could play.
-  const last = plays[plays.length - 1];
-  const lastEl = document.getElementById("last-card");
-  if (!last) {
-    lastEl.innerHTML = `<p class="note">The opening lead comes first. Step forward to start.</p>`;
-  } else if (!last.chances || last.chances.length === 0) {
-    lastEl.innerHTML = `<p class="note">${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}.</p>`;
-  } else {
-    const rows = [...last.chances].sort((a, b) => b[1] - a[1]).map(([card, p]) => {
-      const picked = same(card, last.card);
-      return `<div class="chance ${picked ? "picked" : ""}">${cardHtml(card)}<div class="bar"><span style="width:${(p * 100).toFixed(1)}%"></span></div><span>${(p * 100).toFixed(0)}%</span></div>`;
-    }).join("");
-    lastEl.innerHTML = `<p class="note">${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}, from these chances:</p><div class="chances">${rows}</div>`;
-  }
-  // The auction, in columns from West, starting under the dealer.
-  const order = ["West", "North", "East", "South"];
-  const cells = Array(order.indexOf(game.dealer)).fill("").concat(game.bids.map(callHtml));
+    return p ? cardHtml(p.card) : "<span></span>";
+  }).join("");
+  document.getElementById("tricks").innerHTML = `NS: ${ns} · EW: ${ew}`;
+  // The auction, as the game's bid history: columns from the dealer.
+  const order = [0, 1, 2, 3].map((n) => seatAfter(game.dealer, n));
   let rows = "";
-  for (let i = 0; i < cells.length; i += 4) {
-    rows += "<tr>" + order.map((_, j) => `<td>${cells[i + j] ?? ""}</td>`).join("") + "</tr>";
+  for (let i = 0; i < game.bids.length; i += 4) {
+    rows += "<tr>" + game.bids.slice(i, i + 4).map((c) => `<td>${callHtml(c)}</td>`).join("") + "</tr>";
   }
   document.getElementById("auction").innerHTML =
-    `<table><thead><tr>${order.map((s) => `<th>${s}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+    `<table class="bidhistory"><tr>${order.map((s) => `<th>${s}</th>`).join("")}</tr>${rows}</table>`;
   const needed = Number(game.contract[0]) + 6;
   const won = game.declarer === "North" || game.declarer === "South" ? game.tricks.NS : game.tricks.EW;
   const result = won >= needed ? `made with ${won - needed} over` : `down ${needed - won}`;
-  document.getElementById("contract").innerHTML =
-    `${callHtml(game.contract)} by ${game.declarer}: <span class="result">${result}</span> (${won} tricks).`;
+  document.getElementById("contract").innerHTML = `${callHtml(game.contract)} by ${game.declarer}: ${result} (${won} tricks)`;
+  // The last card, and the chances its player gave each card it could play.
+  const last = plays[plays.length - 1];
+  const lastEl = document.getElementById("last-card");
+  if (!last) {
+    lastEl.innerHTML = `<p>The opening lead comes first. Step forward to start.</p>`;
+  } else if (!last.chances || last.chances.length === 0) {
+    lastEl.innerHTML = `<p>${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}.</p>`;
+  } else {
+    const bars = [...last.chances].sort((a, b) => b[1] - a[1]).map(([card, p]) => {
+      const picked = same(card, last.card) ? " picked" : "";
+      return `<div class="chance${picked}">${cardHtml(card)}<div class="bar"><span style="width:${(p * 100).toFixed(1)}%"></span></div><span>${(p * 100).toFixed(0)}%</span></div>`;
+    }).join("");
+    lastEl.innerHTML = `<p>${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}, from these chances:</p><div class="chances">${bars}</div>`;
+  }
   document.getElementById("step").textContent = `card ${step} of ${game.plays.length}`;
   document.getElementById("play").textContent = timer ? "Pause" : "Play";
 }
@@ -272,7 +244,7 @@ const select = document.getElementById("game");
 GAMES.forEach((game, i) => {
   const option = document.createElement("option");
   option.value = i;
-  const strain = game.contract[1] === "N" ? "NT" : SUITS[STRAINS[game.contract[1]]];
+  const strain = game.contract[1] === "N" ? "NT" : SUIT_SIGN[STRAINS[game.contract[1]]];
   option.textContent = `Round ${game.round} · ${game.contract[0]}${strain} by ${game.declarer} · NS ${game.tricks.NS}, EW ${game.tricks.EW}`;
   select.appendChild(option);
 });

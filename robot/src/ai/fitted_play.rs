@@ -1389,7 +1389,9 @@ mod tests {
                     // opened in a browser needs its own.
                     let page = format!(
                         "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n{}",
-                        include_str!("self_play_viewer.html").replace("[/*GAMES*/]", &data)
+                        include_str!("self_play_viewer.html")
+                            .replace("/*GAME_CSS*/", include_str!("../../../abridge/src/style.css"))
+                            .replace("[/*GAMES*/]", &data)
                     );
                     std::fs::write(path, page).unwrap();
                 }
