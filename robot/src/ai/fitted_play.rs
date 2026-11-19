@@ -1179,6 +1179,9 @@ mod tests {
     /// below `PLAY_SELF_ENTROPY` (0.25) and shrinks by 5% while it is above.
     /// Without that, the choices of the first long run became nearly sure,
     /// the plays of a deal nearly all the same, and its learning stopped.
+    /// Each step also shrinks the weights by `PLAY_SELF_DECAY` (0) times its
+    /// size, as AdamW's weight decay does, so that they stay small unless the
+    /// games keep calling for them.
     ///
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
@@ -1213,6 +1216,7 @@ mod tests {
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
+        let decay = float("PLAY_SELF_DECAY", 0.0);
         let mut bonus = 0.01;
         let every = number("PLAY_SELF_SNAPSHOT", 50);
         let population = number("PLAY_SELF_LEARNERS", 4);
@@ -1373,6 +1377,9 @@ mod tests {
                 } else {
                     1.0
                 };
+                for p in &mut learner.params {
+                    *p *= 1.0 - rate * ramp * decay;
+                }
                 adams[i].step(&mut learner.params, &gradient, rate * ramp);
             }
             for mut game in results.into_iter().flat_map(|r| r.3) {
