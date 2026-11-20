@@ -1667,65 +1667,6 @@ mod tests {
         (!values.iter().any(|v| v.is_empty())).then_some(values)
     }
 
-    /// A position of self-play labelled by the ensemble: the mean value of
-    /// each card that could be played to the player's side, and each card's
-    /// entries in the tables of each shape being trained.
-    struct Labelled {
-        values: Vec<f64>,
-        entries: Vec<(&'static str, Vec<Vec<usize>>)>,
-    }
-
-    impl Labelled {
-        /// The position `json`, labelled on `deals` deals (see
-        /// [`ensemble_values`]), with the entries of `shapes`.
-        fn new(json: &str, shapes: &[&'static Shape], deals: usize, seed: u64) -> Option<Labelled> {
-            let game: GameState<()> = serde_json::from_str(json).unwrap();
-            let convention: &Convention = game.system.table();
-            let values = ensemble_values(&game, convention, deals, &mut StdRng::seed_from_u64(seed))?;
-            let sign = if plays_for_the_leaders(&game) { 1.0 } else { -1.0 };
-            let view = View::new(&game, convention)?;
-            let legal: Vec<Card> = game.could_be_played().collect();
-            Some(Labelled {
-                values: values.iter().map(|v| sign * v.iter().sum::<f64>() / v.len() as f64).collect(),
-                entries: shapes
-                    .iter()
-                    .map(|&shape| (shape.name, legal.iter().map(|&card| view.entries(card, shape)).collect()))
-                    .collect(),
-            })
-        }
-
-        /// The entries of each card in the tables of `shape`.
-        fn entries(&self, shape: &Shape) -> &[Vec<usize>] {
-            &self.entries.iter().find(|e| e.0 == shape.name).unwrap().1
-        }
-
-        /// Adds to `gradient` `weight` times the slope of the cross-entropy
-        /// of `model`'s chances at `temperature`, against the chances that
-        /// the values make at `labelled_at` tricks: the more sure that the
-        /// model is of a card that the ensemble values less, the more it is
-        /// pushed towards the better ones.  Gives the tricks that the card it
-        /// scores highest loses to the best one.
-        fn add_gradient(&self, model: &Model, temperature: f64, labelled_at: f64, weight: f64, gradient: &mut [f64]) -> f64 {
-            let entries = self.entries(model.shape);
-            let softmax = |scores: Vec<f64>| {
-                let most = scores.iter().copied().fold(f64::MIN, f64::max);
-                let odds: Vec<f64> = scores.iter().map(|s| (s - most).exp()).collect();
-                let sum: f64 = odds.iter().sum();
-                odds.into_iter().map(|o| o / sum).collect::<Vec<f64>>()
-            };
-            let scores: Vec<f64> = entries.iter().map(|e| model.network.score(e)).collect();
-            let chances = softmax(scores.iter().map(|s| s / temperature).collect());
-            let wanted = softmax(self.values.iter().map(|v| v / labelled_at).collect());
-            if weight != 0.0 {
-                for ((entries, chance), wanted) in entries.iter().zip(&chances).zip(&wanted) {
-                    model.network.add_gradient(entries, weight * (wanted - chance) / temperature, gradient);
-                }
-            }
-            let chosen = (0..scores.len()).max_by(|&a, &b| scores[a].total_cmp(&scores[b])).unwrap();
-            self.values.iter().copied().fold(f64::MIN, f64::max) - self.values[chosen]
-        }
-    }
-
     /// A situation from the data that `collect_play_data` writes, as the
     /// choices of `fitting`: each card's entries and its mean value to the
     /// player, the tricks of their side, over the ensemble.
@@ -1828,7 +1769,8 @@ mod tests {
     /// One choice of a card in a game of self-play: the learner that made
     /// it, each card that could be played, with its entries and chance,
     /// which one was played, the side that chose it (0 for north and south)
-    /// and the tricks that side had already won.
+    /// and the tricks that side had already won, and, if it was rolled out
+    /// (see [`roll_out`]), the tricks that side took after each card.
     struct Decision {
         learner: usize,
         cards: Vec<(Vec<usize>, f64)>,
@@ -1836,6 +1778,44 @@ mod tests {
         side: usize,
         trick: usize,
         won_before: usize,
+        rolled_out: Option<Vec<f64>>,
+    }
+
+    /// Plays `card` in `json`, a game of self-play, and the rest of the game
+    /// after it, on the same deal and with the same `players`, each model
+    /// playing the card it scores highest and the players of any card
+    /// drawing from `seed`.  Gives the tricks of north and south.  Rolled
+    /// out after each card that could be played, with the same seed, the
+    /// tricks are what each card is worth to its player when the others go
+    /// on as they would: the hidden hands are as they were dealt, a fair
+    /// draw from the hands that the player could be facing, and no one later
+    /// sees more than they could, so on the mean over many games the tricks
+    /// after a card are what it is worth.
+    fn roll_out(
+        json: &str,
+        card: Card,
+        convention: &Convention,
+        learners: &[Model],
+        players: [Player; 4],
+        seed: u64,
+    ) -> [usize; 2] {
+        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let mut rng = StdRng::seed_from_u64(seed);
+        game.play(card);
+        while !game.hand_done {
+            let seat = chooser(&game, game.lead.unwrap() + current_trick(&game).len());
+            let model = match players[seat as usize] {
+                Player::Learning(learner) => &learners[learner],
+                Player::Past(model, _) => model,
+                Player::Random => {
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                    continue;
+                }
+            };
+            game.play(best_card(&game, convention, model));
+        }
+        [game.ns_tricks, game.ew_tricks]
     }
 
     /// How a seat chooses its cards in self-play.
@@ -1855,10 +1835,9 @@ mod tests {
     /// seat that chooses it as its `players` say: a model chooses at random
     /// with its chances at `temperature`, a learner by its weights in
     /// `learners`.  Gives the choices that the learners made and the tricks
-    /// each side won, with `record` the whole game, for watching, and the
-    /// positions (as the game's JSON) of a share `label.0` of the learners'
-    /// choices of more than one card with up to `label.1` tricks left, to be
-    /// labelled by the ensemble.
+    /// each side won, with `record` the whole game, for watching.  A share
+    /// `rollout.0` of the learners' choices of more than one card with up to
+    /// `rollout.1` tricks left are rolled out (see [`roll_out`]).
     #[expect(clippy::too_many_arguments, reason = "the one caller is self-play's round, which has them all at hand")]
     fn play_out(
         json: &str,
@@ -1867,9 +1846,9 @@ mod tests {
         temperature: f64,
         players: [Player; 4],
         record: bool,
-        label: (f64, usize),
+        rollout: (f64, usize),
         rng: &mut StdRng,
-    ) -> (Vec<Decision>, [usize; 2], Option<serde_json::Value>, Vec<String>) {
+    ) -> (Vec<Decision>, [usize; 2], Option<serde_json::Value>) {
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
         let mut game: GameState<()> = serde_json::from_str(json).unwrap();
         let leader = game.turn().unwrap();
@@ -1881,7 +1860,6 @@ mod tests {
         })];
         game.play(lead);
         let mut decisions = Vec::new();
-        let mut positions = Vec::new();
         while !game.hand_done {
             let Some(view) = View::new(&game, convention) else {
                 break;
@@ -1914,6 +1892,19 @@ mod tests {
                     considered = legal.iter().zip(&cards).map(|(&card, c)| (pair(card), c.1)).collect();
                 }
                 if let Some(learner) = learning {
+                    let (share, most) = rollout;
+                    let rolled_out = (share > 0.0
+                        && legal.len() > 1
+                        && 13 - game.tricks.len() <= most
+                        && rng.gen_range(0.0..1.0) < share)
+                        .then(|| {
+                            let now = serde_json::to_string(&game).unwrap();
+                            let seed = rng.gen::<u64>();
+                            legal
+                                .iter()
+                                .map(|&card| roll_out(&now, card, convention, learners, players, seed)[side] as f64)
+                                .collect()
+                        });
                     decisions.push(Decision {
                         learner,
                         cards,
@@ -1921,11 +1912,8 @@ mod tests {
                         side,
                         trick: game.tricks.len(),
                         won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
+                        rolled_out,
                     });
-                    let (share, most) = label;
-                    if share > 0.0 && legal.len() > 1 && 13 - game.tricks.len() <= most && rng.gen_range(0.0..1.0) < share {
-                        positions.push(serde_json::to_string(&game).unwrap());
-                    }
                 }
                 legal[chosen]
             } else {
@@ -1970,7 +1958,7 @@ mod tests {
                 "tricks": { "NS": game.ns_tricks, "EW": game.ew_tricks },
             })
         });
-        (decisions, [game.ns_tricks, game.ew_tricks], watched, positions)
+        (decisions, [game.ns_tricks, game.ew_tricks], watched)
     }
 
     /// What a viewer calls a player of self-play.
@@ -2060,23 +2048,26 @@ mod tests {
     /// ensemble's values on the data in `PLAY_TEST` if that is set.  It uses
     /// `PLAY_THREADS` threads, or else every core.
     ///
-    /// With `PLAY_SELF_LABEL_SHARE` above 0, that share of the learners'
-    /// choices of more than one card with up to `PLAY_SELF_LABEL_TRICKS` (7)
-    /// tricks left are labelled after each round by the ensemble, with each
-    /// card's mean double-dummy value over `PLAY_SELF_LABEL_DEALS` (6) deals of
-    /// the hidden hands that fit what the player saw (see [`Labelled`]), and
-    /// the latest `PLAY_SELF_LABELS_KEPT` (20000) are kept.  Each learner's
-    /// step then also climbs, with the weight of `PLAY_SELF_SUPERVISED` (0;
-    /// weights separated by commas, one for each learner, taken again in turn
-    /// if there are fewer), against the cross-entropy of its chances on
-    /// `PLAY_SELF_LABEL_BATCH` (256) labelled positions drawn from those kept
-    /// and the chances that their values make at a temperature of
-    /// `PLAY_SELF_LABEL_TEMPERATURE` (0.25) tricks.  That pushes hardest
-    /// where a learner is sure of a card that the ensemble thinks worse,
-    /// which self-play alone hardly ever tries again.  The report says how
-    /// many tricks a play each learner's likeliest cards lose by those values
-    /// on the positions labelled since the last report, before it learns
-    /// from them.  Every `PLAY_SELF_ENDGAME_EVERY` (0, never) rounds, at a
+    /// With `PLAY_SELF_ROLLOUT_SHARE` above 0, that share of the learners'
+    /// choices of more than one card with up to `PLAY_SELF_ROLLOUT_TRICKS`
+    /// (13) tricks left are rolled out (see [`roll_out`]): each card that the
+    /// learner could play is played, and the rest of the game after it, by
+    /// the same players on the same deal.  The learner's step then also
+    /// pushes the score of each of those cards by the tricks it took more
+    /// than the mean of the cards, each weighted by its chance, times the
+    /// weight of `PLAY_SELF_ROLLOUT_WEIGHTS` (1; weights separated by commas,
+    /// one for each learner, taken again in turn if there are fewer), divided
+    /// by the share, so that the weight does not depend on it.  That is the
+    /// slope of the tricks that the choice is worth, without the factor of
+    /// each card's chance that makes the slope of a card the learner never
+    /// plays nearly nothing, the direction of the natural gradient of the
+    /// chances; since it is linear in the tricks, the luck of a deal
+    /// averages out.  So a learner learns of a better card that it is all
+    /// but sure not to play, which self-play alone hardly ever tries.  The
+    /// report says how many tricks a play each learner's likeliest cards
+    /// lose to the best of the cards rolled out, on the choices rolled out
+    /// since the last report; as the best on one deal is partly luck, that
+    /// is above 0 even for the best play.  Every `PLAY_SELF_ENDGAME_EVERY` (0, never) rounds, at a
     /// snapshot, the learners also play `PLAY_SELF_ENDGAME_DEALS` (100)
     /// endgames from 7 tricks left against the ensemble (see
     /// [`endgame_gains`]), from positions that the reference model reaches.
@@ -2107,14 +2098,10 @@ mod tests {
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
         let decay = float("PLAY_SELF_DECAY", 0.0);
-        let label = (float("PLAY_SELF_LABEL_SHARE", 0.0), number("PLAY_SELF_LABEL_TRICKS", 7));
-        let label_deals = number("PLAY_SELF_LABEL_DEALS", 6);
-        let labels_kept = number("PLAY_SELF_LABELS_KEPT", 20000);
-        let label_batch = number("PLAY_SELF_LABEL_BATCH", 256);
-        let labelled_at = float("PLAY_SELF_LABEL_TEMPERATURE", 0.25);
-        let supervised: Vec<f64> = var("PLAY_SELF_SUPERVISED", "0")
+        let rollout = (float("PLAY_SELF_ROLLOUT_SHARE", 0.0), number("PLAY_SELF_ROLLOUT_TRICKS", 13));
+        let rollout_weights: Vec<f64> = var("PLAY_SELF_ROLLOUT_WEIGHTS", "1")
             .split(',')
-            .map(|w| w.trim().parse().expect("PLAY_SELF_SUPERVISED: weights separated by commas"))
+            .map(|w| w.trim().parse().expect("PLAY_SELF_ROLLOUT_WEIGHTS: weights separated by commas"))
             .collect();
         let endgame_every = number("PLAY_SELF_ENDGAME_EVERY", 0);
         let endgame_deals = if endgame_every > 0 {
@@ -2209,14 +2196,7 @@ mod tests {
             "learners of the shapes {}",
             learners.iter().map(|l| l.shape.name).collect::<Vec<_>>().join(", ")
         );
-        let mut trained_shapes: Vec<&'static Shape> = Vec::new();
-        for learner in &learners {
-            if !trained_shapes.iter().any(|s| s.name == learner.shape.name) {
-                trained_shapes.push(learner.shape);
-            }
-        }
-        let mut labels: std::collections::VecDeque<Labelled> = std::collections::VecDeque::new();
-        let mut label_losses = vec![(0.0, 0); learners.len()];
+        let mut rollout_losses = vec![(0.0, 0); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
         }
@@ -2251,7 +2231,7 @@ mod tests {
             let chunk = batch.div_ceil(threads);
             let (learners_now, pool_now, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
-            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<String>);
+            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<(f64, usize)>);
             let results: Vec<Results> = workers.install(|| {
                 deals
                     .par_chunks(chunk)
@@ -2265,7 +2245,7 @@ mod tests {
                             let mut counts = vec![0; learners_now.len()];
                             let mut entropy = 0.0;
                             let mut sampled = Vec::new();
-                            let mut positions = Vec::new();
+                            let mut lost = vec![(0.0, 0); learners_now.len()];
                             for (d, &deal) in deals.iter().enumerate() {
                                 let json = &pool_now[deal];
                                 let system: GameState<()> = serde_json::from_str(json).unwrap();
@@ -2333,18 +2313,17 @@ mod tests {
                                     .enumerate()
                                     .map(|(g, players)| {
                                         let record = watching && t == 0 && g == 0 && d < samples;
-                                        let (decisions, won, game, kept) = play_out(
+                                        let (decisions, won, game) = play_out(
                                             json,
                                             convention,
                                             learners_now,
                                             temperature,
                                             players,
                                             record,
-                                            label,
+                                            rollout,
                                             &mut rng,
                                         );
                                         sampled.extend(game);
-                                        positions.extend(kept);
                                         (decisions, won)
                                     })
                                     .collect();
@@ -2378,11 +2357,25 @@ mod tests {
                                             let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
                                             learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
                                         }
+                                        if let Some(values) = &d.rolled_out {
+                                            let weight = rollout_weights[d.learner % rollout_weights.len()];
+                                            let mean: f64 = values.iter().zip(&d.cards).map(|(v, c)| v * c.1).sum();
+                                            if weight != 0.0 {
+                                                for ((entries, _), value) in d.cards.iter().zip(values) {
+                                                    let g = weight * (value - mean) / (rollout.0 * temperature);
+                                                    learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                }
+                                            }
+                                            let likeliest =
+                                                (0..values.len()).max_by(|&a, &b| d.cards[a].1.total_cmp(&d.cards[b].1)).unwrap();
+                                            lost[d.learner].0 += values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
+                                            lost[d.learner].1 += 1;
+                                        }
                                         counts[d.learner] += 1;
                                     }
                                 }
                             }
-                            (gradients, counts, entropy, sampled, positions)
+                            (gradients, counts, entropy, sampled, lost)
                         }
                     })
                     .collect()
@@ -2393,59 +2386,16 @@ mod tests {
             let decisions: usize = counts.iter().sum();
             let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
             bonus = if entropy < entropy_target { bonus * 1.05 } else { bonus * 0.95 }.clamp(1e-4, 1.0);
-            // The ensemble labels the positions kept from this round's
-            // games, on the same threads.
-            let positions: Vec<&String> = results.iter().flat_map(|r| &r.4).collect();
-            let fresh_labels: Vec<Labelled> = workers.install(|| {
-                positions
-                    .par_iter()
-                    .enumerate()
-                    .filter_map(|(k, json)| Labelled::new(json, &trained_shapes, label_deals, seed.wrapping_add(1 + k as u64)))
-                    .collect()
-            });
-            // How each learner does on them, before it learns from them.
-            for (i, learner) in learners.iter().enumerate() {
-                for labelled in &fresh_labels {
-                    label_losses[i].0 += labelled.add_gradient(learner, temperature, labelled_at, 0.0, &mut []);
+            for result in &results {
+                for (total, (lost, n)) in rollout_losses.iter_mut().zip(&result.4) {
+                    total.0 += lost;
+                    total.1 += n;
                 }
-                label_losses[i].1 += fresh_labels.len();
-            }
-            labels.extend(fresh_labels);
-            while labels.len() > labels_kept {
-                labels.pop_front();
             }
             for (i, learner) in learners.iter_mut().enumerate() {
-                let mut gradient: Vec<f64> = (0..learner.network.params.len())
+                let gradient: Vec<f64> = (0..learner.network.params.len())
                     .map(|j| results.iter().map(|r| r.0[i][j]).sum::<f64>() / counts[i].max(1) as f64)
                     .collect();
-                let weight = supervised[i % supervised.len()];
-                if !labels.is_empty() && label_batch > 0 {
-                    // Every learner draws its batch, so that their draws do
-                    // not depend on their weights.
-                    let picks: Vec<usize> = (0..label_batch).map(|_| rng.gen_range(0..labels.len())).collect();
-                    if weight != 0.0 {
-                        let (model, labels, size) = (&*learner, &labels, gradient.len());
-                        let pushed = workers.install(|| {
-                            picks
-                                .par_chunks(label_batch.div_ceil(threads))
-                                .map(|picks| {
-                                    let mut pushed = vec![0.0; size];
-                                    for &k in picks {
-                                        labels[k].add_gradient(model, temperature, labelled_at, weight / label_batch as f64, &mut pushed);
-                                    }
-                                    pushed
-                                })
-                                .reduce(
-                                    || vec![0.0; size],
-                                    |mut a, b| {
-                                        a.iter_mut().zip(b).for_each(|(x, y)| *x += y);
-                                        a
-                                    },
-                                )
-                        });
-                        gradient.iter_mut().zip(pushed).for_each(|(g, p)| *g += p);
-                    }
-                }
                 let ramp = if warmups[i] > 0 {
                     ((round - first_round + 1) as f64 / warmups[i] as f64).min(1.0)
                 } else {
@@ -2552,16 +2502,16 @@ mod tests {
                         .collect();
                     print!(", the test data's choices lose {} tricks a play", losses.join(", "));
                 }
-                if label.0 > 0.0 {
-                    let lost: Vec<String> =
-                        label_losses.iter().map(|&(lost, n)| format!("{:.4}", lost / n.max(1) as f64)).collect();
+                if rollout.0 > 0.0 {
+                    let lost: Vec<String> = rollout_losses
+                        .iter()
+                        .map(|&(lost, n)| format!("{:.4} ({n})", lost / n.max(1) as f64))
+                        .collect();
                     print!(
-                        ", {} labels, on the {} new ones the choices lose {} tricks a play",
-                        labels.len(),
-                        label_losses[0].1,
+                        ", the likeliest cards lose {} tricks a play to the best rolled out",
                         lost.join(", ")
                     );
-                    label_losses.iter_mut().for_each(|l| *l = (0.0, 0));
+                    rollout_losses.iter_mut().for_each(|l| *l = (0.0, 0));
                 }
                 println!();
                 if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
