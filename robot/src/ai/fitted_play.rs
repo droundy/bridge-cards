@@ -2482,9 +2482,14 @@ mod tests {
     }
 
     /// The play model in `path`: the game's model of a play model file, or
-    /// a file of its weights one a line, as self-play writes them, of the
-    /// shape `PLAY_SHAPE` (`v1`).
+    /// with `#K` after the file's name, its learner K (from 1), or a file of
+    /// its weights one a line, as self-play writes them, of the shape
+    /// `PLAY_SHAPE` (`v1`).
     fn read_model(path: &str) -> Model {
+        if let Some((file, learner)) = path.split_once('#') {
+            let learner: usize = learner.parse().expect("a learner's number after #");
+            return model_file::ModelFile::read(file).learners[learner - 1].model.clone();
+        }
         let start = std::fs::read(path).unwrap().into_iter().take(8).collect::<Vec<u8>>();
         if start.starts_with(b"PLAYMDL") {
             model_file::ModelFile::read(path).best
@@ -2542,6 +2547,132 @@ mod tests {
             game.play(card);
         }
         game.ns_tricks
+    }
+
+    /// A player in [`match_endgames_against_the_ensemble`]: a play model,
+    /// the robot's card play, or [`EnsemblePlay`](crate::EnsemblePlay).
+    enum Endgamer<'a> {
+        Model(&'a Model),
+        Robot,
+        Ensemble(Box<crate::EnsemblePlay>),
+    }
+
+    impl Endgamer<'_> {
+        fn play(&mut self, game: &GameState<()>, convention: &Convention) -> Card {
+            use crate::ai::PlayAI;
+            match self {
+                Endgamer::Model(model) => best_card(game, convention, model),
+                Endgamer::Robot => super::super::RandomPlay.play(game),
+                Endgamer::Ensemble(player) => player.play(game),
+            }
+        }
+    }
+
+    /// Plays `game` to the end, north and south by `ns` and east and west by
+    /// `ew`, and gives the tricks of north and south.
+    fn play_endgame(mut game: GameState<()>, convention: &Convention, ns: &mut Endgamer, ew: &mut Endgamer) -> usize {
+        while !game.hand_done {
+            let place = current_trick(&game).len();
+            let seat = chooser(&game, game.lead.unwrap() + place);
+            let card = if (seat as usize).is_multiple_of(2) { ns.play(&game, convention) } else { ew.play(&game, convention) };
+            game.play(card);
+        }
+        game.ns_tricks
+    }
+
+    /// Plays endgames against [`EnsemblePlay`](crate::EnsemblePlay), which
+    /// with 7 or fewer tricks left plays the card with the best mean
+    /// double-dummy value over deals of the hidden hands that fit what it
+    /// has seen, the nearest to best play that the robot has.  Each of
+    /// `PLAY_ENDGAME_DEALS` (100) deals that the robot bid is played by the
+    /// play model of `PLAY_ENDGAME_LEAD_IN` (or else the first model of the
+    /// players) until `PLAY_ENDGAME_TRICKS` (7) tricks are left, and from
+    /// there at three tables: the ensemble on both sides, and each player of
+    /// `PLAY_ENDGAME_PLAYERS` (comma-separated play models as
+    /// [`read_model`] reads them, `robot`, or `ensemble`, which is the
+    /// ensemble with other random deals) for the declaring side and for the
+    /// defenders, the ensemble playing the other side.  Prints the tricks a
+    /// deal that each player's sides took more than the ensemble's would
+    /// have, declaring, defending and in all, with the standard errors.  It
+    /// uses `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn match_endgames_against_the_ensemble() {
+        let tricks = number("PLAY_ENDGAME_TRICKS", 7);
+        let count = number("PLAY_ENDGAME_DEALS", 100);
+        let names: Vec<String> = var("PLAY_ENDGAME_PLAYERS", "robot").split(',').map(|n| n.trim().to_string()).collect();
+        let models: Vec<Option<Model>> =
+            names.iter().map(|n| (n != "robot" && n != "ensemble").then(|| read_model(n))).collect();
+        let lead_in = std::env::var("PLAY_ENDGAME_LEAD_IN")
+            .ok()
+            .map(|path| read_model(&path))
+            .or_else(|| models.iter().flatten().next().cloned());
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        let started = std::time::Instant::now();
+        let tricks_left = |game: &GameState<()>| game.hands.iter().map(|hand| hand.len()).max().unwrap_or(0);
+        let deals = crate::ai::opening_lead::candidates::opening_leads(13, count);
+        // For each deal: (declaring side's tricks gained, defenders' tricks
+        // gained) for each player.
+        let gains: Vec<Vec<(f64, f64)>> = workers.install(|| {
+            deals
+                .par_iter()
+                .enumerate()
+                .map(|(i, game)| {
+                    let convention = game.system.convention();
+                    let mut game: GameState<()> = serde_json::from_str(&serde_json::to_string(game).unwrap()).unwrap();
+                    let mut lead_in = match &lead_in {
+                        Some(model) => Endgamer::Model(model),
+                        None => Endgamer::Robot,
+                    };
+                    while !game.hand_done && !(current_trick(&game).is_empty() && tricks_left(&game) == tricks) {
+                        let card = lead_in.play(&game, &convention);
+                        game.play(card);
+                    }
+                    let position = serde_json::to_string(&game).unwrap();
+                    let at = || serde_json::from_str::<GameState<()>>(&position).unwrap();
+                    let ensemble = |seed: u64| Endgamer::Ensemble(Box::new(crate::EnsemblePlay::seeded(seed)));
+                    let seed = i as u64;
+                    let both = play_endgame(at(), &convention, &mut ensemble(seed), &mut ensemble(seed)) as f64;
+                    let ns_declares = game.dummy().is_some_and(|dummy| (dummy as usize).is_multiple_of(2));
+                    models
+                        .iter()
+                        .zip(&names)
+                        .map(|(model, name)| {
+                            let player = || match (model, name.as_str()) {
+                                (Some(model), _) => Endgamer::Model(model),
+                                (None, "robot") => Endgamer::Robot,
+                                _ => ensemble(seed + 1_000_000),
+                            };
+                            let as_ns = play_endgame(at(), &convention, &mut player(), &mut ensemble(seed)) as f64;
+                            let as_ew = play_endgame(at(), &convention, &mut ensemble(seed), &mut player()) as f64;
+                            // North and south's tricks with the player in
+                            // place of the ensemble, as north and south, and
+                            // as east and west.
+                            let (ns, ew) = (as_ns - both, both - as_ew);
+                            if ns_declares { (ns, ew) } else { (ew, ns) }
+                        })
+                        .collect()
+                })
+                .collect()
+        });
+        let n = gains.len() as f64;
+        let mean_and_error = |values: Vec<f64>| {
+            let mean = values.iter().sum::<f64>() / n;
+            (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
+        };
+        println!(
+            "{} deals from {tricks} tricks left in {:.0} s; tricks a deal more than the ensemble would have taken:",
+            gains.len(),
+            started.elapsed().as_secs_f64()
+        );
+        for (p, name) in names.iter().enumerate() {
+            let (declaring, de) = mean_and_error(gains.iter().map(|g| g[p].0).collect());
+            let (defending, fe) = mean_and_error(gains.iter().map(|g| g[p].1).collect());
+            let (total, te) = mean_and_error(gains.iter().map(|g| g[p].0 + g[p].1).collect());
+            println!(
+                "{name}: declaring {declaring:+.3} ({de:.3}), defending {defending:+.3} ({fe:.3}), in all {total:+.3} ({te:.3})"
+            );
+        }
     }
 
     /// Plays the play model with the weights in the file
