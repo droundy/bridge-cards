@@ -2636,6 +2636,22 @@ impl Convention {
                     min: min_splinter,
                     forcing: Forcing::GameForcing,
                 });
+                // Partner has forced to game, so opener may not pass.  The
+                // natural game bids would ask opener for 26 points of their
+                // own, since they count only the high card points that a
+                // raise has shown, and this one shows dummy points.
+                sheets.add(Convention::Simple {
+                    the_name: "Game after a splinter",
+                    regex: RegexSet::new([&format!(
+                        "^(P )*1{:?} [PX] {}{:?} [PX] 4{:?}$",
+                        opening, splinterbid, response, opening
+                    )])
+                    .unwrap(),
+                    the_description: format_as!(HTML, ""),
+                    max,
+                    min,
+                    forcing: Forcing::Passable,
+                });
                 if response < opening {
                     let mut min = min.with_hcp(11);
                     min.length[response] = 4;
@@ -2663,6 +2679,19 @@ impl Convention {
                 max,
                 min: min_jacoby.with_shcp(13),
                 forcing: Forcing::GameForcing,
+            });
+            // Likewise, opener bids game over Jacoby 2NT.
+            sheets.add(Convention::Simple {
+                the_name: "Game after Jacoby 2NT",
+                regex: RegexSet::new([&format!(
+                    "^(P )*1{:?} [PX] 2N [PX] 4{:?}$",
+                    opening, opening
+                )])
+                .unwrap(),
+                the_description: format_as!(HTML, ""),
+                max,
+                min,
+                forcing: Forcing::Passable,
             });
         }
         for opening in [Clubs, Diamonds].iter().cloned() {
@@ -2692,6 +2721,51 @@ impl Convention {
                     min: min_splinter,
                     the_description: format_as!(HTML, ""),
                     forcing: Forcing::GameForcing,
+                });
+                // Opener answers the game force with 3NT when they stop the
+                // short suit, with the ace, Kx or Qxx, and five of the minor
+                // when they do not.
+                let mut ace = min;
+                ace.hcp_in_suit[response] = 4;
+                let mut king = min;
+                king.length[response] = 2;
+                king.hcp_in_suit[response] = 3;
+                let mut queen = min;
+                queen.length[response] = 3;
+                queen.hcp_in_suit[response] = 2;
+                let mut small = max;
+                small.hcp_in_suit[response] = 1;
+                let mut short = max;
+                short.length[response] = 2;
+                short.hcp_in_suit[response] = 2;
+                let mut bare = max;
+                bare.length[response] = 1;
+                bare.hcp_in_suit[response] = 3;
+                let splintered = format!(
+                    "^(P )*1{:?} [PX] {}{:?} [PX] ",
+                    opening, splinterbid, response
+                );
+                sheets.add(Convention::Rule {
+                    the_name: "3NT after a splinter",
+                    regex: RegexSet::new([format!("{splintered}3N$")]).unwrap(),
+                    the_description: format_as!(HTML, "Stops the short suit"),
+                    fits: vec![
+                        Fit::new(ace, max),
+                        Fit::new(king, max),
+                        Fit::new(queen, max),
+                    ],
+                    forcing: Forcing::Passable,
+                });
+                sheets.add(Convention::Rule {
+                    the_name: "Game after a splinter",
+                    regex: RegexSet::new([format!("{splintered}5{opening:?}$")]).unwrap(),
+                    the_description: format_as!(HTML, "Does not stop the short suit"),
+                    fits: vec![
+                        Fit::new(min, small),
+                        Fit::new(min, short),
+                        Fit::new(min, bare),
+                    ],
+                    forcing: Forcing::Passable,
                 });
             }
         }
@@ -4092,6 +4166,124 @@ fn sheets_splinters_in_any_short_suit() {
         sheets(&spades, "S KJ32 H K32 D 2 C AJ432")
     );
     assert_eq!(Suit(4, Hearts), sheets(&spades, "S KJ32 H 2 D K32 C AJ432"));
+}
+
+/// A game force has to be answered.  Opener bids game over Jacoby 2NT and a
+/// splinter whatever the hand, where it used to pass: the natural bids asked
+/// for 26 points of its own.
+#[test]
+fn sheets_opener_bids_game_after_a_game_forcing_raise() {
+    use bridge_deck::Suit::*;
+    use rand::SeedableRng;
+    use Bid::*;
+
+    // Jacoby 2NT, and a splinter in each of the other suits.
+    let forcing_raises = |major: bridge_deck::Suit| -> Vec<Bid> {
+        bridge_deck::Suit::ALL
+            .iter()
+            .filter(|&&suit| suit != major)
+            .map(|&suit| Suit(if suit > major { 3 } else { 4 }, suit))
+            .chain([NT(2)])
+            .collect()
+    };
+
+    // Openers with the least and a little more.
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    for (major, hands) in [
+        (
+            Hearts,
+            ["S K3 H AJ872 D Q92 C 854", "S K3 H AKJ72 D Q92 C J54"],
+        ),
+        (
+            Spades,
+            ["S AJ1073 H A5 D K542 C Q8", "S AKJ72 H K4 D Q92 C J54"],
+        ),
+    ] {
+        for force in forcing_raises(major) {
+            for hand in hands {
+                let auction = [Suit(1, major), Pass, force, Pass];
+                assert_eq!(Suit(4, major), sheets(&auction, hand), "{auction:?} {hand}");
+            }
+        }
+    }
+
+    // However it is held, the hand does not pass.
+    let mut bidder = ConventionalBid(Convention::sheets());
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    for major in [Hearts, Spades] {
+        let mut tested = 0;
+        while tested < 150 {
+            let mut deck = Cards::ALL;
+            let hand = deck.pick_rng(&mut rng, 13).unwrap();
+            // Opener has the five cards that opening a major takes.
+            if hand.in_suit(major).len() < 5 {
+                continue;
+            }
+            tested += 1;
+            for force in forcing_raises(major) {
+                let auction = [Suit(1, major), Pass, force, Pass];
+                assert_ne!(Pass, bidder.bid(&auction, hand), "{auction:?} {hand}");
+            }
+        }
+    }
+}
+
+/// Over a splinter after 1C or 1D, opener bids 3NT when they stop the short
+/// suit, with the ace, Kx or Qxx, and five of the minor when they do not.
+#[test]
+fn sheets_opener_bids_game_after_a_minor_splinter() {
+    use bridge_deck::Suit::*;
+    use rand::SeedableRng;
+    use Bid::*;
+
+    let sheets = |auction: &[Bid], hand: &str| system_bid(BiddingSystem::Sheets, auction, hand);
+    let over_spades = [Suit(1, Clubs), Pass, Suit(3, Spades), Pass];
+    assert_eq!(NT(3), sheets(&over_spades, "S A93 H Q1042 D K C KQJ32"));
+    assert_eq!(NT(3), sheets(&over_spades, "S K9 H Q1042 D K3 C AQJ32"));
+    assert_eq!(NT(3), sheets(&over_spades, "S Q93 H A1042 D K C KQJ32"));
+    assert_eq!(
+        Suit(5, Clubs),
+        sheets(&over_spades, "S J93 H Q1042 D K C AKQJ2")
+    );
+    assert_eq!(
+        Suit(5, Clubs),
+        sheets(&over_spades, "S Q9 H A1042 D K3 C KQJ32")
+    );
+    assert_eq!(
+        Suit(5, Clubs),
+        sheets(&over_spades, "S K H AJ1042 D 93 C KQJ32")
+    );
+    let over_hearts = [Suit(1, Diamonds), Pass, Suit(3, Hearts), Pass];
+    assert_eq!(NT(3), sheets(&over_hearts, "S 10976 H AK85 D AJ7 C Q2"));
+    assert_eq!(
+        Suit(5, Diamonds),
+        sheets(&over_hearts, "S A976 H 8 D AJ742 C KQ2")
+    );
+
+    // However it is held, the hand does not pass, and bids 3NT exactly when
+    // it stops the short suit.
+    let mut bidder = ConventionalBid(Convention::sheets());
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    for opening in [Clubs, Diamonds] {
+        for short in [Diamonds, Hearts, Spades] {
+            if short == opening {
+                continue;
+            }
+            let level = if short > opening { 3 } else { 4 };
+            let auction = [Suit(1, opening), Pass, Suit(level, short), Pass];
+            for _ in 0..100 {
+                let mut deck = Cards::ALL;
+                let hand = deck.pick_rng(&mut rng, 13).unwrap();
+                let held = hand.in_suit(short);
+                let points = held.values().hcp_in_suit[short];
+                let stopped = points >= 4
+                    || (held.len() >= 2 && points >= 3)
+                    || (held.len() >= 3 && points >= 2);
+                let expected = if stopped { NT(3) } else { Suit(5, opening) };
+                assert_eq!(expected, bidder.bid(&auction, hand), "{auction:?} {hand}");
+            }
+        }
+    }
 }
 
 #[test]
