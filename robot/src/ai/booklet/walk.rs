@@ -135,7 +135,7 @@ pub(super) fn described(
         for i in table.candidates(&auction) {
             let entry = &entries[i];
             if matches!(entry, Convention::Simple { .. } | Convention::Rule { .. })
-                && entry.matches(&auction, &bids)
+                && entry.matches(&bids)
             {
                 found.push((i, bid));
             }

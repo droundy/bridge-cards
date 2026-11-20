@@ -303,8 +303,8 @@ impl Convention {
                 self.candidates(&auction)
                     .into_iter()
                     .find(|&i| match &conventions[i] {
-                        Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
-                            regex.is_match(&auction)
+                        Convention::Simple { auctions, .. } | Convention::Rule { auctions, .. } => {
+                            auctions.matches(bids)
                         }
                         _ => false,
                     })

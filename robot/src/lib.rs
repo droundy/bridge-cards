@@ -236,8 +236,8 @@ impl<C> GameState<C> {
     }
 
     /// A new deal at a new table that explains bids with `conventions`.
-    /// Building conventions compiles many regexes, so `redeal` hands over
-    /// the ones it already has.
+    /// Building conventions takes a while, so `redeal` hands over the ones it
+    /// already has.
     fn with_conventions(conventions: Vec<Convention>) -> GameState<C> {
         let mut deck = Cards::ALL;
         let north = deck.pick(13).unwrap();

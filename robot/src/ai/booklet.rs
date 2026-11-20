@@ -12,7 +12,7 @@
 //! one, as in "1X – 1Y – 2Y".
 
 use super::advice::{describe, Feature};
-use super::{final_bid, BiddingSystem, Convention, Explanation, Forcing};
+use super::{BiddingSystem, Convention, Explanation, Forcing};
 use crate::Bid;
 use bridge_deck::HandValuation;
 use display_as::{format_as, with_template, DisplayAs, HTML};
@@ -107,8 +107,8 @@ fn naturals(table: &Convention) -> Vec<Natural> {
             | Convention::Forced { the_name, min, .. } => (*the_name, *min),
             _ => continue,
         };
-        let patterns = entry.regex().into_iter().flat_map(|regex| regex.patterns());
-        for bid in patterns.filter_map(|pattern| final_bid(pattern)) {
+        let patterns = entry.auctions().into_iter().flat_map(|a| a.patterns());
+        for bid in patterns.filter_map(|pattern| pattern.last_bid()) {
             let mut needs = Vec::new();
             if let Bid::Suit(_, suit) = bid {
                 if min.length[suit] > 0 {

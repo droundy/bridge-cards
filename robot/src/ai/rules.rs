@@ -824,8 +824,8 @@ impl Convention {
         self.candidates(&auction).into_iter().any(|i| {
             matches!(
                 &self.entries()[i],
-                Convention::Simple { regex, .. } | Convention::Rule { regex, .. }
-                    if regex.is_match(&auction)
+                Convention::Simple { auctions, .. } | Convention::Rule { auctions, .. }
+                    if auctions.matches(bids)
             )
         })
     }
@@ -1331,9 +1331,9 @@ impl Convention {
         for i in self.candidates(&auction) {
             match &self.entries()[i] {
                 Convention::Simple {
-                    regex, min, max, ..
-                } if regex.is_match(&auction) => ways.push((*min, *max, Vec::new())),
-                Convention::Rule { regex, fits, .. } if regex.is_match(&auction) => {
+                    auctions, min, max, ..
+                } if auctions.matches(bids) => ways.push((*min, *max, Vec::new())),
+                Convention::Rule { auctions, fits, .. } if auctions.matches(bids) => {
                     ways.extend(fits.iter().map(|f| (f.min, f.max, f.shape.clone())))
                 }
                 _ => {}
