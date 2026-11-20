@@ -105,7 +105,6 @@ impl Hidden {
     }
 
     /// The seats of the two hands.
-    #[cfg(any(test, feature = "benchmarks"))]
     pub(crate) fn seats(&self) -> [Seat; 2] {
         self.seats
     }

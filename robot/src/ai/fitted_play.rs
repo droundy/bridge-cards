@@ -664,6 +664,15 @@ impl View {
         })
     }
 
+    /// The card that `model` scores highest.
+    pub(crate) fn best(&self, model: &Model) -> Card {
+        self.legal()
+            .map(|card| (model.score(self, card), card))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap()
+            .1
+    }
+
     /// The cards that the player could play: those of the suit led if they
     /// have any, and otherwise any.
     pub(crate) fn legal(&self) -> Cards {
@@ -965,7 +974,7 @@ static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin")
 
 /// The play model of [`MODEL`], or `None` if there is none, or it is of a
 /// shape that this code does not have, or has the wrong number of weights.
-fn model() -> Option<&'static Model> {
+pub(crate) fn model() -> Option<&'static Model> {
     static MODEL_PLAYED: std::sync::OnceLock<Option<Model>> = std::sync::OnceLock::new();
     MODEL_PLAYED
         .get_or_init(|| {
@@ -993,21 +1002,23 @@ impl super::PlayAI for ModelPlay {
         let Some(model) = model() else {
             return super::RandomPlay.play(game);
         };
-        let convention = game.system.convention();
-        match View::new(game, &convention) {
-            Some(view) => {
-                view.legal()
-                    .map(|card| (model.score(&view, card), card))
-                    .max_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap()
-                    .1
-            }
-            None => {
-                use super::opening_lead::{likely_opening_leads, Auction};
-                match (Auction::new(game), game.lead) {
-                    (Some(auction), Some(leader)) => likely_opening_leads(&auction, game.hands[leader])[0],
-                    _ => game.could_be_played().min().unwrap(),
+        model_card(model, game, &game.system.convention())
+    }
+}
+
+/// The card that `model` scores highest for the player to play in `game`,
+/// from what the player can see, or for the opening lead, the first of
+/// `likely_opening_leads`.
+pub(crate) fn model_card<C>(model: &Model, game: &GameState<C>, convention: &Convention) -> Card {
+    match View::new(game, convention) {
+        Some(view) => view.best(model),
+        None => {
+            use super::opening_lead::{likely_opening_leads, Auction};
+            match (Auction::new(game), game.lead) {
+                (Some(auction), Some(leader)) => {
+                    likely_opening_leads(&auction, game.hands[leader])[0]
                 }
+                _ => game.could_be_played().min().unwrap(),
             }
         }
     }
@@ -2553,6 +2564,7 @@ mod tests {
         Model(&'a Model),
         Robot,
         Ensemble(Box<crate::EnsemblePlay>),
+        Playout(Box<crate::PlayoutPlay>),
     }
 
     impl Endgamer<'_> {
@@ -2562,6 +2574,7 @@ mod tests {
                 Endgamer::Model(model) => best_card(game, convention, model),
                 Endgamer::Robot => super::super::RandomPlay.play(game),
                 Endgamer::Ensemble(player) => player.play(game),
+                Endgamer::Playout(player) => player.play(game),
             }
         }
     }
@@ -2602,8 +2615,14 @@ mod tests {
         let solved = number("PLAY_ENDGAME_SOLVED", 7);
         let count = number("PLAY_ENDGAME_DEALS", 100);
         let names: Vec<String> = var("PLAY_ENDGAME_PLAYERS", "robot").split(',').map(|n| n.trim().to_string()).collect();
-        let models: Vec<Option<Model>> =
-            names.iter().map(|n| (n != "robot" && n != "ensemble").then(|| read_model(n))).collect();
+        let models: Vec<Option<Model>> = names
+            .iter()
+            .map(|n| match n.strip_prefix("playout=") {
+                Some(path) => Some(read_model(path)),
+                None => (n != "robot" && n != "ensemble").then(|| read_model(n)),
+            })
+            .collect();
+        let playout_deals = number("PLAY_PLAYOUT_DEALS", 100);
         let lead_in = std::env::var("PLAY_ENDGAME_LEAD_IN")
             .ok()
             .map(|path| read_model(&path))
@@ -2640,6 +2659,13 @@ mod tests {
                         .zip(&names)
                         .map(|(model, name)| {
                             let player = || match (model, name.as_str()) {
+                                (Some(model), name) if name.starts_with("playout=") => {
+                                    Endgamer::Playout(Box::new(
+                                        crate::PlayoutPlay::seeded(seed + 2_000_000)
+                                            .with_model(model.clone())
+                                            .with_deals(playout_deals),
+                                    ))
+                                }
                                 (Some(model), _) => Endgamer::Model(model),
                                 (None, "robot") => Endgamer::Robot,
                                 _ => ensemble(seed + 1_000_000),
@@ -2674,6 +2700,60 @@ mod tests {
                 "{name}: declaring {declaring:+.3} ({de:.3}), defending {defending:+.3} ({fe:.3}), in all {total:+.3} ({te:.3})"
             );
         }
+    }
+
+    /// How long each player takes to choose a card, at `PLAY_TIME_TRICKS` (7)
+    /// tricks left, in `PLAY_TIME_DEALS` (30) positions reached by the model
+    /// `PLAY_TIME_MODEL` playing the deals that the robot bid, with one
+    /// thread: the ensemble (with `PLAY_TIME_ENSEMBLE` set) and the playout
+    /// player.
+    #[test]
+    #[ignore]
+    fn time_the_players() {
+        use crate::ai::PlayAI;
+        let tricks = number("PLAY_TIME_TRICKS", 7);
+        let count = number("PLAY_TIME_DEALS", 30);
+        let model = read_model(&std::env::var("PLAY_TIME_MODEL").expect("PLAY_TIME_MODEL"));
+        let deals = crate::ai::opening_lead::candidates::opening_leads(13, count);
+        let tricks_left =
+            |game: &GameState<()>| game.hands.iter().map(|hand| hand.len()).max().unwrap_or(0);
+        let positions: Vec<GameState<()>> = deals
+            .iter()
+            .filter_map(|game| {
+                let convention = game.system.convention();
+                let mut game: GameState<()> =
+                    serde_json::from_str(&serde_json::to_string(game).unwrap()).unwrap();
+                while !game.hand_done
+                    && !(current_trick(&game).is_empty() && tricks_left(&game) == tricks)
+                {
+                    let card = best_card(&game, &convention, &model);
+                    game.play(card);
+                }
+                (!game.hand_done).then_some(game)
+            })
+            .collect();
+        println!("{} positions with {tricks} tricks left", positions.len());
+        type Chooser = Box<dyn FnMut(&GameState<()>) -> Card>;
+        let time = |name: &str, mut player: Chooser| {
+            let started = std::time::Instant::now();
+            let mut sum = 0usize;
+            for game in &positions {
+                sum += player(game).rank() as usize;
+            }
+            println!(
+                "{name:<22} {:9.2} ms a decision ({sum})",
+                started.elapsed().as_secs_f64() * 1e3 / positions.len() as f64
+            );
+        };
+        let ensemble_deals = number("PLAY_TIME_ENSEMBLE", 0);
+        if ensemble_deals > 0 {
+            let mut player = crate::EnsemblePlay::seeded(1).solving_up_to(tricks);
+            time("ensemble", Box::new(move |g| player.play(g)));
+        }
+        let mut player = crate::PlayoutPlay::seeded(3)
+            .with_model(model.clone())
+            .with_deals(100);
+        time("playout (100 deals)", Box::new(move |g| player.play(g)));
     }
 
     /// Plays the play model with the weights in the file
