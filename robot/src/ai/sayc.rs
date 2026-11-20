@@ -59,10 +59,9 @@
 //! that opener shows over a weak two's 2NT with a maximum, and Michaels over
 //! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
 //! mention fall back on the natural bids shared with the other conventions.
-use super::{Convention, Fit, Forcing, ShapeRule, StrongTwo};
+use super::{Auctions, Convention, Fit, Forcing, ShapeRule, StrongTwo};
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
-use regex::RegexSet;
 use ShapeRule::{AtLeastAsLong, Balanced, Longer};
 
 /// Passes before the first bid of the auction.
@@ -107,15 +106,15 @@ struct Sheet(Convention, Convention);
 /// An entry that a hand fits if it fits any of `fits`.
 fn rule(
     name: &'static str,
-    regex: &str,
+    notation: &str,
     description: &str,
     forcing: Forcing,
     fits: impl IntoIterator<Item = Fit>,
 ) -> Convention {
     let fits: Vec<Fit> = fits.into_iter().collect();
-    assert!(!fits.is_empty(), "{} {} fits no hand", name, regex);
+    assert!(!fits.is_empty(), "{} {} fits no hand", name, notation);
     Convention::Rule {
-        regex: RegexSet::new([regex]).unwrap(),
+        auctions: Auctions::new([notation]).unwrap(),
         the_description: format_as!(HTML, description),
         the_name: name,
         fits,
@@ -128,23 +127,23 @@ impl Sheet {
     fn add(
         &mut self,
         name: &'static str,
-        regex: &str,
+        notation: &str,
         description: &str,
         forcing: Forcing,
         fits: impl IntoIterator<Item = Fit>,
     ) {
-        self.0.add(rule(name, regex, description, forcing, fits));
+        self.0.add(rule(name, notation, description, forcing, fits));
     }
     /// An entry that explores, for a hand that fits any of `fits`.
     fn explore(
         &mut self,
         name: &'static str,
-        regex: &str,
+        notation: &str,
         description: &str,
         forcing: Forcing,
         fits: impl IntoIterator<Item = Fit>,
     ) {
-        self.1.add(rule(name, regex, description, forcing, fits));
+        self.1.add(rule(name, notation, description, forcing, fits));
     }
     /// The entries that `add` makes, which were written to be sorted the
     /// way Sheets is (see `Convention::most_forcing_then_highest`).
@@ -236,7 +235,7 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     // and the shared natural bids for when they have bid.
     s.0.add(Convention::Contract {
         the_name: "Natural",
-        regex: RegexSet::new(["[1-7][CDHSN]$"]).unwrap(),
+        auctions: Auctions::new(["[1-7][CDHSN]$"]).unwrap(),
     });
     s.0.explain(super::rules::explanation());
     let explore = std::mem::replace(&mut s.1, Convention::new(""));
@@ -250,7 +249,7 @@ fn standard_american(name: &'static str, two_over_one: bool) -> Convention {
     s.0
 }
 
-/// `calls` separated by passes or doubles, after any passes, as a regex.
+/// `calls` separated by passes or doubles, after any passes, as a notation.
 fn auction(calls: &[&str]) -> String {
     format!("^{OPEN}{}$", calls.join(" [PX] "))
 }
@@ -842,8 +841,8 @@ fn one_level_response(after: &str, opening: Suit, response: Suit) -> Convention 
         Hearts => ("4+ hearts", vec![fit(four, MAX)]),
         _ => ("4+ diamonds", vec![fit(four, MAX)]),
     };
-    let regex = format!("{after}1{}$", response.latin());
-    rule("Response", &regex, shown, Forcing::Forcing, fits)
+    let notation = format!("{after}1{}$", response.latin());
+    rule("Response", &notation, shown, Forcing::Forcing, fits)
 }
 
 /// Responder's bids after a one-level opening, when the opponents pass.
@@ -1633,7 +1632,7 @@ fn responder_rebids(s: &mut Sheet) {
 /// up to it.
 fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x: &Shown) {
     let after = format!("{first}{} P ", x.call());
-    let regex = |bid: &str| format!("{after}{bid}$");
+    let notation = |bid: &str| format!("{after}{bid}$");
     let legal = |level, strain| above(level, strain, x);
     // Responder's high card points to invite, and to bid game, by the
     // contract rules: with no bid left that any hand can invite with, which
@@ -1668,7 +1667,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
         if legal(4, Some(suit)) {
             s.add(
                 "Game",
-                &regex(&call(4, Some(suit))),
+                &notation(&call(4, Some(suit))),
                 "A fit",
                 Forcing::Passable,
                 [fit(game_values.min_len(suit, need), MAX)],
@@ -1678,7 +1677,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
     if legal(3, None) {
         s.add(
             "Game",
-            &regex("3N"),
+            &notation("3N"),
             "",
             Forcing::Passable,
             [fit(game_values, MAX)],
@@ -1697,7 +1696,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
                 sign_offs.push(call(qlevel, Some(q)));
                 s.add(
                     "New suit",
-                    &regex(&call(qlevel, Some(q))),
+                    &notation(&call(qlevel, Some(q))),
                     "5+ cards, to play",
                     Forcing::Passable,
                     [fit(MIN.min_len(q, 5), weak)],
@@ -1705,7 +1704,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
             } else {
                 s.add(
                     "New suit",
-                    &regex(&call(qlevel, Some(q))),
+                    &notation(&call(qlevel, Some(q))),
                     "4+ cards",
                     Forcing::Forcing,
                     [fit(game_values.min_len(q, 4), MAX)],
@@ -1719,7 +1718,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
             if legal(3, Some(suit)) {
                 s.add(
                     "Game invite",
-                    &regex(&call(3, Some(suit))),
+                    &notation(&call(3, Some(suit))),
                     "A fit",
                     Forcing::Passable,
                     [fit(inviting.0.min_len(suit, need), inviting.1)],
@@ -1729,7 +1728,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
         if legal(3, Some(response)) {
             s.add(
                 "Game invite",
-                &regex(&call(3, Some(response))),
+                &notation(&call(3, Some(response))),
                 "6+ cards",
                 Forcing::Passable,
                 [fit(inviting.0.min_len(response, 6), inviting.1)],
@@ -1738,7 +1737,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
         if legal(2, None) {
             s.add(
                 "Game invite",
-                &regex("2N"),
+                &notation("2N"),
                 "",
                 Forcing::Passable,
                 [fit(inviting.0, inviting.1)],
@@ -1752,7 +1751,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
                 sign_offs.push(call(2, Some(z)));
                 s.add(
                     "Raise",
-                    &regex(&call(2, Some(z))),
+                    &notation(&call(2, Some(z))),
                     "4+ card support",
                     Forcing::Passable,
                     [fit(MIN.min_len(z, 4), weak)],
@@ -1764,7 +1763,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
                 if Some(*suit) == x.strain {
                     s.add(
                         "Pass",
-                        &regex("P"),
+                        &notation("P"),
                         "A fit, too weak to invite",
                         Forcing::Passable,
                         [fit(MIN.min_len(*suit, *need), weak)],
@@ -1776,7 +1775,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
             sign_offs.push(call(2, Some(response)));
             s.add(
                 "Rebid",
-                &regex(&call(2, Some(response))),
+                &notation(&call(2, Some(response))),
                 "6+ cards",
                 Forcing::Passable,
                 [fit(MIN.min_len(response, 6), weak)],
@@ -1786,7 +1785,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
             sign_offs.push(call(2, Some(opening)));
             s.add(
                 "Preference",
-                &regex(&call(2, Some(opening))),
+                &notation(&call(2, Some(opening))),
                 "3+ cards",
                 Forcing::Passable,
                 [fit(MIN.min_len(opening, 3), weak)],
@@ -1796,7 +1795,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
             sign_offs.push("1N".to_string());
             s.add(
                 "Rebid",
-                &regex("1N"),
+                &notation("1N"),
                 "",
                 Forcing::Passable,
                 [fit(MIN, weak)],
@@ -1805,7 +1804,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
         if !x.forcing {
             s.add(
                 "Pass",
-                &regex("P"),
+                &notation("P"),
                 "Too weak to invite",
                 Forcing::Passable,
                 [fit(MIN, weak)],
@@ -1817,7 +1816,7 @@ fn responder_after(s: &mut Sheet, first: &str, opening: Suit, response: Suit, x:
         let nt = if legal(2, None) { 2 } else { 3 };
         s.add(
             "Rebid",
-            &regex(&call(nt, None)),
+            &notation(&call(nt, None)),
             "Nothing else fits",
             Forcing::Passable,
             [fit(MIN, MAX)],
