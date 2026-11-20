@@ -2936,9 +2936,12 @@ mod tests {
     /// playing on for both sides, which is the same for every model, and
     /// with the model playing on for its own side and the competitor for the
     /// opponents, which is what each card is worth to the model against the
-    /// competitor.  As the best card on a hundred deals is partly luck, even
-    /// the best play loses a little.  It uses `PLAY_THREADS` threads, or
-    /// else every core.
+    /// competitor, unless `PLAY_YARD_OWN` is 0; the first costs next to
+    /// nothing for each model, and the second as much as the positions.
+    /// Each loss is also compared with the competitor's on the same
+    /// positions, which has a far smaller error than the losses.  As the
+    /// best card on a hundred deals is partly luck, even the best play loses
+    /// a little.  It uses `PLAY_THREADS` threads, or else every core.
     #[test]
     #[ignore]
     fn score_on_the_playout_yardstick() {
@@ -3019,15 +3022,23 @@ mod tests {
                 })
                 .collect()
         };
-        for (name, model) in &models {
-            let own = values(model);
-            let (by_competitor, error) = mean_and_error(&losses(model, &fixed));
-            let (by_itself, own_error) = mean_and_error(&losses(model, &own));
-            println!(
-                "{name}: its likeliest cards lose {by_competitor:.4} ({error:.4}) tricks a play with the competitor playing on, \
-                 {by_itself:.4} ({own_error:.4}) with itself playing on for its side ({:.0} s)",
-                started.elapsed().as_secs_f64()
-            );
+        let own_too = number("PLAY_YARD_OWN", 1) == 1;
+        // The competitor's own losses are the same both ways.
+        let competitor_lost = losses(&competitor, &fixed);
+        // A loss, and how much more it is than the competitor's on the same
+        // positions, each with its standard error, as text.
+        let compared = |lost: &[f64]| {
+            let (mean, error) = mean_and_error(lost);
+            let more: Vec<f64> = lost.iter().zip(&competitor_lost).map(|(a, b)| a - b).collect();
+            let (more, more_error) = mean_and_error(&more);
+            format!("{mean:.4} ({error:.4}), {more:+.4} ({more_error:.4}) more than the competitor")
+        };
+        for (i, (name, model)) in models.iter().enumerate() {
+            print!("{name}: its likeliest cards lose {} with the competitor playing on", compared(&losses(model, &fixed)));
+            if own_too && i > 0 {
+                print!(", {} with itself playing on for its side", compared(&losses(model, &values(model))));
+            }
+            println!(" ({:.0} s)", started.elapsed().as_secs_f64());
         }
     }
 
