@@ -1829,6 +1829,15 @@ mod tests {
         [game.ns_tricks, game.ew_tricks]
     }
 
+    /// Which of the learners' choices self-play plays out (see [`playout`]):
+    /// a `share` of those of more than one card with up to `most` tricks
+    /// left.
+    #[derive(Clone, Copy)]
+    struct Playouts {
+        share: f64,
+        most: usize,
+    }
+
     /// How a seat chooses its cards in self-play.
     #[derive(Clone, Copy)]
     enum Player<'a> {
@@ -1846,9 +1855,8 @@ mod tests {
     /// seat that chooses it as its `players` say: a model chooses at random
     /// with its chances at `temperature`, a learner by its weights in
     /// `learners`.  Gives the choices that the learners made and the tricks
-    /// each side won, with `record` the whole game, for watching.  A share
-    /// `playouts.0` of the learners' choices of more than one card with up to
-    /// `playouts.1` tricks left are played out (see [`playout`]).
+    /// each side won, with `record` the whole game, for watching, with some
+    /// of the learners' choices played out as `playouts` says.
     #[expect(clippy::too_many_arguments, reason = "the one caller is self-play's round, which has them all at hand")]
     fn play_out(
         json: &str,
@@ -1857,7 +1865,7 @@ mod tests {
         temperature: f64,
         players: [Player; 4],
         record: bool,
-        playouts: (f64, usize),
+        playouts: Playouts,
         rng: &mut StdRng,
     ) -> (Vec<Decision>, [usize; 2], Option<serde_json::Value>) {
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
@@ -1903,7 +1911,7 @@ mod tests {
                     considered = legal.iter().zip(&cards).map(|(&card, c)| (pair(card), c.1)).collect();
                 }
                 if let Some(learner) = learning {
-                    let (share, most) = playouts;
+                    let Playouts { share, most } = playouts;
                     let played_out = (share > 0.0
                         && legal.len() > 1
                         && 13 - game.tricks.len() <= most
@@ -1921,15 +1929,7 @@ mod tests {
                                 .iter()
                                 .map(|&card| playout(&game, card, convention, learners, players, seed)[side] as f64)
                                 .collect();
-                            // The lowest of a card's run is the highest
-                            // played out of its suit that is not above it.
-                            let run_of = |card: Card| {
-                                (0..runs.len())
-                                    .filter(|&i| runs[i].suit() == card.suit() && runs[i].rank() <= card.rank())
-                                    .max_by_key(|&i| runs[i].rank())
-                                    .unwrap()
-                            };
-                            Some(legal.iter().map(|&card| values[run_of(card)]).collect())
+                            Some(legal.iter().map(|&card| values[crate::ai::playout::run_of(&runs, card)]).collect())
                         });
                     decisions.push(Decision {
                         learner,
@@ -2078,8 +2078,9 @@ mod tests {
     /// choices of more than one card with up to `PLAY_SELF_PLAYOUT_TRICKS`
     /// (13) tricks left are played out (see [`playout`]): each card that the
     /// learner could play is played (one of each run of cards that touch,
-    /// for all of the run), and the rest of the game after it, by
-    /// the same players on the same deal.  The learner's step then also
+    /// for all of the run), and the rest of the game after it on the same
+    /// deal, by the same players: what a card is worth against the players
+    /// that the learner is playing against.  The learner's step then also
     /// climbs, with the weight of `PLAY_SELF_PLAYOUT_WEIGHTS` (1; weights
     /// separated by commas, one for each learner, taken again in turn if
     /// there are fewer) divided by the share, so that the weight does not
@@ -2128,7 +2129,10 @@ mod tests {
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
         let decay = float("PLAY_SELF_DECAY", 0.0);
-        let playouts = (float("PLAY_SELF_PLAYOUT_SHARE", 0.0), number("PLAY_SELF_PLAYOUT_TRICKS", 13));
+        let playouts = Playouts {
+            share: float("PLAY_SELF_PLAYOUT_SHARE", 0.0),
+            most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
+        };
         let softened = float("PLAY_SELF_PLAYOUT_TEMPERATURE", 1.0);
         let playout_weights: Vec<f64> = var("PLAY_SELF_PLAYOUT_WEIGHTS", "1")
             .split(',')
@@ -2399,7 +2403,7 @@ mod tests {
                                                 let soft: Vec<f64> = odds.iter().map(|o| o / sum).collect();
                                                 let mean: f64 = values.iter().zip(&soft).map(|(v, p)| v * p).sum();
                                                 for (((entries, _), value), p) in d.cards.iter().zip(values).zip(&soft) {
-                                                    let g = weight * p * (value - mean) / (playouts.0 * softened * temperature);
+                                                    let g = weight * p * (value - mean) / (playouts.share * softened * temperature);
                                                     learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
                                                 }
                                             }
@@ -2539,7 +2543,7 @@ mod tests {
                         .collect();
                     print!(", the test data's choices lose {} tricks a play", losses.join(", "));
                 }
-                if playouts.0 > 0.0 {
+                if playouts.share > 0.0 {
                     let lost: Vec<String> = playout_losses
                         .iter()
                         .map(|&(lost, n)| format!("{:.4} ({n})", lost / n.max(1) as f64))
@@ -2681,7 +2685,8 @@ mod tests {
 
     /// The play model in `path`: the game's model of a play model file, or
     /// with `#K` after the file's name, its learner K (from 1), or a file of
-    /// its weights one a line, as self-play writes them, of the shape
+    /// its weights one a line, as self-play writes them, of the shape that
+    /// its name ends with (as `round-NNNNN-learner-K-SHAPE.txt`), or else of
     /// `PLAY_SHAPE` (`v1`).
     fn read_model(path: &str) -> Model {
         if let Some((file, learner)) = path.split_once('#') {
@@ -2692,7 +2697,11 @@ mod tests {
         if start.starts_with(b"PLAYMDL") {
             model_file::ModelFile::read(path).best
         } else {
-            let shape = shape_of("PLAY_SHAPE");
+            // A snapshot of self-play names its shape at the end.
+            let named = path
+                .strip_suffix(".txt")
+                .and_then(|stem| SHAPES.iter().filter(|s| stem.ends_with(&format!("-{}", s.name))).max_by_key(|s| s.name.len()));
+            let shape = named.copied().unwrap_or_else(|| shape_of("PLAY_SHAPE"));
             Model { shape, network: Network::read(path, shape.entries(), shape.hidden, shape.second) }
         }
     }
@@ -2910,6 +2919,115 @@ mod tests {
         );
         for (p, name) in names.iter().enumerate() {
             println!("{name}: {}", endgame_summary(&gains, p));
+        }
+    }
+
+    /// A yardstick for play models that does not move as they learn, and
+    /// that is far less noisy than a match.  The competitor, the play model
+    /// `PLAY_YARD_COMPETITOR` (see [`read_model`]), plays `PLAY_YARD_GAMES`
+    /// (200) deals that the robot bid, and a share `PLAY_YARD_SHARE` (0.25)
+    /// of its choices of more than one run of touching cards are kept.  In
+    /// each, each run is played out on the same `PLAY_YARD_DEALS` (100) deals
+    /// of the hands that the player cannot see that fit what they have seen
+    /// (see [`card_values`](crate::ai::playout::card_values)).  For the
+    /// competitor and each model of `PLAY_YARD_MODELS` (comma-separated), it
+    /// prints the tricks a play that its likeliest cards lose to the best
+    /// card, with the standard errors, valued twice: with the competitor
+    /// playing on for both sides, which is the same for every model, and
+    /// with the model playing on for its own side and the competitor for the
+    /// opponents, which is what each card is worth to the model against the
+    /// competitor.  As the best card on a hundred deals is partly luck, even
+    /// the best play loses a little.  It uses `PLAY_THREADS` threads, or
+    /// else every core.
+    #[test]
+    #[ignore]
+    fn score_on_the_playout_yardstick() {
+        use crate::ai::playout::{copy_of, one_of_each_run, run_of};
+        let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
+        let mut models: Vec<(String, Model)> = vec![("the competitor".to_string(), competitor.clone())];
+        for name in var("PLAY_YARD_MODELS", "").split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            models.push((name.to_string(), read_model(name)));
+        }
+        let games = number("PLAY_YARD_GAMES", 200);
+        let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
+        let count = number("PLAY_YARD_DEALS", 100);
+        let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+        let started = std::time::Instant::now();
+        let deals = crate::ai::opening_lead::candidates::opening_leads(23, games);
+        // Each position, with its runs and the deals that they are played
+        // out on.
+        type Position = (GameState<()>, Vec<Card>, Vec<[Cards; 2]>);
+        let positions: Vec<Position> = workers.install(|| {
+            deals
+                .par_iter()
+                .enumerate()
+                .map(|(i, game)| {
+                    let convention: &Convention = game.system.table();
+                    let mut rng = StdRng::seed_from_u64(i as u64);
+                    let mut game = copy_of(game);
+                    let mut kept = Vec::new();
+                    while !game.hand_done {
+                        let runs: Vec<Card> = one_of_each_run(&game).collect();
+                        if runs.len() > 1 && View::new(&game, convention).is_some() && rng.gen_range(0.0..1.0) < share {
+                            if let Some(hidden) = Hidden::new(&game, convention) {
+                                let dealt = hidden.ensemble(&mut rng, count, None);
+                                if !dealt.is_empty() {
+                                    kept.push((copy_of(&game), runs, dealt));
+                                }
+                            }
+                        }
+                        let card = model_card(&competitor, &game, convention);
+                        game.play(card);
+                    }
+                    kept
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flatten()
+                .collect()
+        });
+        // The value of each run of each position, when `ours` plays on for
+        // the side to play and the competitor for the other.
+        let values = |ours: &Model| -> Vec<Vec<f64>> {
+            workers.install(|| {
+                positions
+                    .par_iter()
+                    .map(|(game, runs, dealt)| {
+                        let convention: &Convention = game.system.table();
+                        let side = game.turn().unwrap() as usize % 2;
+                        let mut both = [&competitor, &competitor];
+                        both[side] = ours;
+                        crate::ai::playout::card_values(game, runs, dealt, both, convention).unwrap()
+                    })
+                    .collect()
+            })
+        };
+        let fixed = values(&competitor);
+        println!(
+            "{} positions from {games} games of the competitor, each played out on {count} deals, in {:.0} s",
+            positions.len(),
+            started.elapsed().as_secs_f64()
+        );
+        let losses = |model: &Model, values: &[Vec<f64>]| -> Vec<f64> {
+            positions
+                .iter()
+                .zip(values)
+                .map(|((game, runs, _), values)| {
+                    let card = model_card(model, game, game.system.table());
+                    values.iter().copied().fold(f64::MIN, f64::max) - values[run_of(runs, card)]
+                })
+                .collect()
+        };
+        for (name, model) in &models {
+            let own = values(model);
+            let (by_competitor, error) = mean_and_error(&losses(model, &fixed));
+            let (by_itself, own_error) = mean_and_error(&losses(model, &own));
+            println!(
+                "{name}: its likeliest cards lose {by_competitor:.4} ({error:.4}) tricks a play with the competitor playing on, \
+                 {by_itself:.4} ({own_error:.4}) with itself playing on for its side ({:.0} s)",
+                started.elapsed().as_secs_f64()
+            );
         }
     }
 

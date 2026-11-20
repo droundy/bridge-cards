@@ -132,40 +132,14 @@ impl PlayAI for PlayoutPlay {
             // The opening lead, which the model chooses as it does.
             return super::fitted_play::model_card(model, game, convention);
         }
-        let Some(mover) = game.turn() else {
+        let candidates: Vec<Card> = one_of_each_run(game).collect();
+        let deals = hidden.ensemble(&mut self.rng, self.deals, self.replay.then_some(convention));
+        let Some(totals) = card_values(game, &candidates, &deals, [model, model], convention) else {
             return RandomPlay.play(game);
         };
-        let candidates: Vec<Card> = one_of_each_run(game).collect();
-        let mut totals = vec![0usize; candidates.len()];
-        let ours = mover as usize % 2;
-        let seats = hidden.seats();
-        let deals = hidden.ensemble(&mut self.rng, self.deals, self.replay.then_some(convention));
-        let dealt = deals.len();
-        for deal in deals {
-            let mut base = copy_of(game);
-            for (seat, cards) in seats.into_iter().zip(deal) {
-                // What the seat has played is the same in every deal.
-                let played = game.original_hands[seat] - game.hands[seat];
-                base.hands[seat] = cards;
-                base.original_hands[seat] = played + cards;
-            }
-            for (total, &card) in totals.iter_mut().zip(&candidates) {
-                let mut playout = copy_of(&base);
-                playout.play(card);
-                finish(&mut playout, model, convention);
-                *total += if ours == 0 {
-                    playout.ns_tricks
-                } else {
-                    playout.ew_tricks
-                };
-            }
-        }
-        if dealt == 0 {
-            return RandomPlay.play(game);
-        }
         let trump = trump_of(game);
         let cost = |card: Card| card.rank() + if Some(card.suit()) == trump { 13 } else { 0 };
-        let best = *totals.iter().max().unwrap();
+        let best = totals.iter().copied().fold(f64::MIN, f64::max);
         candidates
             .into_iter()
             .zip(totals)
@@ -188,17 +162,69 @@ pub(crate) fn one_of_each_run<C>(game: &GameState<C>) -> Cards {
     game.could_be_played().lowest_of_sequences(all)
 }
 
-/// Plays `game` out to the end, every card by `model`, from what the player
-/// of it can see.
-fn finish(game: &mut GameState<()>, model: &Model, convention: &super::Convention) {
+/// The index in `runs` (see [`one_of_each_run`]) of the run of `card`: the
+/// highest card of its suit in `runs` that is not above it.
+#[cfg(test)]
+pub(crate) fn run_of(runs: &[Card], card: Card) -> usize {
+    (0..runs.len())
+        .filter(|&i| runs[i].suit() == card.suit() && runs[i].rank() <= card.rank())
+        .max_by_key(|&i| runs[i].rank())
+        .unwrap()
+}
+
+/// The tricks that the side to play in `game` takes on the mean over
+/// `deals` of the two hands that the player cannot see (see
+/// [`Hidden::ensemble`]), after each of `cards`, when the rest of the hand
+/// is played by `models` (north and south's, and east and west's), each
+/// card from what its player can see.  Each deal is played out after each
+/// card, so that the cards are compared on the same deals.  `None` if
+/// there are no deals, or no one is to play.
+pub(crate) fn card_values<C>(
+    game: &GameState<C>,
+    cards: &[Card],
+    deals: &[[Cards; 2]],
+    models: [&Model; 2],
+    convention: &super::Convention,
+) -> Option<Vec<f64>> {
+    let seats = Hidden::new(game, convention)?.seats();
+    let ours = game.turn()? as usize % 2;
+    if deals.is_empty() {
+        return None;
+    }
+    let mut totals = vec![0usize; cards.len()];
+    for deal in deals {
+        let mut base = copy_of(game);
+        for (seat, cards) in seats.into_iter().zip(*deal) {
+            // What the seat has played is the same in every deal.
+            let played = game.original_hands[seat] - game.hands[seat];
+            base.hands[seat] = cards;
+            base.original_hands[seat] = played + cards;
+        }
+        for (total, &card) in totals.iter_mut().zip(cards) {
+            let mut playout = copy_of(&base);
+            playout.play(card);
+            finish(&mut playout, models, convention);
+            *total += if ours == 0 {
+                playout.ns_tricks
+            } else {
+                playout.ew_tricks
+            };
+        }
+    }
+    Some(totals.into_iter().map(|t| t as f64 / deals.len() as f64).collect())
+}
+
+/// Plays `game` out to the end, north and south's cards by `models[0]` and
+/// east and west's by `models[1]`, each from what the player of it can see.
+fn finish(game: &mut GameState<()>, models: [&Model; 2], convention: &super::Convention) {
     while !game.hand_done {
         let legal = game.could_be_played();
         let card = if legal.len() == 1 {
             legal.min().unwrap()
         } else {
-            match View::new(game, convention) {
-                Some(view) => view.best(model),
-                None => break,
+            match (View::new(game, convention), game.turn()) {
+                (Some(view), Some(seat)) => view.best(models[seat as usize % 2]),
+                _ => break,
             }
         };
         game.play(card);
