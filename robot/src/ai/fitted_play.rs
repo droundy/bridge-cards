@@ -2161,8 +2161,8 @@ mod tests {
                                     for _ in 0..wildcards / 2 {
                                         order.shuffle(&mut rng);
                                         let [x, y, z] = [0, 1, 2].map(|i| four(i, &order));
-                                        let wild = if rng.gen_range(0.0..past_share + random_share) < past_share
-                                            || random_share == 0.0
+                                        let wild = if random_share == 0.0
+                                            || rng.gen_range(0.0..past_share + random_share) < past_share
                                         {
                                             let (round, ref weights) = past[rng.gen_range(0..past.len())];
                                             Player::Past(weights, round)
