@@ -28,7 +28,7 @@
 //! At each snapshot every learner is also scored against the robot and the old
 //! model, which do not learn.  The files of a run are in
 //! `target/train-play-model`.  Settings of self-play that have no flag here,
-//! such as `PLAY_SELF_ROLLOUT_SHARE`, are taken from the environment.
+//! such as `PLAY_SELF_PLAYOUT_SHARE`, are taken from the environment.
 
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader};
