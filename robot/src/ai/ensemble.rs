@@ -363,7 +363,8 @@ pub(crate) fn plays_for_the_leaders<C>(game: &GameState<C>) -> bool {
     in_trick & 1 == 0
 }
 
-/// The most tricks left for which a card is chosen by the ensemble.
+/// The most tricks left for which a card is chosen by the ensemble, unless
+/// [`EnsemblePlay::solving_up_to`] says otherwise.
 const MOST_TRICKS: usize = 7;
 
 /// How many deals of the hands that cannot be seen to try each card in, with
@@ -393,6 +394,8 @@ pub struct EnsemblePlay {
     /// Whether to keep the deals that come closest to being bid as the
     /// auction was.
     replay: bool,
+    /// The most tricks left for which it solves the ensemble.
+    most_tricks: usize,
 }
 
 /// How many of the calls made with `hands` the robot would not have made with
@@ -443,7 +446,7 @@ impl EnsemblePlay {
     }
 
     fn with_rng(rng: StdRng) -> Self {
-        EnsemblePlay { rng, replay: false }
+        EnsemblePlay { rng, replay: false, most_tricks: MOST_TRICKS }
     }
 
     /// This player, choosing by an ensemble of the deals that the robot would
@@ -451,6 +454,17 @@ impl EnsemblePlay {
     pub fn replaying_the_auction(self) -> Self {
         EnsemblePlay {
             replay: true,
+            ..self
+        }
+    }
+
+    /// This player, solving the ensemble with up to `tricks` tricks left
+    /// (and not only [`MOST_TRICKS`]).  Each trick more makes a choice
+    /// several times slower: with 10 tricks left it solves each card on 12
+    /// deals of 10 cards a hand.
+    pub fn solving_up_to(self, tricks: usize) -> Self {
+        EnsemblePlay {
+            most_tricks: tricks,
             ..self
         }
     }
@@ -526,7 +540,7 @@ impl PlayAI for EnsemblePlay {
         if let Some(lead) = self.opening_lead(game) {
             return lead;
         }
-        if tricks_left > MOST_TRICKS {
+        if tricks_left > self.most_tricks {
             return RandomPlay.play(game);
         }
         let Some((hidden, deals)) = self.ensemble(game, deals_for(tricks_left)) else {

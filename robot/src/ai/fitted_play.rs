@@ -2583,7 +2583,9 @@ mod tests {
     /// Plays endgames against [`EnsemblePlay`](crate::EnsemblePlay), which
     /// with 7 or fewer tricks left plays the card with the best mean
     /// double-dummy value over deals of the hidden hands that fit what it
-    /// has seen, the nearest to best play that the robot has.  Each of
+    /// has seen, the nearest to best play that the robot has (here with up
+    /// to `PLAY_ENDGAME_SOLVED` (7) tricks left, and otherwise as the robot
+    /// plays).  Each of
     /// `PLAY_ENDGAME_DEALS` (100) deals that the robot bid is played by the
     /// play model of `PLAY_ENDGAME_LEAD_IN` (or else the first model of the
     /// players) until `PLAY_ENDGAME_TRICKS` (7) tricks are left, and from
@@ -2599,6 +2601,7 @@ mod tests {
     #[ignore]
     fn match_endgames_against_the_ensemble() {
         let tricks = number("PLAY_ENDGAME_TRICKS", 7);
+        let solved = number("PLAY_ENDGAME_SOLVED", 7);
         let count = number("PLAY_ENDGAME_DEALS", 100);
         let names: Vec<String> = var("PLAY_ENDGAME_PLAYERS", "robot").split(',').map(|n| n.trim().to_string()).collect();
         let models: Vec<Option<Model>> =
@@ -2630,7 +2633,7 @@ mod tests {
                     }
                     let position = serde_json::to_string(&game).unwrap();
                     let at = || serde_json::from_str::<GameState<()>>(&position).unwrap();
-                    let ensemble = |seed: u64| Endgamer::Ensemble(Box::new(crate::EnsemblePlay::seeded(seed)));
+                    let ensemble = |seed: u64| Endgamer::Ensemble(Box::new(crate::EnsemblePlay::seeded(seed).solving_up_to(solved)));
                     let seed = i as u64;
                     let both = play_endgame(at(), &convention, &mut ensemble(seed), &mut ensemble(seed)) as f64;
                     let ns_declares = game.dummy().is_some_and(|dummy| (dummy as usize).is_multiple_of(2));
