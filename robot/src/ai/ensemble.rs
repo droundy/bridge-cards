@@ -25,12 +25,11 @@
 //! gives every deal that it keeps the same weight, as though each hand were as
 //! likely as any other that would have been bid the same way.
 
-use super::{Convention, PlayAI, RandomPlay};
+use super::{CallMatcher, Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
 use bridge_solver::{Naive, Starting};
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 /// How many deals to try for one that fits the auction before taking one that
@@ -108,8 +107,11 @@ impl Hidden {
     }
 
     /// How many of the calls that the two hands made the robot would not have
-    /// made with the hands of `deal`, bidding by `convention`.  None, when
-    /// `deal` is a deal that the robot would have bid the auction with.
+    /// made with the hands of `deal`, bidding by `convention`, found by asking
+    /// the convention for the bid of every hand, which takes most of a
+    /// millisecond a deal.  [`Replay::calls_missed`] says the same much faster,
+    /// and this is what it is tested against.
+    #[cfg(test)]
     pub(crate) fn calls_missed(&self, deal: &[Cards; 2], convention: &Convention) -> usize {
         (0..2)
             .map(|i| {
@@ -124,6 +126,12 @@ impl Hidden {
             .sum()
     }
 
+    /// The auction of the two hands compiled for `convention`, so that a deal
+    /// can be tried against it in microseconds.
+    pub(crate) fn replay(&self, convention: &Convention) -> Replay<2> {
+        Replay::new(convention, &self.bids, &self.calls, self.played)
+    }
+
     /// The `count` of `deals` that come closest to being bid as the auction
     /// was, by `convention`: the deals that the robot would have bid the
     /// auction with, and then those that miss fewest of its calls.  People do
@@ -136,9 +144,10 @@ impl Hidden {
         convention: &Convention,
         count: usize,
     ) -> Vec<[Cards; 2]> {
+        let replay = self.replay(convention);
         let mut ranked: Vec<(usize, [Cards; 2])> = deals
             .into_iter()
-            .map(|deal| (self.calls_missed(&deal, convention), deal))
+            .map(|deal| (replay.calls_missed(&deal), deal))
             .collect();
         ranked.sort_by_key(|&(missed, _)| missed);
         ranked
@@ -172,6 +181,60 @@ impl Hidden {
         deals
     }
 
+    /// An ensemble of `count` deals, or fewer if the budget of deals to try
+    /// runs out first, each of them drawn at random from the deals that
+    /// agree with what is known, where a deal that misses `n` of the calls
+    /// that `replay` makes is `miss` to the power `n` as likely as one that
+    /// misses none.  This is what [`Hidden::ensemble`] with a replay only
+    /// approximates, with a chance for deals that miss some calls and none
+    /// of the dependence of the ensemble on how many deals were tried.  When
+    /// no deal that is tried misses few enough calls it is the closest.
+    pub(crate) fn posterior(
+        &self,
+        rng: &mut impl Rng,
+        count: usize,
+        replay: &Replay<2>,
+        miss: f64,
+    ) -> Dealt {
+        let mut dealt = Dealt::default();
+        let Some(proposer) = self.proposer() else {
+            return dealt;
+        };
+        // The deals with the fewest misses so far, which are all there is
+        // when no deal is accepted.
+        let mut closest: Vec<[Cards; 2]> = Vec::new();
+        let mut fewest = usize::MAX;
+        while dealt.tried < BUDGET && dealt.deals.len() < count {
+            dealt.tried += 1;
+            let deal = proposer.deal(rng);
+            let most = if dealt.deals.is_empty() {
+                usize::MAX
+            } else {
+                MOST_MISSED
+            };
+            let Some(missed) = replay.calls_missed_within(&deal, most) else {
+                continue;
+            };
+            if missed == 0 {
+                dealt.exact += 1;
+            }
+            if missed < fewest {
+                fewest = missed;
+                closest.clear();
+            }
+            if missed == fewest && closest.len() < count {
+                closest.push(deal);
+            }
+            if missed <= MOST_MISSED && (missed == 0 || rng.gen_bool(miss.powi(missed as i32))) {
+                dealt.deals.push(deal);
+            }
+        }
+        if dealt.deals.is_empty() {
+            dealt.deals = closest;
+        }
+        dealt
+    }
+
     /// Whether `hands` are hands that the auction could have been made with.
     fn fit_the_bidding(&self, hands: &[Cards; 2]) -> bool {
         (0..2).all(|i| {
@@ -181,35 +244,43 @@ impl Hidden {
         })
     }
 
+    /// How the cards that are not in sight can be dealt to the two hands, so
+    /// that the hands are as large as they are and none has a card of a suit
+    /// that it has shown out of.  `None` if there is no way to do it.
+    fn proposer(&self) -> Option<Proposer> {
+        let mut forced = [Cards::EMPTY; 2];
+        let mut free = Cards::EMPTY;
+        for card in self.pool {
+            let card = Cards::singleton(card);
+            match (
+                !(self.forbidden[0] & card).is_empty(),
+                !(self.forbidden[1] & card).is_empty(),
+            ) {
+                (true, true) => return None,
+                (true, false) => forced[1] += card,
+                (false, true) => forced[0] += card,
+                (false, false) => free += card,
+            }
+        }
+        if forced[0].len() > self.sizes[0] || forced[1].len() > self.sizes[1] {
+            return None;
+        }
+        let first_wants = self.sizes[0] - forced[0].len();
+        if first_wants + (self.sizes[1] - forced[1].len()) != free.len() {
+            return None;
+        }
+        Some(Proposer {
+            forced,
+            free,
+            first_wants,
+        })
+    }
+
     /// Deal the cards that are not in sight to the two hands, so that the hands
     /// are as large as they are and none has a card of a suit that it has shown
     /// out of.  `None` if there is no way to do it.
     fn deal(&self, rng: &mut impl Rng) -> Option<[Cards; 2]> {
-        let mut hands = [Cards::EMPTY; 2];
-        let mut free: Vec<Card> = Vec::new();
-        for card in self.pool {
-            match (
-                self.forbidden[0].contains(card),
-                self.forbidden[1].contains(card),
-            ) {
-                (true, true) => return None,
-                (true, false) => hands[1] += Cards::singleton(card),
-                (false, true) => hands[0] += Cards::singleton(card),
-                (false, false) => free.push(card),
-            }
-        }
-        if hands[0].len() > self.sizes[0] || hands[1].len() > self.sizes[1] {
-            return None;
-        }
-        let first_wants = self.sizes[0] - hands[0].len();
-        if first_wants + (self.sizes[1] - hands[1].len()) != free.len() {
-            return None;
-        }
-        free.shuffle(rng);
-        for (i, &card) in free.iter().enumerate() {
-            hands[(i >= first_wants) as usize] += Cards::singleton(card);
-        }
-        Some(hands)
+        Some(self.proposer()?.deal(rng))
     }
 
     /// One deal of the hands, in the order of `seats`, and whether it fits the
@@ -228,6 +299,118 @@ impl Hidden {
         }
         last.map(|hands| (hands, false))
     }
+}
+
+/// A way to deal the cards that are not in sight, made by
+/// [`Hidden::proposer`]: every deal that it makes has the hands the sizes that
+/// they have and none has a card of a suit that it has shown out of, and every
+/// such deal is as likely as any other.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Proposer {
+    /// The cards that each hand must hold, since the other has shown out of
+    /// their suits.
+    forced: [Cards; 2],
+    /// The cards that either may hold.
+    free: Cards,
+    /// How many of those the first hand holds.
+    first_wants: usize,
+}
+
+impl Proposer {
+    /// One deal, at random.
+    pub(crate) fn deal(&self, rng: &mut impl Rng) -> [Cards; 2] {
+        let mut rest = self.free;
+        let first = rest.pick_rng(rng, self.first_wants).unwrap();
+        [self.forced[0] + first, self.forced[1] + rest]
+    }
+}
+
+/// The calls of hidden hands, compiled so that it is cheap to find out whether
+/// the robot would have made them with the hands of a deal.  See
+/// [`Hidden::replay`].
+#[derive(Debug)]
+pub(crate) struct Replay<const N: usize> {
+    /// For each hand, each call that it made, with what the table makes of
+    /// the auction before it.
+    calls: [Vec<(CallMatcher, Bid)>; N],
+    /// The cards that each hand has played, which are part of the hand that
+    /// it bid with.
+    played: [Cards; N],
+}
+
+impl<const N: usize> Replay<N> {
+    /// The calls of `N` hands in the auction `bids`, where `calls` says for
+    /// each hand which of the bids it made, and `played` is the cards that
+    /// each has played since, which with the cards of a deal make the hand
+    /// that it bid with.  This takes about a millisecond, which a deal of the
+    /// hands then does not.
+    pub(crate) fn new(
+        convention: &Convention,
+        bids: &[Bid],
+        calls: &[Vec<usize>; N],
+        played: [Cards; N],
+    ) -> Self {
+        Replay {
+            calls: std::array::from_fn(|i| {
+                calls[i]
+                    .iter()
+                    .map(|&call| (convention.matcher(&bids[..call]), bids[call]))
+                    .collect()
+            }),
+            played,
+        }
+    }
+
+    /// How many of the calls would not have been made with the hands of
+    /// `deal`.
+    pub(crate) fn calls_missed(&self, deal: &[Cards; N]) -> usize {
+        self.calls_missed_within(deal, usize::MAX).unwrap()
+    }
+
+    /// How many of the calls would not have been made with the hands of
+    /// `deal`, or `None` as soon as that is more than `most`.
+    pub(crate) fn calls_missed_within(&self, deal: &[Cards; N], most: usize) -> Option<usize> {
+        let mut missed = 0;
+        for i in 0..N {
+            let hand = (deal[i] + self.played[i]).values();
+            for (matcher, call) in &self.calls[i] {
+                if matcher.bid_for(&hand) != *call {
+                    missed += 1;
+                    if missed > most {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(missed)
+    }
+}
+
+/// How likely it is that a player makes a call other than the one that the
+/// robot would, with the hand that they have: the chance that a deal that
+/// misses a call is as likely as one that makes it.  People do not bid as the
+/// robot does, so a deal that misses a call or two is not out of the question.
+pub(crate) const MISS: f64 = 0.1;
+
+/// The most calls that a deal can miss and still be in an ensemble, which is
+/// the truncation of the chance `MISS.powi(missed)` that is already below a
+/// thousandth.
+const MOST_MISSED: usize = 3;
+
+/// How many deals are tried for an ensemble before it is made of what has
+/// been found, with the ensemble kept to the deals that fit the auction as
+/// well as can be.
+const BUDGET: usize = 20_000;
+
+/// An ensemble of deals of the hidden hands, with what it took to make.
+#[derive(Debug, Default)]
+pub(crate) struct Dealt {
+    /// The deals, each the two hands in the order of the seats.
+    pub(crate) deals: Vec<[Cards; 2]>,
+    /// How many deals were tried to find them.
+    pub(crate) tried: usize,
+    /// How many of those make every call.
+    pub(crate) exact: usize,
 }
 
 /// The deal as the solver has it, for a deal of the hands that cannot be seen:
@@ -392,7 +575,8 @@ impl EnsemblePlay {
     }
 
     /// This player, choosing by an ensemble of the deals that the robot would
-    /// have bid the auction with, or that miss as few of its calls as any.
+    /// have bid the auction with, or most likely did not quite (see
+    /// [`Hidden::posterior`]), or that miss as few of its calls as any.
     pub fn replaying_the_auction(self) -> Self {
         EnsemblePlay {
             replay: true,
@@ -415,7 +599,12 @@ impl EnsemblePlay {
         });
         let convention = &self.conventions[i].1;
         let hidden = Hidden::new(game, convention)?;
-        let deals = hidden.ensemble(&mut self.rng, count, self.replay.then_some(convention));
+        let deals = if self.replay {
+            let replay = hidden.replay(convention);
+            hidden.posterior(&mut self.rng, count, &replay, MISS).deals
+        } else {
+            hidden.ensemble(&mut self.rng, count, None)
+        };
         Some((hidden, deals))
     }
 }
@@ -729,6 +918,268 @@ mod tests {
                  deals of 100 that make the auction, by situation {exact_per_game:?}; \
                  {:?} a replay",
                 time / sampled as u32
+            );
+        }
+    }
+
+    /// Hands at random, and the hands of `game`, to try a matcher on.
+    fn random_hands(rng: &mut StdRng, count: usize) -> Vec<HandValuation> {
+        (0..count)
+            .map(|_| {
+                let mut deck = Cards::ALL;
+                deck.pick_rng(rng, 13).unwrap().values()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_matcher_bids_as_bid_for_does_after_every_call_of_an_auction() {
+        let mut rng = StdRng::seed_from_u64(21);
+        let mut tried = 0;
+        for game in games(12, 24) {
+            let convention = game.system.convention();
+            let mut hands = random_hands(&mut rng, 40);
+            hands.extend(game.original_hands.iter().map(|hand| hand.values()));
+            for call in 0..game.bids.len() {
+                let matcher = convention.matcher(&game.bids[..call]);
+                for hand in &hands {
+                    assert_eq!(
+                        convention.bid_for(&game.bids[..call], hand),
+                        matcher.bid_for(hand),
+                        "{:?} after {:?}",
+                        hand,
+                        &game.bids[..call]
+                    );
+                    tried += 1;
+                }
+            }
+        }
+        assert!(tried > 5000, "{tried}");
+    }
+
+    #[test]
+    fn a_replay_misses_the_calls_that_calls_missed_does() {
+        for tricks_left in [12, 7, 3] {
+            for game in games(tricks_left, 12) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let replay = hidden.replay(&convention);
+                let mut rng = StdRng::seed_from_u64(31);
+                for _ in 0..20 {
+                    let (deal, _) = hidden.sample(&mut rng).unwrap();
+                    assert_eq!(
+                        hidden.calls_missed(&deal, &convention),
+                        replay.calls_missed(&deal)
+                    );
+                }
+            }
+        }
+    }
+
+    /// How long it takes to find what a table makes of an auction, and to
+    /// try a hand against it, compared with `bid_for`.
+    #[test]
+    #[ignore]
+    fn report_the_cost_of_a_matcher() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let games = games(12, 24);
+        let hands = random_hands(&mut rng, 200);
+        let (mut compile, mut fast, mut slow, mut calls) = (std::time::Duration::ZERO, std::time::Duration::ZERO, std::time::Duration::ZERO, 0u32);
+        for game in &games {
+            let convention = game.system.convention();
+            for call in 0..game.bids.len() {
+                let started = std::time::Instant::now();
+                let matcher = convention.matcher(&game.bids[..call]);
+                compile += started.elapsed();
+                let started = std::time::Instant::now();
+                for hand in &hands {
+                    std::hint::black_box(matcher.bid_for(hand));
+                }
+                fast += started.elapsed();
+                let started = std::time::Instant::now();
+                for hand in &hands[..20] {
+                    std::hint::black_box(convention.bid_for(&game.bids[..call], hand));
+                }
+                slow += started.elapsed();
+                calls += 1;
+            }
+        }
+        println!(
+            "per call: compile {:?}, matcher {:?} a hand, bid_for {:?} a hand",
+            compile / calls,
+            fast / (calls * hands.len() as u32),
+            slow / (calls * 20)
+        );
+    }
+
+    /// The mean of `count` of hand `i` of `deals`, and the standard error of
+    /// it.
+    fn mean_of(deals: &[[Cards; 2]], i: usize, count: impl Fn(Cards) -> usize) -> (f64, f64) {
+        let points: Vec<f64> = deals.iter().map(|deal| count(deal[i]) as f64).collect();
+        let mean = points.iter().sum::<f64>() / points.len() as f64;
+        let variance =
+            points.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / (points.len() - 1) as f64;
+        (mean, (variance / points.len() as f64).sqrt())
+    }
+
+    #[test]
+    fn a_posterior_that_allows_no_misses_is_the_deals_that_make_the_auction() {
+        // About one in 200 deals makes this auction, so a few dozen is as many
+        // as the budget can find.
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let replay = hidden.replay(&convention);
+        let mut rng = StdRng::seed_from_u64(41);
+        let dealt = hidden.posterior(&mut rng, 60, &replay, 0.0);
+        assert_eq!(60, dealt.deals.len());
+        assert_eq!(60, dealt.exact);
+        assert!(dealt
+            .deals
+            .iter()
+            .all(|deal| hidden.calls_missed(deal, &convention) == 0));
+        // Rejection of deals that do not make the auction, by another route
+        // through the code, has the same distribution.
+        let mut kept = Vec::new();
+        while kept.len() < 60 {
+            let (deal, _) = hidden.sample(&mut rng).unwrap();
+            if replay.calls_missed(&deal) == 0 {
+                kept.push(deal);
+            }
+        }
+        // West holds every honor that the hands can, so what is left to
+        // differ is how long their suits are, with no suit longer than five.
+        for suit in Suit::ALL {
+            for i in 0..2 {
+                let length = |hand: Cards| hand.in_suit(suit).len();
+                let (a, a_error) = mean_of(&dealt.deals, i, length);
+                let (b, b_error) = mean_of(&kept, i, length);
+                let error = (a_error.powi(2) + b_error.powi(2)).sqrt();
+                assert!(
+                    (a - b).abs() < 4.0 * error + 1e-9,
+                    "{suit:?} of hand {i}: {a} and {b}, with error {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_posterior_gives_deals_that_miss_a_call_their_chance() {
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let replay = hidden.replay(&convention);
+        let mut rng = StdRng::seed_from_u64(42);
+        let strict = hidden.posterior(&mut rng, 2000, &replay, 0.0);
+        let soft = hidden.posterior(&mut rng, 2000, &replay, 0.3);
+        let anything = hidden.posterior(&mut rng, 2000, &replay, 1.0);
+        let missing = |deals: &[[Cards; 2]]| {
+            deals.iter().filter(|deal| replay.calls_missed(deal) > 0).count()
+        };
+        assert_eq!(0, missing(&strict.deals));
+        assert!(missing(&soft.deals) > 0);
+        // Allowing three misses is allowing everything that this auction has
+        // calls to miss, so the deals are as they are dealt, and most of
+        // them miss a call.
+        assert!(missing(&anything.deals) > 1000);
+        assert!(missing(&soft.deals) < missing(&anything.deals));
+        // The opener of 1NT shows more points than a hand that is dealt.
+        let points = |hand: Cards| hand.high_card_points();
+        let (strict_points, _) = mean_of(&strict.deals, 1, points);
+        let (anything_points, _) = mean_of(&anything.deals, 1, points);
+        assert!(strict_points > anything_points + 2.0);
+    }
+
+    #[test]
+    fn a_posterior_is_the_closest_deals_when_none_makes_the_auction() {
+        let mut game = one_notrump_by_west();
+        game.bids[1] = Bid::Suit(7, Suit::Clubs);
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let replay = hidden.replay(&convention);
+        let mut rng = StdRng::seed_from_u64(43);
+        let dealt = hidden.posterior(&mut rng, 20, &replay, MISS);
+        assert!(!dealt.deals.is_empty());
+        let fewest = dealt
+            .deals
+            .iter()
+            .map(|deal| replay.calls_missed(deal))
+            .min()
+            .unwrap();
+        assert!(fewest > 0);
+        assert!(dealt.deals.iter().all(|deal| replay.calls_missed(deal) == fewest));
+    }
+
+    #[test]
+    fn a_proposer_deals_what_is_known_of_the_hidden_hands() {
+        for tricks_left in [12, 7, 3] {
+            for game in games(tricks_left, 6) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let proposer = hidden.proposer().unwrap();
+                let mut rng = StdRng::seed_from_u64(44);
+                for _ in 0..20 {
+                    let deal = proposer.deal(&mut rng);
+                    assert_eq!(hidden.pool, deal[0] + deal[1]);
+                    assert!((deal[0] & deal[1]).is_empty());
+                    for i in 0..2 {
+                        assert_eq!(hidden.sizes[i], deal[i].len());
+                        assert!((deal[i] & hidden.forbidden[i]).is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    /// What it costs to make an ensemble of `ENSEMBLE_COUNT` deals (60 by
+    /// default) that is bid as the auction was, the old way (sample four times
+    /// as many and replay each by `bid_for`) and by `posterior`.
+    #[test]
+    #[ignore]
+    fn report_the_cost_of_an_ensemble() {
+        use std::time::{Duration, Instant};
+        let count: usize = std::env::var("ENSEMBLE_COUNT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60);
+        for tricks_left in [13, 12, 10, 7, 5, 3] {
+            let games = games(tricks_left, 48);
+            let (mut old, mut compile, mut new) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+            let (mut tried, mut exact, mut short) = (0, 0, 0);
+            let mut slowest = Duration::ZERO;
+            let mut old_short = 0;
+            for game in &games {
+                let convention = game.system.convention();
+                let Some(hidden) = Hidden::new(game, &convention) else {
+                    continue;
+                };
+                let mut rng = StdRng::seed_from_u64(5);
+                let started = Instant::now();
+                let deals = hidden.ensemble(&mut rng, count, Some(&convention));
+                old += started.elapsed();
+                old_short += (deals.len() < count / 2) as usize;
+                let started = Instant::now();
+                let replay = hidden.replay(&convention);
+                compile += started.elapsed();
+                let started = Instant::now();
+                let dealt = hidden.posterior(&mut rng, count, &replay, MISS);
+                let took = started.elapsed();
+                new += took;
+                slowest = slowest.max(took + compile / games.len() as u32);
+                tried += dealt.tried;
+                exact += dealt.exact;
+                short += (dealt.deals.len() < count) as usize;
+            }
+            let n = games.len() as u32;
+            println!(
+                "{tricks_left:2} tricks left: old {:?}; compile {:?} + deal {:?} (slowest {:?}); \
+                 tried {} a situation, {:.0}% exact; ensembles under {count}: new {short}, old (under half) {old_short}",
+                old / n,
+                compile / n,
+                new / n,
+                slowest,
+                tried / games.len(),
+                100.0 * exact as f64 / tried as f64,
             );
         }
     }
