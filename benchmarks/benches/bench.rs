@@ -1,6 +1,8 @@
 //! Runs the benchmarks that `bridge-deck` and `bridge-solver` register with
 //! their `benchmarks` feature, from both the working tree and the committed
-//! main branch.  Each is reported against its own older version.
+//! main branch.  Each is reported against its own older version.  `robot`'s
+//! are only from the working tree, since `main` has no `benchmarks` feature
+//! there to build.
 //!
 //! `cargo bench -- "single dummy"` runs only the groups whose names contain
 //! "single dummy".

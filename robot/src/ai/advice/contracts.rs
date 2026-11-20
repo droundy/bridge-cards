@@ -116,7 +116,7 @@ impl Convention {
         let candidates = self.candidates(&auction);
         let entries = self.entries();
         let ruled = candidates.iter().any(|&i| {
-            matches!(&entries[i], Convention::Contract { regex, .. } if regex.is_match(&auction))
+            matches!(&entries[i], Convention::Contract { auctions, .. } if auctions.matches(bids))
         });
         if ruled && uncontested(&auction) {
             if let Some(needs) = contract_needs(*bids.last()?) {

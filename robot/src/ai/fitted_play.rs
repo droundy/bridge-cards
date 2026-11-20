@@ -2103,9 +2103,7 @@ mod tests {
             let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64), 10);
             std::thread::spawn(move || while dealt.send(fresh_deal(&mut dealer)).is_ok() {});
         }
-        // The same threads play every round.  Each regex of the bidding
-        // tables keeps a cache for each thread that uses it, so new threads
-        // every round would leave more and more caches behind.
+        // The same threads play every round.
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         for round in first_round..=last_round {
