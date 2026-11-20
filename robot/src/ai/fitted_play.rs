@@ -159,6 +159,128 @@ impl Table {
     }
 }
 
+/// The facts that each entry of a table stands for, in words, to say where a
+/// model goes wrong.
+#[cfg(test)]
+impl Table {
+    /// Entry `index` of this table in words, laid out as
+    /// [`View::entries`] numbers it.  The tables of [`V1`] are left as
+    /// numbers.
+    fn describe(self, index: usize) -> String {
+        const ROLES: [&str; 4] = ["declarer", "dummy", "left defender", "right defender"];
+        const PLACES: [&str; 4] = ["lead", "2nd hand", "3rd hand", "4th hand"];
+        const HOLDERS: [&str; 4] = ["none", "mine", "in sight", "hidden"];
+        let play = |play: usize| match play {
+            0 => "lead".to_string(),
+            p => format!("{} {}", PLACES[1 + (p - 1) / 3], ["follows", "ruffs", "discards"][(p - 1) % 3]),
+        };
+        let role_play = |rp: usize| format!("{}, {}", ROLES[rp / PLAYS], play(rp % PLAYS));
+        let holders = |h: usize| (0..3).map(|k| HOLDERS[(h >> (2 * k)) & 3]).collect::<Vec<_>>().join(" ");
+        let length = |l: usize| {
+            let (least, most) = (l / 5, l % 5);
+            format!("{least}{}-{most}{}", if least == 3 { "+" } else { "" }, if most == 4 { "+" } else { "" })
+        };
+        let points = |p: usize| {
+            let least = ["0-5", "6-10", "11-15", "16+"][p / 5];
+            let most = ["0-7", "8-11", "12-15", "16-20", "21+"][p % 5];
+            format!("fewest {least}, most {most} points")
+        };
+        let three = |n: usize| if n == 3 { "3+".to_string() } else { n.to_string() };
+        match self {
+            Table::Trick => format!(
+                "{}, partner {}winning, {}",
+                role_play(index / 4),
+                if index & 2 == 0 { "not " } else { "" },
+                if index & 1 == 0 { "does not beat" } else { "beats" }
+            ),
+            Table::Above | Table::Below => {
+                format!("{}, {}: {}", PLACES[index / 64], if self == Table::Above { "above" } else { "below" }, holders(index % 64))
+            }
+            Table::Rank => {
+                let above = index / 2 % 6;
+                format!(
+                    "{}, {}{} left above, {}",
+                    play(index / 12),
+                    above,
+                    if above == 5 { "+" } else { "" },
+                    if index & 1 == 1 { "lowest" } else { "not lowest" }
+                )
+            }
+            Table::Lengths => format!(
+                "{}, length {}{}, in sight {}, {}",
+                PLACES[index / 32],
+                index / 8 % 4 + 1,
+                if index / 8 % 4 == 3 { "+" } else { "" },
+                three(index / 2 % 4),
+                if index & 1 == 1 { "trumps" } else { "not trumps" }
+            ),
+            Table::TricksLeft => {
+                format!("{}, {} cards left", play(index / 6), ["1", "2", "3", "4-5", "6-8", "9+"][index % 6])
+            }
+            Table::Contract => format!(
+                "{}, {}",
+                role_play(index / 6),
+                ["beaten", "none to spare", "1 to spare", "2 to spare", "3+ to spare", "made"][index % 6]
+            ),
+            Table::FirstLength | Table::SecondLength => format!(
+                "{}, {} hidden hand holds {} of the suit",
+                play(index / 20),
+                if self == Table::FirstLength { "first" } else { "second" },
+                length(index % 20)
+            ),
+            Table::FirstPoints | Table::SecondPoints => format!(
+                "{}, {}, {} hidden hand {}, {}",
+                ROLES[index / 160],
+                PLACES[index / 40 % 4],
+                if self == Table::FirstPoints { "first" } else { "second" },
+                points(index / 2 % 20),
+                if index & 1 == 1 { "honour" } else { "not honour" }
+            ),
+            Table::History => format!(
+                "{}, suit first led by {}, {} rounds",
+                role_play(index / 20),
+                ["nobody", "me", "left", "partner", "right"][index / 4 % 5],
+                three(index % 4)
+            ),
+            Table::Trumps if index & 1 == 1 => format!("{}, notrump", play(index / 128)),
+            Table::Trumps => format!(
+                "{}, trumps: mine {}, in sight {}, hidden {}",
+                play(index / 128),
+                three(index / 32 % 4),
+                three(index / 8 % 4),
+                ["0", "1-2", "3-4", "5+"][index / 2 % 4]
+            ),
+            Table::Later => format!(
+                "{}, in sight after: {}, hidden after: {}",
+                role_play(index / 9),
+                ["no", "cannot beat", "can beat"][index / 3 % 3],
+                ["no", "yes", "known void"][index % 3]
+            ),
+            Table::Bids => {
+                let bidders: Vec<&str> =
+                    ["me", "left", "partner", "right"].into_iter().enumerate().filter(|(k, _)| ((index % 16) >> k) & 1 == 1).map(|(_, s)| s).collect();
+                format!("{}, suit bid by {}", role_play(index / 16), if bidders.is_empty() { "nobody".to_string() } else { bidders.join(", ") })
+            }
+            table => format!("{table:?} entry {index}"),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Shape {
+    /// The table that holds `entry` of the tables laid end to end, and the
+    /// entry in words (see [`Table::describe`]).
+    fn describe(&self, mut entry: usize) -> (Table, String) {
+        for &table in self.tables {
+            if entry < table.size() {
+                return (table, table.describe(entry));
+            }
+            entry -= table.size();
+        }
+        panic!("{} has no entry {entry} more", self.name)
+    }
+}
+
 /// A shape of the play model, one version of it: the tables it reads, end to
 /// end, and the widths of its two hidden layers (see [`Network`]).  Weights
 /// fit only the shape they were trained for, so a model file names the shape
@@ -1059,6 +1181,23 @@ mod tests {
 
     fn pair(card: Card) -> [u8; 2] {
         [card.suit() as u8, card.rank()]
+    }
+
+    #[test]
+    fn each_entry_of_a_table_is_described_its_own_way() {
+        for table in [V2_HISTORY.tables, V2_LATER_TRUMPS.tables, V2_BIDS.tables].concat() {
+            let mut seen = std::collections::HashMap::new();
+            for index in 0..table.size() {
+                // In notrump the entries of every holding of trumps are one.
+                if table == Table::Trumps && index & 1 == 1 {
+                    continue;
+                }
+                let words = table.describe(index);
+                if let Some(other) = seen.insert(words.clone(), index) {
+                    panic!("{table:?} entries {other} and {index} are both {words}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -2941,7 +3080,12 @@ mod tests {
     /// Each loss is also compared with the competitor's on the same
     /// positions, which has a far smaller error than the losses.  As the
     /// best card on a hundred deals is partly luck, even the best play loses
-    /// a little.  It uses `PLAY_THREADS` threads, or else every core.
+    /// a little.  With `PLAY_YARD_ENTRIES` set to n, it also prints for each
+    /// model the n entries of its tables where it loses the most tricks more
+    /// than its mean (see [`entry_losses`]), both of the card it plays and
+    /// of the best card, valued with the competitor playing on; and with
+    /// `PLAY_YARD_TSV` set to a path, it writes every entry there.  It uses
+    /// `PLAY_THREADS` threads, or else every core.
     #[test]
     #[ignore]
     fn score_on_the_playout_yardstick() {
@@ -2958,9 +3102,6 @@ mod tests {
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         let deals = crate::ai::opening_lead::candidates::opening_leads(23, games);
-        // Each position, with its runs and the deals that they are played
-        // out on.
-        type Position = (GameState<()>, Vec<Card>, Vec<[Cards; 2]>);
         let positions: Vec<Position> = workers.install(|| {
             deals
                 .par_iter()
@@ -3033,13 +3174,125 @@ mod tests {
             let (more, more_error) = mean_and_error(&more);
             format!("{mean:.4} ({error:.4}), {more:+.4} ({more_error:.4}) more than the competitor")
         };
+        use std::io::Write;
+        let top = number("PLAY_YARD_ENTRIES", 0);
+        let mut tsv = std::env::var("PLAY_YARD_TSV").ok().map(|path| {
+            let mut file = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+            writeln!(file, "model\tkind\ttable\tentry\tcount\tmean\terror\texcess").unwrap();
+            file
+        });
         for (i, (name, model)) in models.iter().enumerate() {
-            print!("{name}: its likeliest cards lose {} with the competitor playing on", compared(&losses(model, &fixed)));
+            let lost = losses(model, &fixed);
+            print!("{name}: its likeliest cards lose {} with the competitor playing on", compared(&lost));
             if own_too && i > 0 {
                 print!(", {} with itself playing on for its side", compared(&losses(model, &values(model))));
             }
             println!(" ({:.0} s)", started.elapsed().as_secs_f64());
+            if top > 0 || tsv.is_some() {
+                let rows = entry_losses(model, &positions, &fixed, &lost);
+                let mut sorted: Vec<&EntryLoss> = rows.iter().collect();
+                sorted.sort_by(|a, b| b.excess.total_cmp(&a.excess));
+                for kind in ["played", "best"] {
+                    println!("  where the {kind} card looks up, the entries that lose the most tricks more than the mean:");
+                    for row in sorted.iter().filter(|row| row.kind == kind).take(top) {
+                        println!(
+                            "    {:+8.2} tricks over {:6} plays, {:.4} ({:.4}) a play: {:?}, {}",
+                            row.excess, row.count, row.mean, row.error, row.table, row.entry
+                        );
+                    }
+                }
+                if let Some(file) = &mut tsv {
+                    for row in &rows {
+                        writeln!(
+                            file,
+                            "{name}\t{}\t{:?}\t{}\t{}\t{:.5}\t{:.5}\t{:.3}",
+                            row.kind, row.table, row.entry, row.count, row.mean, row.error, row.excess
+                        )
+                        .unwrap();
+                    }
+                }
+            }
         }
+    }
+
+    /// A position of [`score_on_the_playout_yardstick`], with its runs and
+    /// the deals that they are played out on.
+    type Position = (GameState<()>, Vec<Card>, Vec<[Cards; 2]>);
+
+    /// How much a model loses in the positions of
+    /// [`score_on_the_playout_yardstick`], by each entry of its tables.
+    struct EntryLoss {
+        /// Whether the entry is one that the card the model played looks up
+        /// ("played"), or one that the best card looks up ("best"), which is
+        /// the card played if that loses nothing.
+        kind: &'static str,
+        table: Table,
+        /// The entry in words.
+        entry: String,
+        /// How many positions there are with a card that looks it up.
+        count: usize,
+        /// The mean tricks lost in those, and its standard error.
+        mean: f64,
+        error: f64,
+        /// How many tricks more than the mean of all positions are lost in
+        /// those, in all.
+        excess: f64,
+    }
+
+    /// The losses `lost` of `model` in `positions`, whose runs are worth
+    /// `values`, by each entry of its tables that the card it plays, or the
+    /// best card, looks up.  The opening lead has its own tables, so no
+    /// position is one.
+    fn entry_losses(
+        model: &Model,
+        positions: &[Position],
+        values: &[Vec<f64>],
+        lost: &[f64],
+    ) -> Vec<EntryLoss> {
+        use crate::ai::playout::run_of;
+        let mean_lost = lost.iter().sum::<f64>() / lost.len() as f64;
+        // The count, sum and sum of squares of the losses, by entry, for
+        // the card played and the best.
+        let mut sums = [vec![(0usize, 0.0, 0.0); model.shape.entries()], vec![(0usize, 0.0, 0.0); model.shape.entries()]];
+        for (((game, runs, _), values), &loss) in positions.iter().zip(values).zip(lost) {
+            let convention: &Convention = game.system.table();
+            let view = View::new(game, convention).unwrap();
+            let played = model_card(model, game, convention);
+            let best = if loss > 0.0 {
+                let most = values.iter().copied().fold(f64::MIN, f64::max);
+                runs[values.iter().position(|&v| v == most).unwrap()]
+            } else {
+                played
+            };
+            debug_assert!(loss == 0.0 || run_of(runs, best) != run_of(runs, played));
+            for (sums, card) in sums.iter_mut().zip([played, best]) {
+                for entry in model.entries(&view, card) {
+                    let (count, sum, squares) = &mut sums[entry];
+                    *count += 1;
+                    *sum += loss;
+                    *squares += loss * loss;
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        for (kind, sums) in ["played", "best"].into_iter().zip(sums) {
+            for (entry, (count, sum, squares)) in sums.into_iter().enumerate().filter(|(_, s)| s.0 > 0) {
+                let n = count as f64;
+                let mean = sum / n;
+                let variance = if count > 1 { (squares - n * mean * mean).max(0.0) / (n - 1.0) } else { 0.0 };
+                let (table, entry) = model.shape.describe(entry);
+                rows.push(EntryLoss {
+                    kind,
+                    table,
+                    entry,
+                    count,
+                    mean,
+                    error: (variance / n).sqrt(),
+                    excess: sum - n * mean_lost,
+                });
+            }
+        }
+        rows
     }
 
     /// How long each player takes to choose a card, at `PLAY_TIME_TRICKS` (7)
