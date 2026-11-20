@@ -1,4 +1,7 @@
-pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention, EnsemblePlay, PlayAI};
+pub use ai::{
+    choose_play, BiddingSystem, Booklet, BridgeAi, Convention, EnsemblePlay, PlayAI,
+    PlayoutPlay,
+};
 use bridge_deck::{Card, Cards};
 use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};

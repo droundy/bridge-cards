@@ -664,6 +664,15 @@ impl View {
         })
     }
 
+    /// The card that `model` scores highest.
+    pub(crate) fn best(&self, model: &Model) -> Card {
+        self.legal()
+            .map(|card| (model.score(self, card), card))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap()
+            .1
+    }
+
     /// The cards that the player could play: those of the suit led if they
     /// have any, and otherwise any.
     pub(crate) fn legal(&self) -> Cards {
@@ -965,7 +974,7 @@ static MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/play_model.bin")
 
 /// The play model of [`MODEL`], or `None` if there is none, or it is of a
 /// shape that this code does not have, or has the wrong number of weights.
-fn model() -> Option<&'static Model> {
+pub(crate) fn model() -> Option<&'static Model> {
     static MODEL_PLAYED: std::sync::OnceLock<Option<Model>> = std::sync::OnceLock::new();
     MODEL_PLAYED
         .get_or_init(|| {
@@ -993,21 +1002,23 @@ impl super::PlayAI for ModelPlay {
         let Some(model) = model() else {
             return super::RandomPlay.play(game);
         };
-        let convention = game.system.convention();
-        match View::new(game, &convention) {
-            Some(view) => {
-                view.legal()
-                    .map(|card| (model.score(&view, card), card))
-                    .max_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap()
-                    .1
-            }
-            None => {
-                use super::opening_lead::{likely_opening_leads, Auction};
-                match (Auction::new(game), game.lead) {
-                    (Some(auction), Some(leader)) => likely_opening_leads(&auction, game.hands[leader])[0],
-                    _ => game.could_be_played().min().unwrap(),
+        model_card(model, game, &game.system.convention())
+    }
+}
+
+/// The card that `model` scores highest for the player to play in `game`,
+/// from what the player can see, or for the opening lead, the first of
+/// `likely_opening_leads`.
+pub(crate) fn model_card<C>(model: &Model, game: &GameState<C>, convention: &Convention) -> Card {
+    match View::new(game, convention) {
+        Some(view) => view.best(model),
+        None => {
+            use super::opening_lead::{likely_opening_leads, Auction};
+            match (Auction::new(game), game.lead) {
+                (Some(auction), Some(leader)) => {
+                    likely_opening_leads(&auction, game.hands[leader])[0]
                 }
+                _ => game.could_be_played().min().unwrap(),
             }
         }
     }
@@ -1781,7 +1792,7 @@ mod tests {
         played_out: Option<Vec<f64>>,
     }
 
-    /// Plays `card` in `json`, a game of self-play, and the rest of the game
+    /// Plays `card` in `game`, a game of self-play, and the rest of the game
     /// after it, on the same deal and with the same `players`, each model
     /// playing the card it scores highest and the players of any card
     /// drawing from `seed`.  Gives the tricks of north and south.  Played
@@ -1792,14 +1803,14 @@ mod tests {
     /// sees more than they could, so on the mean over many games the tricks
     /// after a card are what it is worth.
     fn playout(
-        json: &str,
+        game: &GameState<()>,
         card: Card,
         convention: &Convention,
         learners: &[Model],
         players: [Player; 4],
         seed: u64,
     ) -> [usize; 2] {
-        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let mut game = crate::ai::playout::copy_of(game);
         let mut rng = StdRng::seed_from_u64(seed);
         game.play(card);
         while !game.hand_done {
@@ -1813,7 +1824,7 @@ mod tests {
                     continue;
                 }
             };
-            game.play(best_card(&game, convention, model));
+            game.play(model_card(model, &game, convention));
         }
         [game.ns_tricks, game.ew_tricks]
     }
@@ -1897,13 +1908,28 @@ mod tests {
                         && legal.len() > 1
                         && 13 - game.tricks.len() <= most
                         && rng.gen_range(0.0..1.0) < share)
-                        .then(|| {
-                            let now = serde_json::to_string(&game).unwrap();
+                        .then_some(())
+                        .and_then(|()| {
+                            // One card of each run of touching cards is
+                            // played out, for all of the run.
+                            let runs: Vec<Card> = crate::ai::playout::one_of_each_run(&game).collect();
+                            if runs.len() < 2 {
+                                return None;
+                            }
                             let seed = rng.gen::<u64>();
-                            legal
+                            let values: Vec<f64> = runs
                                 .iter()
-                                .map(|&card| playout(&now, card, convention, learners, players, seed)[side] as f64)
-                                .collect()
+                                .map(|&card| playout(&game, card, convention, learners, players, seed)[side] as f64)
+                                .collect();
+                            // The lowest of a card's run is the highest
+                            // played out of its suit that is not above it.
+                            let run_of = |card: Card| {
+                                (0..runs.len())
+                                    .filter(|&i| runs[i].suit() == card.suit() && runs[i].rank() <= card.rank())
+                                    .max_by_key(|&i| runs[i].rank())
+                                    .unwrap()
+                            };
+                            Some(legal.iter().map(|&card| values[run_of(card)]).collect())
                         });
                     decisions.push(Decision {
                         learner,
@@ -2051,7 +2077,8 @@ mod tests {
     /// With `PLAY_SELF_PLAYOUT_SHARE` above 0, that share of the learners'
     /// choices of more than one card with up to `PLAY_SELF_PLAYOUT_TRICKS`
     /// (13) tricks left are played out (see [`playout`]): each card that the
-    /// learner could play is played, and the rest of the game after it, by
+    /// learner could play is played (one of each run of cards that touch,
+    /// for all of the run), and the rest of the game after it, by
     /// the same players on the same deal.  The learner's step then also
     /// climbs, with the weight of `PLAY_SELF_PLAYOUT_WEIGHTS` (1; weights
     /// separated by commas, one for each learner, taken again in turn if
@@ -2281,8 +2308,8 @@ mod tests {
                                     for _ in 0..wildcards / 2 {
                                         order.shuffle(&mut rng);
                                         let [x, y, z] = [0, 1, 2].map(|i| four(i, &order));
-                                        let wild = if rng.gen_range(0.0..past_share + random_share) < past_share
-                                            || random_share == 0.0
+                                        let wild = if random_share == 0.0
+                                            || rng.gen_range(0.0..past_share + random_share) < past_share
                                         {
                                             let (round, ref weights) = past[rng.gen_range(0..past.len())];
                                             Player::Past(weights, round)
@@ -2670,26 +2697,6 @@ mod tests {
         }
     }
 
-    /// The card that the play model `model` scores highest for the player
-    /// to play in `game`, or for the opening lead, the first of
-    /// `likely_opening_leads`.
-    fn best_card(game: &GameState<()>, convention: &Convention, model: &Model) -> Card {
-        use crate::ai::opening_lead::{likely_opening_leads, Auction};
-        match View::new(game, convention) {
-            Some(view) => {
-                view.legal()
-                    .map(|card| (model.score(&view, card), card))
-                    .max_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap()
-                    .1
-            }
-            None => {
-                let leader = game.lead.unwrap();
-                likely_opening_leads(&Auction::new(game).unwrap(), game.hands[leader])[0]
-            }
-        }
-    }
-
     /// Plays `json`, a game whose opening lead is next, to the end: the side
     /// `model_side` (0 for north and south) by the play model `model`, and
     /// the other by `other` if there is one, or else by the robot.  Gives the
@@ -2708,10 +2715,10 @@ mod tests {
             let place = current_trick(&game).len();
             let seat = chooser(&game, game.lead.unwrap() + place);
             let card = if seat as usize % 2 == model_side {
-                best_card(&game, convention, model)
+                model_card(model, &game, convention)
             } else {
                 match other {
-                    Some(network) => best_card(&game, convention, network),
+                    Some(network) => model_card(network, &game, convention),
                     None => robot.play(&game),
                 }
             };
@@ -2726,15 +2733,17 @@ mod tests {
         Model(&'a Model),
         Robot,
         Ensemble(Box<crate::EnsemblePlay>),
+        Playout(Box<crate::PlayoutPlay>),
     }
 
     impl Endgamer<'_> {
         fn play(&mut self, game: &GameState<()>, convention: &Convention) -> Card {
             use crate::ai::PlayAI;
             match self {
-                Endgamer::Model(model) => best_card(game, convention, model),
+                Endgamer::Model(model) => model_card(model, game, convention),
                 Endgamer::Robot => super::super::RandomPlay.play(game),
                 Endgamer::Ensemble(player) => player.play(game),
+                Endgamer::Playout(player) => player.play(game),
             }
         }
     }
@@ -2758,6 +2767,9 @@ mod tests {
         Robot,
         /// The ensemble, with other random deals than its opponents'.
         Ensemble,
+        /// [`PlayoutPlay`](crate::PlayoutPlay) with this model, over this
+        /// many deals.
+        Playout(&'a Model, usize),
     }
 
     /// Plays endgames against [`EnsemblePlay`](crate::EnsemblePlay), which
@@ -2808,6 +2820,9 @@ mod tests {
                             Contestant::Model(model) => Endgamer::Model(model),
                             Contestant::Robot => Endgamer::Robot,
                             Contestant::Ensemble => ensemble(seed + 1_000_000),
+                            Contestant::Playout(model, deals) => Endgamer::Playout(Box::new(
+                                crate::PlayoutPlay::seeded(seed + 2_000_000).with_model(model.clone()).with_deals(deals),
+                            )),
                         };
                         let as_ns = play_endgame(at(), &convention, &mut player(), &mut ensemble(seed)) as f64;
                         let as_ew = play_endgame(at(), &convention, &mut ensemble(seed), &mut player()) as f64;
@@ -2849,7 +2864,9 @@ mod tests {
     /// left, with the ensemble solving with up to `PLAY_ENDGAME_SOLVED` (7)
     /// tricks left, for each player of `PLAY_ENDGAME_PLAYERS`
     /// (comma-separated play models as [`read_model`] reads them, `robot`,
-    /// or `ensemble`, which is the ensemble with other random deals).
+    /// `ensemble`, which is the ensemble with other random deals, or
+    /// `playout=` and a model, which is [`PlayoutPlay`](crate::PlayoutPlay)
+    /// with that model over `PLAY_PLAYOUT_DEALS` (100) deals).
     /// Prints the tricks a deal that each player's sides took more than the
     /// ensemble's would have, declaring, defending and in all, with the
     /// standard errors.  It uses `PLAY_THREADS` (1) threads.
@@ -2860,12 +2877,19 @@ mod tests {
         let solved = number("PLAY_ENDGAME_SOLVED", 7);
         let count = number("PLAY_ENDGAME_DEALS", 100);
         let names: Vec<String> = var("PLAY_ENDGAME_PLAYERS", "robot").split(',').map(|n| n.trim().to_string()).collect();
-        let models: Vec<Option<Model>> =
-            names.iter().map(|n| (n != "robot" && n != "ensemble").then(|| read_model(n))).collect();
+        let models: Vec<Option<Model>> = names
+            .iter()
+            .map(|n| match n.strip_prefix("playout=") {
+                Some(path) => Some(read_model(path)),
+                None => (n != "robot" && n != "ensemble").then(|| read_model(n)),
+            })
+            .collect();
+        let playout_deals = number("PLAY_PLAYOUT_DEALS", 100);
         let contestants: Vec<Contestant> = models
             .iter()
             .zip(&names)
             .map(|(model, name)| match (model, name.as_str()) {
+                (Some(model), name) if name.starts_with("playout=") => Contestant::Playout(model, playout_deals),
                 (Some(model), _) => Contestant::Model(model),
                 (None, "robot") => Contestant::Robot,
                 _ => Contestant::Ensemble,
@@ -2887,6 +2911,60 @@ mod tests {
         for (p, name) in names.iter().enumerate() {
             println!("{name}: {}", endgame_summary(&gains, p));
         }
+    }
+
+    /// How long each player takes to choose a card, at `PLAY_TIME_TRICKS` (7)
+    /// tricks left, in `PLAY_TIME_DEALS` (30) positions reached by the model
+    /// `PLAY_TIME_MODEL` playing the deals that the robot bid, with one
+    /// thread: the ensemble (with `PLAY_TIME_ENSEMBLE` set) and the playout
+    /// player.
+    #[test]
+    #[ignore]
+    fn time_the_players() {
+        use crate::ai::PlayAI;
+        let tricks = number("PLAY_TIME_TRICKS", 7);
+        let count = number("PLAY_TIME_DEALS", 30);
+        let model = read_model(&std::env::var("PLAY_TIME_MODEL").expect("PLAY_TIME_MODEL"));
+        let deals = crate::ai::opening_lead::candidates::opening_leads(13, count);
+        let tricks_left =
+            |game: &GameState<()>| game.hands.iter().map(|hand| hand.len()).max().unwrap_or(0);
+        let positions: Vec<GameState<()>> = deals
+            .iter()
+            .filter_map(|game| {
+                let convention = game.system.convention();
+                let mut game: GameState<()> =
+                    serde_json::from_str(&serde_json::to_string(game).unwrap()).unwrap();
+                while !game.hand_done
+                    && !(current_trick(&game).is_empty() && tricks_left(&game) == tricks)
+                {
+                    let card = model_card(&model, &game, &convention);
+                    game.play(card);
+                }
+                (!game.hand_done).then_some(game)
+            })
+            .collect();
+        println!("{} positions with {tricks} tricks left", positions.len());
+        type Chooser = Box<dyn FnMut(&GameState<()>) -> Card>;
+        let time = |name: &str, mut player: Chooser| {
+            let started = std::time::Instant::now();
+            let mut sum = 0usize;
+            for game in &positions {
+                sum += player(game).rank() as usize;
+            }
+            println!(
+                "{name:<22} {:9.2} ms a decision ({sum})",
+                started.elapsed().as_secs_f64() * 1e3 / positions.len() as f64
+            );
+        };
+        let ensemble_deals = number("PLAY_TIME_ENSEMBLE", 0);
+        if ensemble_deals > 0 {
+            let mut player = crate::EnsemblePlay::seeded(1).solving_up_to(tricks);
+            time("ensemble", Box::new(move |g| player.play(g)));
+        }
+        let mut player = crate::PlayoutPlay::seeded(3)
+            .with_model(model.clone())
+            .with_deals(100);
+        time("playout (100 deals)", Box::new(move |g| player.play(g)));
     }
 
     /// Plays the play model with the weights in the file

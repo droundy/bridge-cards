@@ -442,6 +442,8 @@ pub(crate) mod opening_lead;
 mod fitting;
 pub(crate) mod fitted_play;
 pub use ensemble::EnsemblePlay;
+mod playout;
+pub use playout::PlayoutPlay;
 #[cfg(test)]
 mod daily_columns;
 pub(crate) mod rules;
