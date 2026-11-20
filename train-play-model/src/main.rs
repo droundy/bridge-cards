@@ -23,10 +23,12 @@
 //! 0, so it plays as the old one did until it learns to use them), so that
 //! shapes can be compared on the same training.  With `--start FILE`, each
 //! learner starts likewise from the learner of the same number in the play
-//! model file `FILE`, so that each shape starts from a model trained apart.
+//! model file `FILE`, so that each shape starts from a model trained apart,
+//! or with `--start FILE#K`, every learner from its learner K.
 //! At each snapshot every learner is also scored against the robot and the old
 //! model, which do not learn.  The files of a run are in
-//! `target/train-play-model`.
+//! `target/train-play-model`.  Settings of self-play that have no flag here,
+//! such as `PLAY_SELF_SUPERVISED`, are taken from the environment.
 
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader};
@@ -68,7 +70,16 @@ impl Options {
                 "--shapes" => options.shapes = value()?,
                 "--from-scratch" => options.from_scratch = true,
                 "--from-old" => options.from_old = true,
-                "--start" => options.start = Some(PathBuf::from(value()?).canonicalize().map_err(|e| format!("--start: {e}"))?),
+                "--start" => {
+                    // A file, or a file and `#K` for its learner K alone.
+                    let value = value()?;
+                    let (file, learner) = match value.split_once('#') {
+                        Some((file, learner)) => (file, format!("#{learner}")),
+                        None => (value.as_str(), String::new()),
+                    };
+                    let file = PathBuf::from(file).canonicalize().map_err(|e| format!("--start: {e}"))?;
+                    options.start = Some(PathBuf::from(format!("{}{learner}", file.display())));
+                }
                 "--force" => options.force = true,
                 _ => return Err(format!("unknown argument {arg}")),
             }
