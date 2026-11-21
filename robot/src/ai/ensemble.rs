@@ -342,11 +342,18 @@ impl Hidden {
         let of_the_play = |deal: [Cards; 2], floor: f64| {
             play_likelihood_above(game, convention, self.seats, deal, reading.model, reading.temperature, floor)
         };
+        // A deal that was chosen several times comes in a row, and has one
+        // chance, worked out once.
+        let mut last_start: Option<([Cards; 2], f64)> = None;
         walked.deals = deals
             .iter()
             .map(|&start| {
                 let mut deal = start;
-                let mut chance = of_the_play(start, 0.0) * of_the_auction(&start);
+                let mut chance = match last_start {
+                    Some((same, chance)) if same == start => chance,
+                    _ => of_the_play(start, 0.0) * of_the_auction(&start),
+                };
+                last_start = Some((start, chance));
                 for _ in 0..steps {
                     let mut most = 1;
                     while most < 4 && rng.gen_bool(0.5) {
@@ -797,15 +804,17 @@ pub(crate) fn resample(
         return deals.iter().take(count).map(|&deal| (deal, 1.0)).collect();
     }
     let step = total / count as f64;
-    let mut next = rng.gen_range(0.0..step);
-    let mut passed = 0.0;
+    let offset = rng.gen_range(0.0..step);
+    // The `k`th point is `offset + k * step`, and not a sum of steps, whose
+    // rounding could put the last past the total.
+    let (mut passed, mut k) = (0.0, 0);
     let mut chosen = Vec::new();
     for (&deal, &likelihood) in deals.iter().zip(likelihoods) {
         passed += likelihood;
         let mut times = 0;
-        while next < passed && times < count {
+        while k < count && offset + k as f64 * step < passed {
             times += 1;
-            next += step;
+            k += 1;
         }
         if times > 0 {
             chosen.push((deal, times as f64));
@@ -1876,6 +1885,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn reading_the_play_walks_when_the_proposals_are_worth_too_little() {
+        use crate::ai::fitted_play::random_model;
+        let model = random_model(9);
+        let mut rng = StdRng::seed_from_u64(55);
+        let game = games(9, 1).remove(0);
+        let convention = convention_of(game.system);
+        let hidden = Hidden::new(&game, convention).unwrap();
+        let reading = |worth| Reading {
+            model: &model,
+            temperature: 1.0,
+            miss: Some(MISS),
+            proposals: 40,
+            at_most: 40,
+            worth,
+            steps: 0,
+        };
+        // Chosen from the proposals, a deal that is chosen twice counts twice.
+        let chosen = hidden.read_the_play(&mut rng, &game, convention, &reading(0.0), 30);
+        assert_eq!(30.0, chosen.iter().map(|c| c.1).sum::<f64>());
+        // When they are worth less than is asked, each deal is a step of the
+        // walk from one, and counts once.
+        let walked = hidden.read_the_play(&mut rng, &game, convention, &reading(1e9), 30);
+        assert_eq!(30, walked.len());
+        assert!(walked.iter().all(|c| c.1 == 1.0));
     }
 
     #[test]

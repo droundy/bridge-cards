@@ -215,19 +215,23 @@ impl Convention {
             *bids.last_mut().unwrap() = b;
             let auction = bids_string(&bids);
             let default = self.default_for(&auction, &bids);
+            let mut found: Vec<(usize, Convention)> = Vec::new();
             for i in self.candidates(&auction) {
                 if !self.entries()[i].matches(&bids) {
                     continue;
                 }
                 if let Some(c) = self.resolve(i, &bids, default) {
-                    entries.push((i, b, c));
+                    found.push((i, c));
                 }
             }
-            if let Some(c) = self.refine(&bids) {
-                if matches!(c, Convention::Contracted { .. }) {
-                    known.push((b, c));
-                }
+            // What the contract rules make of the bid is what `refine` finds
+            // when one entry describes it, which is worked out here, and not
+            // asked of `refine`, so that the meanings that it remembers (and
+            // forgets all of at 1000) are left to what the play asks for.
+            if let [(_, c @ Convention::Contracted { .. })] = found.as_slice() {
+                known.push((b, c.clone()));
             }
+            entries.extend(found.into_iter().map(|(i, c)| (i, b, c)));
         }
         entries.sort_by_key(|&(i, _, _)| i);
         CallMatcher {
@@ -893,6 +897,11 @@ impl Meanings {
     }
     fn clear(&mut self) {
         self.0.get_mut().unwrap().clear();
+    }
+    /// How many auctions are remembered.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
     }
     /// Forget what has been found, so that a benchmark can find it again.
     #[cfg(feature = "benchmarks")]
@@ -3179,6 +3188,37 @@ fn dump_matches() {
         }
     }
     std::fs::write(std::env::var("MATCH_DUMP").unwrap(), out).unwrap();
+}
+
+#[test]
+fn a_matcher_leaves_the_remembered_meanings_to_what_is_asked() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    // Tables of their own, since the shared one is asked by every test.
+    let convention = Convention::sayc();
+    let Convention::Ordered { meanings, .. } = &convention else {
+        panic!("the table is ordered");
+    };
+    let histories = [vec![], vec![Suit(1, Clubs), Pass], vec![NT(1), Pass, Suit(2, Clubs), Pass]];
+    let before = meanings.len();
+    for history in &histories {
+        convention.matcher(history);
+    }
+    let added = meanings.len() - before;
+    // Asking `refine` for the meaning of every legal bid, as the matcher
+    // once did besides, remembers far more.
+    let asked = Convention::sayc();
+    let Convention::Ordered { meanings: asked_meanings, .. } = &asked else {
+        panic!("the table is ordered");
+    };
+    for history in &histories {
+        for b in legal_bids(history) {
+            let mut bids = history.clone();
+            bids.push(b);
+            asked.refine(&bids);
+        }
+    }
+    assert!(added * 3 < asked_meanings.len(), "{added} against {}", asked_meanings.len());
 }
 
 #[test]

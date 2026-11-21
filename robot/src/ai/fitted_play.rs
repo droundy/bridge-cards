@@ -1062,11 +1062,11 @@ fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
 /// since how the declarer plays the dummy shows something of their own hand.
 /// It covers the tricks in `game.tricks` and the current trick: all of the
 /// play, unless the game was saved before tricks were kept.  Weighting
+/// deals of an ensemble by it draws what can be drawn from the play.
 ///
 /// It gives up, with 0, as soon as the likelihood so far is below `floor`, so
 /// that a deal that is hopeless is found out by the first cards that make it
 /// so.
-/// deals of an ensemble by it draws what can be drawn from the play.
 pub(crate) fn play_likelihood_above<C>(
     game: &GameState<C>,
     convention: &Convention,
@@ -3154,12 +3154,9 @@ mod tests {
         let temperature: f64 = var("PLAY_YARD_TEMPERATURE", "1.0").parse().unwrap();
         let proposals = number("PLAY_YARD_PROPOSALS", count * 10);
         let steps = number("PLAY_YARD_STEPS", 0);
-        let miss: Option<f64> = match var("PLAY_YARD_MISS", "0.1").as_str() {
-            "none" => None,
-            chance => Some(chance.parse().unwrap()),
-        };
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1"));
         let at_most = number("PLAY_YARD_AT_MOST", proposals);
-        let worth: f64 = var("PLAY_YARD_WORTH", "0").parse().unwrap();
+        let worth: f64 = var("PLAY_YARD_WORTH", &(count / 2).to_string()).parse().unwrap();
         let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
@@ -3180,7 +3177,8 @@ mod tests {
                                 let dealt: Vec<Weighted> = match dealer.as_str() {
                                     "ensemble" => hidden.ensemble(&mut rng, count, None).into_iter().map(|d| (d, 1.0)).collect(),
                                     "bounds" => hidden.within_bounds(&mut rng, count).deals.into_iter().map(|d| (d, 1.0)).collect(),
-                                    _ => hidden.read_the_play(&mut rng, &game, convention, &Reading { model: &competitor, temperature, miss, proposals, at_most, worth, steps }, count),
+                                    "play" => hidden.read_the_play(&mut rng, &game, convention, &Reading { model: &competitor, temperature, miss, proposals, at_most, worth, steps }, count),
+                                    other => panic!("PLAY_YARD_DEALER is ensemble, bounds or play, not {other}"),
                                 };
                                 if !dealt.is_empty() {
                                     kept.push((copy_of(&game), runs, dealt));
@@ -3437,7 +3435,7 @@ mod tests {
         println!("{} positions from {games} games; {count} deals wanted", positions.len());
         let misses: Vec<Option<f64>> = var("PLAY_YARD_MISSES", "none,0.1")
             .split(',')
-            .map(|m| if m.trim() == "none" { None } else { Some(m.trim().parse().unwrap()) })
+            .map(chance_of_a_miss)
             .collect();
         let gold_deals = number("PLAY_YARD_GOLD", 5000);
         for (&temperature, &miss) in temperatures.iter().flat_map(|t| misses.iter().map(move |m| (t, m))) {
@@ -3575,7 +3573,7 @@ mod tests {
     fn report_the_speed_of_drawing() {
         use crate::ai::playout::{copy_of, one_of_each_run};
         let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
-        let miss: f64 = var("PLAY_YARD_MISS", "0.1").parse().unwrap();
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1")).expect("a chance of a miss, not none");
         let games = number("PLAY_YARD_GAMES", 30);
         let mut rng = StdRng::seed_from_u64(3);
         let (mut tried, mut drawn, mut compile, mut draw, mut n) = (0, 0, std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
@@ -3608,6 +3606,17 @@ mod tests {
             drawn / n,
             draw.as_secs_f64() * 1e6 / tried as f64
         );
+    }
+
+    /// The chance of a miss that `text` says (see [`Hidden::draw`]): a chance
+    /// from 0 to 1, or "none" for no use of the calls beyond their bounds.
+    fn chance_of_a_miss(text: &str) -> Option<f64> {
+        if text.trim() == "none" {
+            return None;
+        }
+        let chance: f64 = text.trim().parse().unwrap_or_else(|_| panic!("a chance of a miss, or none, not {text}"));
+        assert!((0.0..=1.0).contains(&chance), "a chance of a miss from 0 to 1, not {text}");
+        Some(chance)
     }
 
     /// One ensemble for the playout yardstick, as `spec` says: "ensemble"
@@ -3672,10 +3681,7 @@ mod tests {
         let games = number("PLAY_YARD_GAMES", 40);
         let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
         let count = number("PLAY_YARD_DEALS", 100);
-        let miss: Option<f64> = match var("PLAY_YARD_MISS", "0.1").as_str() {
-            "none" => None,
-            chance => Some(chance.parse().unwrap()),
-        };
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1"));
         let specs: Vec<String> =
             var("PLAY_YARD_ENSEMBLES", "ensemble,bounds,play:0.5:1000:0").split(',').map(|s| s.trim().to_string()).collect();
         let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
