@@ -199,6 +199,47 @@ impl Convention {
         }
     }
 
+    /// What this table makes of the bids that may follow `history`, worked out
+    /// once so that it can be tried on many hands: [`CallMatcher::bid_for`]
+    /// says what [`Convention::bid_for`] does, for the cost of comparing the
+    /// hand with some bounds, where `bid_for` matches every entry of the
+    /// table against the auction of every legal bid.
+    pub(crate) fn matcher(&self, history: &[Bid]) -> CallMatcher {
+        let mut bids = history.to_vec();
+        bids.push(Bid::Pass);
+        let mut entries: Vec<(usize, Bid, Convention)> = Vec::new();
+        let mut known: Vec<(Bid, Convention)> = Vec::new();
+        // Highest bid first, so that of entries with the same index the
+        // stable sort below keeps the highest, as `bid_for` does.
+        for b in legal_bids(history).into_iter().rev() {
+            *bids.last_mut().unwrap() = b;
+            let auction = bids_string(&bids);
+            let default = self.default_for(&auction, &bids);
+            let mut found: Vec<(usize, Convention)> = Vec::new();
+            for i in self.candidates(&auction) {
+                if !self.entries()[i].matches(&bids) {
+                    continue;
+                }
+                if let Some(c) = self.resolve(i, &bids, default) {
+                    found.push((i, c));
+                }
+            }
+            // What the contract rules make of the bid is what `refine` finds
+            // when one entry describes it, which is worked out here, and not
+            // asked of `refine`, so that the meanings that it remembers (and
+            // forgets all of at 1000) are left to what the play asks for.
+            if let [(_, c @ Convention::Contracted { .. })] = found.as_slice() {
+                known.push((b, c.clone()));
+            }
+            entries.extend(found.into_iter().map(|(i, c)| (i, b, c)));
+        }
+        entries.sort_by_key(|&(i, _, _)| i);
+        CallMatcher {
+            entries: entries.into_iter().map(|(_, b, c)| (b, c)).collect(),
+            known,
+        }
+    }
+
     /// When no entry fits `hand` after `history`, the contract the rules know
     /// for it, though they would rather have explored: the highest bid of
     /// the rules that fits it, if any.  A game with no fit, in a suit the hand
@@ -254,6 +295,49 @@ impl Convention {
             }
         }
         None
+    }
+}
+
+/// What a table makes of the calls that may follow one auction, from
+/// [`Convention::matcher`]: the entries that describe a legal bid, in the
+/// order of the table, which is the order that the robot prefers them in.
+/// What it takes of a hand is only the comparison of the hand with the bounds
+/// of each entry, so it costs microseconds where finding the entries costs a
+/// millisecond.
+#[derive(Debug)]
+pub(crate) struct CallMatcher {
+    /// The bids that the entries describe, in the order of the table, with
+    /// what the entry says of the bid.  Of entries with one index, the
+    /// highest bid is first.
+    entries: Vec<(Bid, Convention)>,
+    /// What the contract rules make of each legal bid, highest bid first.
+    known: Vec<(Bid, Convention)>,
+}
+
+impl CallMatcher {
+    /// The bid that the robot makes with `hand` after the auction that this
+    /// is for, which is what [`Convention::bid_for`] says.
+    pub(crate) fn bid_for(&self, hand: &HandValuation) -> Bid {
+        if let Some((b, _)) = self.entries.iter().find(|(_, c)| c.fits(hand)) {
+            return *b;
+        }
+        // No entry fits, so the contract the rules know for the hand, though
+        // they would rather have explored: the highest bid that fits it,
+        // unless that is a game with no fit in a suit that the hand has not
+        // shown, which is bid only if no other contract fits.
+        let mut last = None;
+        for (b, c) in &self.known {
+            if !c.fits_when_nothing_explores(hand) {
+                continue;
+            }
+            match c {
+                Convention::Contracted { choice, .. } if comes_last(choice, hand) => {
+                    last = last.or(Some(*b));
+                }
+                _ => return *b,
+            }
+        }
+        last.unwrap_or(Bid::Pass)
     }
 }
 
@@ -813,6 +897,11 @@ impl Meanings {
     }
     fn clear(&mut self) {
         self.0.get_mut().unwrap().clear();
+    }
+    /// How many auctions are remembered.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
     }
     /// Forget what has been found, so that a benchmark can find it again.
     #[cfg(feature = "benchmarks")]
@@ -3099,6 +3188,37 @@ fn dump_matches() {
         }
     }
     std::fs::write(std::env::var("MATCH_DUMP").unwrap(), out).unwrap();
+}
+
+#[test]
+fn a_matcher_leaves_the_remembered_meanings_to_what_is_asked() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    // Tables of their own, since the shared one is asked by every test.
+    let convention = Convention::sayc();
+    let Convention::Ordered { meanings, .. } = &convention else {
+        panic!("the table is ordered");
+    };
+    let histories = [vec![], vec![Suit(1, Clubs), Pass], vec![NT(1), Pass, Suit(2, Clubs), Pass]];
+    let before = meanings.len();
+    for history in &histories {
+        convention.matcher(history);
+    }
+    let added = meanings.len() - before;
+    // Asking `refine` for the meaning of every legal bid, as the matcher
+    // once did besides, remembers far more.
+    let asked = Convention::sayc();
+    let Convention::Ordered { meanings: asked_meanings, .. } = &asked else {
+        panic!("the table is ordered");
+    };
+    for history in &histories {
+        for b in legal_bids(history) {
+            let mut bids = history.clone();
+            bids.push(b);
+            asked.refine(&bids);
+        }
+    }
+    assert!(added * 3 < asked_meanings.len(), "{added} against {}", asked_meanings.len());
 }
 
 #[test]
