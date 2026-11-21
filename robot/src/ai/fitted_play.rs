@@ -3610,6 +3610,147 @@ mod tests {
         );
     }
 
+    /// One ensemble for the playout yardstick, as `spec` says: "ensemble"
+    /// (deals that fit what the player has seen), "bounds" (also within the
+    /// bounds that the calls showed), or "play:T:P:S", the deals that the play
+    /// of `competitor` makes likely, at temperature T, from P proposals and
+    /// with S steps of the walk (see [`Hidden::read_the_play`]).  `miss` is
+    /// the chance of a call that the robot would not have made.
+    fn ensemble_for_yardstick(
+        spec: &str,
+        hidden: &Hidden,
+        game: &GameState<()>,
+        competitor: &Model,
+        miss: Option<f64>,
+        count: usize,
+        rng: &mut StdRng,
+    ) -> Vec<Weighted> {
+        let convention: &Convention = game.system.table();
+        let parts: Vec<&str> = spec.split(':').collect();
+        match parts[0] {
+            "ensemble" => hidden.ensemble(rng, count, None).into_iter().map(|d| (d, 1.0)).collect(),
+            "bounds" => hidden.within_bounds(rng, count).deals.into_iter().map(|d| (d, 1.0)).collect(),
+            "play" => {
+                let proposals = parts[2].parse().unwrap();
+                let reading = Reading {
+                    model: competitor,
+                    temperature: parts[1].parse().unwrap(),
+                    miss,
+                    proposals,
+                    at_most: proposals,
+                    worth: 0.0,
+                    steps: parts[3].parse().unwrap(),
+                };
+                hidden.read_the_play(rng, game, convention, &reading, count)
+            }
+            other => panic!("no ensemble called {other}"),
+        }
+    }
+
+    /// Whether the loss of the playout yardstick is partly luck of the
+    /// choice of the best card, and how much.  The loss of a play is the mean
+    /// over the deals of the tricks of the best card, less those of the card
+    /// played; but the best of several cards on a few deals is the one that
+    /// those deals favour, so its mean is too high, and the loss is too big,
+    /// the more so the fewer different deals there are.  Here each position
+    /// has two ensembles that are dealt separately, and the loss is also
+    /// worked out by choosing the best card on one and valuing it on the
+    /// other (and the other way round, and the mean of the two), which has no
+    /// such bias, but is a little low where the best card is not clear.  For
+    /// each of the ensembles of `PLAY_YARD_ENSEMBLES` (comma-separated, see
+    /// [`ensemble_for_yardstick`]; `ensemble,bounds,play:0.5:1000:0` by
+    /// default) it prints the two losses, with the standard errors, and how
+    /// many different deals an ensemble has.  Positions as in
+    /// [`score_on_the_playout_yardstick`] (`PLAY_YARD_COMPETITOR`,
+    /// `PLAY_YARD_GAMES` (40), `PLAY_YARD_SHARE` (0.25), `PLAY_YARD_DEALS`
+    /// (100), `PLAY_YARD_MISS` (0.1), `PLAY_THREADS`).
+    #[test]
+    #[ignore]
+    fn check_the_loss_for_the_winners_curse() {
+        use crate::ai::playout::{copy_of, one_of_each_run, run_of, weighted_card_values};
+        let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
+        let games = number("PLAY_YARD_GAMES", 40);
+        let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
+        let count = number("PLAY_YARD_DEALS", 100);
+        let miss: Option<f64> = match var("PLAY_YARD_MISS", "0.1").as_str() {
+            "none" => None,
+            chance => Some(chance.parse().unwrap()),
+        };
+        let specs: Vec<String> =
+            var("PLAY_YARD_ENSEMBLES", "ensemble,bounds,play:0.5:1000:0").split(',').map(|s| s.trim().to_string()).collect();
+        let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+        let deals = crate::ai::opening_lead::candidates::opening_leads(23, games);
+        let positions: Vec<(GameState<()>, Vec<Card>)> = workers.install(|| {
+            deals
+                .par_iter()
+                .enumerate()
+                .map(|(i, game)| {
+                    let convention: &Convention = game.system.table();
+                    let mut rng = StdRng::seed_from_u64(i as u64);
+                    let mut game = copy_of(game);
+                    let mut kept = Vec::new();
+                    while !game.hand_done {
+                        let runs: Vec<Card> = one_of_each_run(&game).collect();
+                        if runs.len() > 1 && View::new(&game, convention).is_some() && rng.gen_range(0.0..1.0) < share {
+                            kept.push((copy_of(&game), runs));
+                        }
+                        let card = model_card(&competitor, &game, convention);
+                        game.play(card);
+                    }
+                    kept
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flatten()
+                .collect()
+        });
+        println!("{} positions from {games} games, {count} deals in each of two ensembles", positions.len());
+        for spec in &specs {
+            let started = std::time::Instant::now();
+            // For each position: the naive loss, the loss when the best card
+            // is chosen on one ensemble and valued on the other, and how
+            // many different deals the first has.
+            let rows: Vec<Option<(f64, f64, f64)>> = workers.install(|| {
+                positions
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, (game, runs))| {
+                        let convention: &Convention = game.system.table();
+                        let hidden = Hidden::new(game, convention)?;
+                        let mut rng = StdRng::seed_from_u64(1000 + i as u64);
+                        let a = ensemble_for_yardstick(spec, &hidden, game, &competitor, miss, count, &mut rng);
+                        let b = ensemble_for_yardstick(spec, &hidden, game, &competitor, miss, count, &mut rng);
+                        let both = [&competitor, &competitor];
+                        let on_a = weighted_card_values(game, runs, &a, both, convention)?;
+                        let on_b = weighted_card_values(game, runs, &b, both, convention)?;
+                        let played = run_of(runs, model_card(&competitor, game, convention));
+                        let best = |values: &[f64]| (0..values.len()).fold(0, |best, i| if values[i] > values[best] { i } else { best });
+                        let naive = 0.5 * (on_a[best(&on_a)] - on_a[played] + on_b[best(&on_b)] - on_b[played]);
+                        // Chosen on one, valued on the other.
+                        let split = 0.5 * (on_b[best(&on_a)] - on_b[played] + on_a[best(&on_b)] - on_a[played]);
+                        let mut once: Vec<[Cards; 2]> = a.iter().map(|d| d.0).collect();
+                        once.sort_by_key(|d| format!("{d:?}"));
+                        once.dedup();
+                        Some((naive, split, once.len() as f64))
+                    })
+                    .collect()
+            });
+            let rows: Vec<(f64, f64, f64)> = rows.into_iter().flatten().collect();
+            let naive: Vec<f64> = rows.iter().map(|r| r.0).collect();
+            let split: Vec<f64> = rows.iter().map(|r| r.1).collect();
+            let different: Vec<f64> = rows.iter().map(|r| r.2).collect();
+            let (naive, naive_error) = mean_and_error(&naive);
+            let (split, split_error) = mean_and_error(&split);
+            println!(
+                "{spec}: {} positions, {:.1} different deals; loss {naive:.4} ({naive_error:.4}), chosen on one ensemble and valued on the other {split:.4} ({split_error:.4}) ({:.0} s)",
+                rows.len(),
+                different.iter().sum::<f64>() / different.len() as f64,
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
+
     /// How long each player takes to choose a card, at `PLAY_TIME_TRICKS` (7)
     /// tricks left, in `PLAY_TIME_DEALS` (30) positions reached by the model
     /// `PLAY_TIME_MODEL` playing the deals that the robot bid, with one
