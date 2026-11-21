@@ -1381,37 +1381,6 @@ mod tests {
         }
     }
 
-    /// Swapping declarer's opponents swaps their cards and nothing else, and
-    /// only when they hold as many; a defender's are not swapped.
-    #[test]
-    fn swapping_declarers_opponents_swaps_their_cards() {
-        let mut swaps = 0;
-        for game in some_games() {
-            let convention = game.system.convention();
-            let game = crate::ai::playout::copy_of(&game);
-            let [first, second] = Hidden::new(&game, &convention).unwrap().seats();
-            match swapped(&game, &convention) {
-                Some(other) => {
-                    swaps += 1;
-                    assert_eq!(other.hands[first], game.hands[second]);
-                    assert_eq!(other.hands[second], game.hands[first]);
-                    for seat in (0..4).map(Seat::from) {
-                        if seat != first && seat != second {
-                            assert_eq!(other.hands[seat], game.hands[seat]);
-                        }
-                        assert_eq!(other.original_hands[seat] - other.hands[seat], game.original_hands[seat] - game.hands[seat]);
-                    }
-                }
-                None => assert!(
-                    game.hands[first].len() != game.hands[second].len()
-                        || (first as usize + game.turn().unwrap() as usize).is_multiple_of(2)
-                        || (second as usize + game.turn().unwrap() as usize).is_multiple_of(2)
-                ),
-            }
-        }
-        assert!(swaps > 0);
-    }
-
     /// The model that the build includes, when there is one, is of the shape
     /// that this code plays by.
     #[test]
@@ -2070,9 +2039,8 @@ mod tests {
     /// left, and `per_game` of those of more than one run of touching cards
     /// in each game with no player of any card, chosen at random once the
     /// game is over, which are played out on `deals` deals of the hands
-    /// that the player cannot see (see [`deals_of`]), and with `swap` also
-    /// on each of those with the two hands swapped (see [`swapped`]), and
-    /// fitted to the `level` and the `apart` accuracies, in tricks (see
+    /// that the player cannot see (see [`deals_of`]) and fitted to the
+    /// `level` and the `apart` accuracies, in tricks (see
     /// [`learn_from_playouts`]): an infinite `level` leaves the level of the
     /// scores out, and the tricks are not put at a level.
     #[derive(Clone, Copy)]
@@ -2081,25 +2049,8 @@ mod tests {
         most: usize,
         per_game: usize,
         deals: usize,
-        swap: bool,
         level: f64,
         apart: f64,
-    }
-
-    /// `deal` with the cards of the two opponents of the player to play in
-    /// it swapped, when the player can see neither, as declarer cannot, and
-    /// they hold as many cards: what would have happened from here had the
-    /// cards been the other way round, as when a finesse that wins on the
-    /// one would lose on the other.  A defender's opponents are declarer
-    /// and the dummy, whom the defender sees, so swapping them would make
-    /// it another choice.  Nothing else is checked, so the swapped hands
-    /// need not fit the auction, or the suits that they have shown out of.
-    fn swapped(deal: &GameState<()>, convention: &Convention) -> Option<GameState<()>> {
-        let player = deal.turn()?;
-        let [first, second] = Hidden::new(deal, convention)?.seats();
-        let opponents = [first, second].iter().all(|&seat| (seat as usize + player as usize) % 2 == 1);
-        (opponents && deal.hands[first].len() == deal.hands[second].len())
-            .then(|| crate::ai::playout::dealt_as(deal, [first, second], &[deal.hands[second], deal.hands[first]]))
     }
 
     /// `count` deals of the hands that the player to play in `game` cannot
@@ -2318,12 +2269,10 @@ mod tests {
                 let (number, game, runs, legal, side): &(usize, GameState<()>, Vec<Card>, Vec<Card>, usize) = &later[i];
                 // Each deal is played out after each card, so that the cards
                 // are compared on the same deals.
-                let mut deals = deals_of(game, convention, playouts.deals, rng);
-                if playouts.swap {
-                    let others: Vec<GameState<()>> = deals.iter().filter_map(|deal| swapped(deal, convention)).collect();
-                    deals.extend(others);
-                }
-                let deals: Vec<(GameState<()>, u64)> = deals.into_iter().map(|deal| (deal, rng.gen::<u64>())).collect();
+                let deals: Vec<(GameState<()>, u64)> = deals_of(game, convention, playouts.deals, rng)
+                    .into_iter()
+                    .map(|deal| (deal, rng.gen::<u64>()))
+                    .collect();
                 if deals.is_empty() {
                     continue;
                 }
@@ -2530,11 +2479,7 @@ mod tests {
     /// player cannot see that fit what they have seen, as the playout
     /// yardstick values cards (see [`score_on_the_playout_yardstick`]), or
     /// with 0 on the deal as it was dealt, and the tricks after each card
-    /// are their mean over the deals.  With `PLAY_SELF_PLAYOUT_SWAP` set to
-    /// 1, each of declarer's choices is also played out with the cards of
-    /// the two defenders swapped, when they hold as many cards (see
-    /// [`swapped`]), which takes away much of the luck of where the cards
-    /// lie, at the cost of not fitting the auction.  Each learner's step is then down the slope
+    /// are their mean over the deals.  Each learner's step is then down the slope
     /// of the squares of how far its score of each card that it could have
     /// played is from the tricks after it, each choice weighted by 1 over
     /// its chance of being played out, so that a game's choices count the
@@ -2615,7 +2560,6 @@ mod tests {
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: 0,
                 deals: 0,
-                swap: false,
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
             },
@@ -2624,7 +2568,6 @@ mod tests {
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: number("PLAY_SELF_PLAYOUTS", 1),
                 deals: number("PLAY_SELF_PLAYOUT_DEALS", 100),
-                swap: number("PLAY_SELF_PLAYOUT_SWAP", 0) == 1,
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
             },
