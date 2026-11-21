@@ -1381,25 +1381,34 @@ mod tests {
         }
     }
 
-    /// The four ways of a deal hold the same cards for each side, with each
-    /// side's two hands swapped in turn.
+    /// The variants of a deal hold the same cards for each side, with each
+    /// side's two hands swapped in turn and each seat dealing, and no two
+    /// are the same situation.
     #[test]
-    fn four_ways_swap_each_sides_hands() {
+    fn variants_of_a_deal_keep_each_sides_cards_and_differ() {
         let mut dealer = (Generator::new(), StdRng::seed_from_u64(3), 0);
-        for _ in 0..5 {
-            let games: Vec<GameState<()>> =
-                four_ways(&mut dealer).iter().map(|json| serde_json::from_str(json).unwrap()).collect();
-            let sides = |g: &GameState<()>| {
-                [g.hands[Seat::South] + g.hands[Seat::North], g.hands[Seat::West] + g.hands[Seat::East]]
-            };
-            for game in &games {
-                assert_eq!(sides(game), sides(&games[0]));
-                assert_eq!(game.dealer, games[0].dealer);
-                assert!(game.played.is_empty() && game.lead.is_some());
+        for (swaps, every_dealer, most) in [(true, false, 4), (false, true, 4), (true, true, 16)] {
+            for _ in 0..5 {
+                let games: Vec<GameState<()>> = variants(&mut dealer, swaps, every_dealer)
+                    .iter()
+                    .map(|json| serde_json::from_str(json).unwrap())
+                    .collect();
+                assert!(!games.is_empty() && games.len() <= most);
+                let sides = |g: &GameState<()>| {
+                    [g.hands[Seat::South] + g.hands[Seat::North], g.hands[Seat::West] + g.hands[Seat::East]]
+                };
+                for game in &games {
+                    assert_eq!(sides(game), sides(&games[0]));
+                    assert!(game.played.is_empty() && game.lead.is_some());
+                    if !every_dealer {
+                        assert_eq!(game.dealer, games[0].dealer);
+                    }
+                }
+                let situations: Vec<_> = games.iter().map(situation_of).collect();
+                for (i, situation) in situations.iter().enumerate() {
+                    assert!(!situations[..i].contains(situation));
+                }
             }
-            let distinct: std::collections::HashSet<_> =
-                games.iter().map(|g| [Seat::South, Seat::West].map(|s| g.hands[s])).collect();
-            assert_eq!(distinct.len(), games.len());
         }
     }
 
@@ -2388,8 +2397,10 @@ mod tests {
     /// played so often that the learners learn it rather than bridge.  When
     /// the pool is the size of a round, each of its deals is played in each
     /// round, and with `PLAY_SELF_FRESH` the same size, every deal is new.
-    /// With `PLAY_SELF_FOUR_WAYS` set to 1, the new deals come four at a time
-    /// (see [`four_ways`]), so that each side holds the same cards in four
+    /// With `PLAY_SELF_FOUR_WAYS` set to 1, the new deals come four at a time,
+    /// with each side's two hands swapped in turn, and with
+    /// `PLAY_SELF_EVERY_DEALER` set to 1, each is dealt by each seat in turn
+    /// (see [`variants`]), so that each side holds the same cards in several
     /// deals and the luck of where they lie partly cancels between them.
     ///
     /// With `PLAY_SELF_ROUND_ROBIN` set to 1, each deal is played in a round
@@ -2717,9 +2728,14 @@ mod tests {
         let (dealt, fresh_deals) = std::sync::mpsc::sync_channel::<String>(2 * fresh);
         if fresh > 0 {
             let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64), 10);
-            let four = number("PLAY_SELF_FOUR_WAYS", 0) == 1;
+            let swaps = number("PLAY_SELF_FOUR_WAYS", 0) == 1;
+            let every_dealer = number("PLAY_SELF_EVERY_DEALER", 0) == 1;
             std::thread::spawn(move || loop {
-                let deals = if four { four_ways(&mut dealer) } else { vec![fresh_deal(&mut dealer)] };
+                let deals = if swaps || every_dealer {
+                    variants(&mut dealer, swaps, every_dealer)
+                } else {
+                    vec![fresh_deal(&mut dealer)]
+                };
                 if deals.into_iter().any(|deal| dealt.send(deal).is_err()) {
                     break;
                 }
@@ -3145,15 +3161,18 @@ mod tests {
         }
     }
 
-    /// Four deals of the same new cards, each bid afresh by the robot in the
-    /// same system with the same dealer: as they were dealt, with east's and
-    /// west's hands swapped, with north's and south's, and with both, as the
-    /// JSON of each game at the opening lead.  Each side holds the same cards
-    /// in all four, so has the same strength, but each of its opponents holds
-    /// the other's, so a finesse that wins in one loses in another; the
-    /// auctions and contracts may differ.  The deals that are passed out are
-    /// left out.
-    fn four_ways(dealer: &mut (Generator, StdRng, usize)) -> Vec<String> {
+    /// Deals of the same new cards, each bid afresh by the robot in the same
+    /// system, as the JSON of each game at the opening lead: with `swaps`,
+    /// as they were dealt, with east's and west's hands swapped, with
+    /// north's and south's, and with both, and otherwise as dealt; and with
+    /// `every_dealer`, each of those dealt by each seat in turn, and
+    /// otherwise by one seat at random.  Each side holds the same cards in
+    /// every one, so has the same strength, but where the cards lie in each
+    /// side differs, so a finesse that wins in one loses in another; and the
+    /// auctions and contracts may differ.  The deals that are passed out
+    /// are left out, and so is any that is the same situation as one before
+    /// it (see [`situation_of`]), so that none is played twice over.
+    fn variants(dealer: &mut (Generator, StdRng, usize), swaps: bool, every_dealer: bool) -> Vec<String> {
         let (generator, rng, index) = dealer;
         loop {
             let mut deck = Cards::ALL;
@@ -3162,14 +3181,36 @@ mod tests {
             let first = Seat::from(rng.gen_range(0..4usize));
             let system = *index;
             *index += 1;
-            let deals: Vec<String> = [[south, west, north, east], [south, east, north, west], [north, west, south, east], [north, east, south, west]]
-                .into_iter()
-                .filter_map(|hands| generator.at_the_lead(system, hands.into(), first))
+            let ways = [[south, west, north, east], [south, east, north, west], [north, west, south, east], [north, east, south, west]];
+            let ways = if swaps { &ways[..] } else { &ways[..1] };
+            let dealers: Vec<Seat> = if every_dealer { (0..4).map(|n| first + n).collect() } else { vec![first] };
+            let mut seen = Vec::new();
+            let deals: Vec<String> = dealers
+                .iter()
+                .flat_map(|&dealer| ways.iter().map(move |&hands| (dealer, hands)))
+                .filter_map(|(dealer, hands)| generator.at_the_lead(system, hands.into(), dealer))
+                .filter(|json| {
+                    let situation = situation_of(&serde_json::from_str(json).unwrap());
+                    let new = !seen.contains(&situation);
+                    seen.push(situation);
+                    new
+                })
                 .collect();
             if !deals.is_empty() {
                 return deals;
             }
         }
+    }
+
+    /// What makes a game at the opening lead the same situation as another:
+    /// the contract, as doubled or redoubled, and the hands of declarer, the
+    /// opening leader, the dummy and the other defender.  The auctions may
+    /// differ, but the cards are the same where they matter.
+    fn situation_of(game: &GameState<()>) -> Option<(Bid, Bid, [Cards; 4])> {
+        let declarer = game.find_declarer()?;
+        let at = game.bids.iter().rposition(|bid| bid.is_contract())?;
+        let doubled = game.bids[at + 1..].iter().copied().rfind(|&bid| bid != Bid::Pass).unwrap_or(Bid::Pass);
+        Some((game.bids[at], doubled, [0, 1, 2, 3].map(|n| game.hands[declarer + n])))
     }
 
     /// How many more tricks a deal each of `learners` takes than the others,
