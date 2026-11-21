@@ -1920,7 +1920,8 @@ mod tests {
     /// it, each card that could be played, with its entries and chance,
     /// which one was played, the side that chose it (0 for north and south)
     /// and the tricks that side had already won, and, if it was played out
-    /// (see [`playout`]), the tricks that side took after each card.
+    /// (see [`playout`]), the tricks that side took after each card, with
+    /// the weight of 1 over the chance that it was.
     struct Decision {
         learner: usize,
         cards: Vec<(Vec<usize>, f64)>,
@@ -1929,6 +1930,7 @@ mod tests {
         trick: usize,
         won_before: usize,
         played_out: Option<Vec<f64>>,
+        weight: f64,
     }
 
     /// Plays `card` in `game`, a game of self-play, and the rest of the game
@@ -1970,11 +1972,25 @@ mod tests {
 
     /// Which of the learners' choices self-play plays out (see [`playout`]):
     /// a `share` of those of more than one card with up to `most` tricks
-    /// left.
+    /// left, and `per_game` of those of more than one run of touching cards
+    /// in each game with no player of any card, chosen at random once the
+    /// game is over.
     #[derive(Clone, Copy)]
     struct Playouts {
         share: f64,
         most: usize,
+        per_game: usize,
+    }
+
+    /// How the learners of self-play learn.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Learning {
+        /// Up the slope of the tricks after each choice, and of the choices
+        /// played out.
+        Outcomes,
+        /// By fitting the scores of the cards of each choice played out to
+        /// the tricks after them.
+        Playouts,
     }
 
     /// How a seat chooses its cards in self-play.
@@ -2018,6 +2034,10 @@ mod tests {
         })];
         game.play(lead);
         let mut decisions = Vec::new();
+        // The choices that could be played out after the game, by their
+        // number among the decisions: the game then, its runs, the cards
+        // that could be played and the side to play.
+        let mut later = Vec::new();
         while !game.hand_done {
             let Some(view) = View::new(&game, convention) else {
                 break;
@@ -2050,7 +2070,13 @@ mod tests {
                     considered = legal.iter().zip(&cards).map(|(&card, c)| (pair(card), c.1)).collect();
                 }
                 if let Some(learner) = learning {
-                    let Playouts { share, most } = playouts;
+                    let Playouts { share, most, per_game } = playouts;
+                    if per_game > 0 && legal.len() > 1 && 13 - game.tricks.len() <= most {
+                        let runs: Vec<Card> = crate::ai::playout::one_of_each_run(&game).collect();
+                        if runs.len() > 1 {
+                            later.push((decisions.len(), crate::ai::playout::copy_of(&game), runs, legal.clone(), side));
+                        }
+                    }
                     let played_out = (share > 0.0
                         && legal.len() > 1
                         && 13 - game.tricks.len() <= most
@@ -2078,6 +2104,7 @@ mod tests {
                         trick: game.tricks.len(),
                         won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
                         played_out,
+                        weight: if share > 0.0 { 1.0 / share } else { 0.0 },
                     });
                 }
                 legal[chosen]
@@ -2093,6 +2120,23 @@ mod tests {
                 }));
             }
             game.play(card);
+        }
+        let any_card = players.iter().any(|p| matches!(p, Player::Random));
+        if !later.is_empty() && !any_card {
+            let chosen = playouts.per_game.min(later.len());
+            let weight = later.len() as f64 / chosen as f64;
+            for i in rand::seq::index::sample(rng, later.len(), chosen) {
+                let (number, game, runs, legal, side): &(usize, GameState<()>, Vec<Card>, Vec<Card>, usize) = &later[i];
+                let seed = rng.gen::<u64>();
+                let values: Vec<f64> = runs
+                    .iter()
+                    .map(|&card| playout(game, card, convention, learners, players, seed)[*side] as f64)
+                    .collect();
+                let decision = &mut decisions[*number];
+                decision.played_out =
+                    Some(legal.iter().map(|&card| values[crate::ai::playout::run_of(runs, card)]).collect());
+                decision.weight = weight;
+            }
         }
         let watched = record.then(|| {
             let start: GameState<()> = serde_json::from_str(json).unwrap();
@@ -2257,20 +2301,67 @@ mod tests {
     #[test]
     #[ignore]
     fn self_play() {
+        run_self_play(Learning::Outcomes);
+    }
+
+    /// Self-play (see [`self_play`], and its settings) in which the learners
+    /// learn only from playouts, fitting their scores to the tricks after
+    /// each card.  In each game with no player of any card,
+    /// `PLAY_SELF_PLAYOUTS` (1) of the learners' choices of more than one
+    /// run of touching cards, with up to `PLAY_SELF_PLAYOUT_TRICKS` (13)
+    /// tricks left, are chosen at random once the game is over, and played
+    /// out (see [`playout`]) by the players of the game, after each run, on
+    /// the deal as it was dealt.  Each learner's step is then down the slope
+    /// of the squares of how far its score of each card that it could have
+    /// played, less the mean of those, is from the tricks after it, less
+    /// their mean, each choice weighted by 1 over its chance of being played
+    /// out, so that a game's choices count the same however many it has.
+    /// The scores are then tricks: a card a trick worse than another ends
+    /// a trick below it, however unlikely it was to be played, and two
+    /// cards of nearly the same worth end nearly together; and as the fit
+    /// is linear in the tricks, the luck of a deal averages out.  The
+    /// cards are chosen in the games at `PLAY_SELF_TEMPERATURE` (0.1)
+    /// tricks, so a card a tenth of a trick worse is played e⁻¹ times as
+    /// often as the best.  Nothing pushes the chances to spread, as each
+    /// card played out learns its worth whatever its chance, and neither
+    /// `PLAY_SELF_PLAYOUT_SHARE` nor the tricks after each choice are used.
+    /// A partner or an opponent who plays worse makes every card worth less,
+    /// which the means take away, but it can change which card is best, so
+    /// what a learner learns is the best against the players it meets: none
+    /// of the games with a player of any card is played out.  The report
+    /// says how far the scores are from the tricks, as well as how many
+    /// tricks a play the likeliest cards lose to the best played out.
+    #[test]
+    #[ignore]
+    fn learn_from_playouts() {
+        run_self_play(Learning::Playouts);
+    }
+
+    /// Self-play, as [`self_play`] and [`learn_from_playouts`] say, the
+    /// learners learning as `learning` says.
+    fn run_self_play(learning: Learning) {
         let float = |name: &str, default: f64| -> f64 { var(name, &default.to_string()).parse().unwrap() };
         let rounds = number("PLAY_SELF_ROUNDS", 100);
         let batch = number("PLAY_SELF_DEALS", 256);
         let group = number("PLAY_SELF_GROUP", 8);
         let report = number("PLAY_SELF_REPORT", 10);
-        let temperature = float("PLAY_SELF_TEMPERATURE", 1.0);
+        let temperature = float("PLAY_SELF_TEMPERATURE", if learning == Learning::Playouts { 0.1 } else { 1.0 });
         let rate = float("PLAY_SELF_RATE", 0.01);
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
         let decay = float("PLAY_SELF_DECAY", 0.0);
-        let playouts = Playouts {
-            share: float("PLAY_SELF_PLAYOUT_SHARE", 0.0),
-            most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
+        let playouts = match learning {
+            Learning::Outcomes => Playouts {
+                share: float("PLAY_SELF_PLAYOUT_SHARE", 0.0),
+                most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
+                per_game: 0,
+            },
+            Learning::Playouts => Playouts {
+                share: 0.0,
+                most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
+                per_game: number("PLAY_SELF_PLAYOUTS", 1),
+            },
         };
         let softened = float("PLAY_SELF_PLAYOUT_TEMPERATURE", 1.0);
         let playout_weights: Vec<f64> = var("PLAY_SELF_PLAYOUT_WEIGHTS", "1")
@@ -2370,7 +2461,7 @@ mod tests {
             "learners of the shapes {}",
             learners.iter().map(|l| l.shape.name).collect::<Vec<_>>().join(", ")
         );
-        let mut playout_losses = vec![(0.0, 0); learners.len()];
+        let mut playout_losses = vec![(0.0, 0, 0.0); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
         }
@@ -2405,7 +2496,7 @@ mod tests {
             let chunk = batch.div_ceil(threads);
             let (learners_now, pool_now, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
-            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<(f64, usize)>);
+            type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<(f64, usize, f64)>);
             let results: Vec<Results> = workers.install(|| {
                 deals
                     .par_chunks(chunk)
@@ -2419,7 +2510,7 @@ mod tests {
                             let mut counts = vec![0; learners_now.len()];
                             let mut entropy = 0.0;
                             let mut sampled = Vec::new();
-                            let mut lost = vec![(0.0, 0); learners_now.len()];
+                            let mut lost = vec![(0.0, 0, 0.0); learners_now.len()];
                             for (d, &deal) in deals.iter().enumerate() {
                                 let json = &pool_now[deal];
                                 let system: GameState<()> = serde_json::from_str(json).unwrap();
@@ -2522,30 +2613,51 @@ mod tests {
                                             .map(|c| -c.1 * c.1.ln())
                                             .sum();
                                         entropy += spread;
-                                        for (j, (entries, chance)) in d.cards.iter().enumerate() {
-                                            let wanted = if j == d.chosen { 1.0 } else { 0.0 };
-                                            // The slope of the entropy of the
-                                            // choice with this card's score.
-                                            let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
-                                            let spreading = -chance * (log + spread);
-                                            let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
-                                            learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
-                                        }
-                                        if let Some(values) = &d.played_out {
-                                            let weight = playout_weights[d.learner % playout_weights.len()];
-                                            if weight != 0.0 {
-                                                // The chances at the softened
-                                                // temperature, from those at
-                                                // self-play's.
-                                                let odds: Vec<f64> = d.cards.iter().map(|c| c.1.powf(1.0 / softened)).collect();
-                                                let sum: f64 = odds.iter().sum();
-                                                let soft: Vec<f64> = odds.iter().map(|o| o / sum).collect();
-                                                let mean: f64 = values.iter().zip(&soft).map(|(v, p)| v * p).sum();
-                                                for (((entries, _), value), p) in d.cards.iter().zip(values).zip(&soft) {
-                                                    let g = weight * p * (value - mean) / (playouts.share * softened * temperature);
-                                                    learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                        let model = &learners_now[d.learner];
+                                        if learning == Learning::Playouts {
+                                            if let Some(values) = &d.played_out {
+                                                // Fits the scores, less their
+                                                // mean, to the tricks, less
+                                                // theirs, by least squares.
+                                                let scores: Vec<f64> =
+                                                    d.cards.iter().map(|(entries, _)| model.network.score(entries)).collect();
+                                                let n = values.len() as f64;
+                                                let value_mean = values.iter().sum::<f64>() / n;
+                                                let score_mean = scores.iter().sum::<f64>() / n;
+                                                for (((entries, _), value), score) in d.cards.iter().zip(values).zip(&scores) {
+                                                    let off = (score - score_mean) - (value - value_mean);
+                                                    lost[d.learner].2 += off * off / n;
+                                                    model.network.add_gradient(entries, -d.weight * off, &mut gradients[d.learner]);
                                                 }
                                             }
+                                        } else {
+                                            for (j, (entries, chance)) in d.cards.iter().enumerate() {
+                                                let wanted = if j == d.chosen { 1.0 } else { 0.0 };
+                                                // The slope of the entropy of the
+                                                // choice with this card's score.
+                                                let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
+                                                let spreading = -chance * (log + spread);
+                                                let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
+                                                learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                            }
+                                            if let Some(values) = &d.played_out {
+                                                let weight = playout_weights[d.learner % playout_weights.len()];
+                                                if weight != 0.0 {
+                                                    // The chances at the softened
+                                                    // temperature, from those at
+                                                    // self-play's.
+                                                    let odds: Vec<f64> = d.cards.iter().map(|c| c.1.powf(1.0 / softened)).collect();
+                                                    let sum: f64 = odds.iter().sum();
+                                                    let soft: Vec<f64> = odds.iter().map(|o| o / sum).collect();
+                                                    let mean: f64 = values.iter().zip(&soft).map(|(v, p)| v * p).sum();
+                                                    for (((entries, _), value), p) in d.cards.iter().zip(values).zip(&soft) {
+                                                        let g = weight * d.weight * p * (value - mean) / (softened * temperature);
+                                                        learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(values) = &d.played_out {
                                             let likeliest =
                                                 (0..values.len()).max_by(|&a, &b| d.cards[a].1.total_cmp(&d.cards[b].1)).unwrap();
                                             lost[d.learner].0 += values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
@@ -2567,9 +2679,10 @@ mod tests {
             let entropy: f64 = results.iter().map(|r| r.2).sum::<f64>() / decisions.max(1) as f64;
             bonus = if entropy < entropy_target { bonus * 1.05 } else { bonus * 0.95 }.clamp(1e-4, 1.0);
             for result in &results {
-                for (total, (lost, n)) in playout_losses.iter_mut().zip(&result.4) {
+                for (total, (lost, n, off)) in playout_losses.iter_mut().zip(&result.4) {
                     total.0 += lost;
                     total.1 += n;
+                    total.2 += off;
                 }
             }
             for (i, learner) in learners.iter_mut().enumerate() {
@@ -2682,16 +2795,23 @@ mod tests {
                         .collect();
                     print!(", the test data's choices lose {} tricks a play", losses.join(", "));
                 }
-                if playouts.share > 0.0 {
+                if playouts.share > 0.0 || playouts.per_game > 0 {
                     let lost: Vec<String> = playout_losses
                         .iter()
-                        .map(|&(lost, n)| format!("{:.4} ({n})", lost / n.max(1) as f64))
+                        .map(|&(lost, n, _)| format!("{:.4} ({n})", lost / n.max(1) as f64))
                         .collect();
                     print!(
                         ", the likeliest cards lose {} tricks a play to the best played out",
                         lost.join(", ")
                     );
-                    playout_losses.iter_mut().for_each(|l| *l = (0.0, 0));
+                    if learning == Learning::Playouts {
+                        let off: Vec<String> = playout_losses
+                            .iter()
+                            .map(|&(_, n, off)| format!("{:.3}", (off / n.max(1) as f64).sqrt()))
+                            .collect();
+                        print!(", and their scores miss the tricks by {} (root mean square)", off.join(", "));
+                    }
+                    playout_losses.iter_mut().for_each(|l| *l = (0.0, 0, 0.0));
                 }
                 println!();
                 if let Ok(path) = std::env::var("PLAY_SELF_WEIGHTS") {
