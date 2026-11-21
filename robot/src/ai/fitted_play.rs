@@ -953,10 +953,10 @@ fn played_at<C>(game: &GameState<C>, trick: &[Card]) -> Seated<Cards> {
     played
 }
 
+#[cfg(test)]
 /// The hands of `game` with the hidden hands of `seats` dealt `deal`, as they
 /// were, or would be, once `trick` (as [`View::at`] takes it) had been
 /// played to the current trick.
-#[cfg(test)]
 pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2], trick: &[Card]) -> Seated<Cards> {
     let mut hands = game.hands;
     for (seat, cards) in seats.into_iter().zip(deal) {
@@ -972,11 +972,11 @@ pub(crate) fn hands_at<C>(game: &GameState<C>, seats: [Seat; 2], deal: [Cards; 2
     hands
 }
 
+#[cfg(test)]
 /// The chance that the player of `view` plays each card that they could,
 /// by the play model `model`: the softmax of its scores divided by
 /// `temperature`, which is fitted so that these are chances and not only an
 /// order.
-#[cfg(test)]
 pub(crate) fn chances(view: &View, model: &Model, temperature: f64) -> Vec<(Card, f64)> {
     let scores: Vec<(Card, f64)> = view
         .legal()
@@ -986,6 +986,29 @@ pub(crate) fn chances(view: &View, model: &Model, temperature: f64) -> Vec<(Card
     let odds: Vec<(Card, f64)> = scores.iter().map(|&(c, s)| (c, (s - most).exp())).collect();
     let sum: f64 = odds.iter().map(|o| o.1).sum();
     odds.into_iter().map(|(c, o)| (c, o / sum)).collect()
+}
+
+#[cfg(test)]
+/// The chance that [`chances`] gives `card`, or 0 if it is not one that could
+/// be played, without making the list of all.
+pub(crate) fn chance_of(view: &View, model: &Model, temperature: f64, card: Card) -> f64 {
+    // A hand has at most 13 cards.
+    let mut scores = [0.0; 13];
+    let (mut n, mut mine, mut most) = (0, None, f64::MIN);
+    for c in view.legal() {
+        let score = model.score(view, c) / temperature;
+        if c == card {
+            mine = Some(n);
+        }
+        scores[n] = score;
+        most = most.max(score);
+        n += 1;
+    }
+    let Some(mine) = mine else {
+        return 0.0;
+    };
+    let sum: f64 = scores[..n].iter().map(|s| (s - most).exp()).sum();
+    (scores[mine] - most).exp() / sum
 }
 
 /// The chance that the next player to `trick` (as [`View::at`] takes it)
@@ -1020,9 +1043,9 @@ pub(crate) fn predicted_plays<C>(
     totals
 }
 
+#[cfg(test)]
 /// The seat whose player chooses the cards of `seat`: the declarer chooses
 /// the dummy's.
-#[cfg(test)]
 fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
     if Some(seat) == game.dummy() {
         seat + 2
@@ -1031,6 +1054,7 @@ fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
     }
 }
 
+#[cfg(test)]
 /// How likely the cards that the players whose hands are `seats` have
 /// chosen are, by the play model, if those hands were dealt `deal`: the
 /// product of the chance of each card, in the view its player had when they
@@ -1039,14 +1063,18 @@ fn chooser<C>(game: &GameState<C>, seat: Seat) -> Seat {
 /// It covers the tricks in `game.tricks` and the current trick: all of the
 /// play, unless the game was saved before tricks were kept.  Weighting
 /// deals of an ensemble by it draws what can be drawn from the play.
-#[cfg(test)]
-pub(crate) fn play_likelihood<C>(
+///
+/// It gives up, with 0, as soon as the likelihood so far is below `floor`, so
+/// that a deal that is hopeless is found out by the first cards that make it
+/// so.
+pub(crate) fn play_likelihood_above<C>(
     game: &GameState<C>,
     convention: &Convention,
     seats: [Seat; 2],
     deal: [Cards; 2],
     model: &Model,
     temperature: f64,
+    floor: f64,
 ) -> f64 {
     let current = current_trick(game);
     let mut tricks: Vec<(Seat, &[Card])> = game
@@ -1072,19 +1100,30 @@ pub(crate) fn play_likelihood<C>(
             let seat = lead + i;
             if seats.contains(&chooser(game, seat)) {
                 let chance = View::at_moment(game, convention, hands, played, lead, &cards[..i])
-                    .map_or(1.0, |view| {
-                        chances(&view, model, temperature)
-                            .into_iter()
-                            .find(|c| c.0 == card)
-                            .map_or(0.0, |c| c.1)
-                    });
+                    .map_or(1.0, |view| chance_of(&view, model, temperature, card));
                 likelihood *= chance;
+                if likelihood < floor {
+                    return 0.0;
+                }
             }
             hands[seat] -= Cards::singleton(card);
             played[seat] += Cards::singleton(card);
         }
     }
     likelihood
+}
+
+/// [`play_likelihood_above`] with no floor.
+#[cfg(test)]
+pub(crate) fn play_likelihood<C>(
+    game: &GameState<C>,
+    convention: &Convention,
+    seats: [Seat; 2],
+    deal: [Cards; 2],
+    model: &Model,
+    temperature: f64,
+) -> f64 {
+    play_likelihood_above(game, convention, seats, deal, model, temperature, 0.0)
 }
 
 /// The play model that [`ModelPlay`] plays by: the length of the name of its
@@ -1155,10 +1194,23 @@ fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
     }
 }
 
+/// A model with random weights, for tests of what uses a model.
+#[cfg(test)]
+pub(crate) fn random_model(seed: u64) -> Model {
+    use rand::{Rng, SeedableRng};
+    const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut model = Model::new(&SMALL, 3);
+    for p in &mut model.network.params {
+        *p = rng.gen_range(-1.0..1.0);
+    }
+    model
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden};
+    use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden, Reading, Weighted};
     use crate::ai::fitting;
     use crate::situations::Generator;
     use rand::rngs::StdRng;
@@ -3098,6 +3150,13 @@ mod tests {
         let games = number("PLAY_YARD_GAMES", 200);
         let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
         let count = number("PLAY_YARD_DEALS", 100);
+        let dealer = var("PLAY_YARD_DEALER", "play");
+        let temperature: f64 = var("PLAY_YARD_TEMPERATURE", "1.0").parse().unwrap();
+        let proposals = number("PLAY_YARD_PROPOSALS", count * 10);
+        let steps = number("PLAY_YARD_STEPS", 0);
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1"));
+        let at_most = number("PLAY_YARD_AT_MOST", proposals);
+        let worth: f64 = var("PLAY_YARD_WORTH", &(count / 2).to_string()).parse().unwrap();
         let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
@@ -3115,7 +3174,12 @@ mod tests {
                         let runs: Vec<Card> = one_of_each_run(&game).collect();
                         if runs.len() > 1 && View::new(&game, convention).is_some() && rng.gen_range(0.0..1.0) < share {
                             if let Some(hidden) = Hidden::new(&game, convention) {
-                                let dealt = hidden.ensemble(&mut rng, count, None);
+                                let dealt: Vec<Weighted> = match dealer.as_str() {
+                                    "ensemble" => hidden.ensemble(&mut rng, count, None).into_iter().map(|d| (d, 1.0)).collect(),
+                                    "bounds" => hidden.within_bounds(&mut rng, count).deals.into_iter().map(|d| (d, 1.0)).collect(),
+                                    "play" => hidden.read_the_play(&mut rng, &game, convention, &Reading { model: &competitor, temperature, miss, proposals, at_most, worth, steps }, count),
+                                    other => panic!("PLAY_YARD_DEALER is ensemble, bounds or play, not {other}"),
+                                };
                                 if !dealt.is_empty() {
                                     kept.push((copy_of(&game), runs, dealt));
                                 }
@@ -3142,7 +3206,7 @@ mod tests {
                         let side = game.turn().unwrap() as usize % 2;
                         let mut both = [&competitor, &competitor];
                         both[side] = ours;
-                        crate::ai::playout::card_values(game, runs, dealt, both, convention).unwrap()
+                        crate::ai::playout::weighted_card_values(game, runs, dealt, both, convention).unwrap()
                     })
                     .collect()
             })
@@ -3217,7 +3281,7 @@ mod tests {
 
     /// A position of [`score_on_the_playout_yardstick`], with its runs and
     /// the deals that they are played out on.
-    type Position = (GameState<()>, Vec<Card>, Vec<[Cards; 2]>);
+    type Position = (GameState<()>, Vec<Card>, Vec<Weighted>);
 
     /// How much a model loses in the positions of
     /// [`score_on_the_playout_yardstick`], by each entry of its tables.
@@ -3293,6 +3357,404 @@ mod tests {
             }
         }
         rows
+    }
+
+    /// How much it costs to make the ensembles of the playout yardstick by
+    /// the plays of the competitor (see [`Hidden::read_the_play`]), and how
+    /// much closer to the hands that were dealt they come than deals that
+    /// are only within the bounds that the calls showed.  The positions are
+    /// those of [`score_on_the_playout_yardstick`] (`PLAY_YARD_COMPETITOR`,
+    /// `PLAY_YARD_GAMES` (200), `PLAY_YARD_SHARE` (0.25), `PLAY_YARD_DEALS`
+    /// (100)), each with `PLAY_YARD_PROPOSALS` (ten times the deals) deals
+    /// proposed.  For each of the temperatures `PLAY_YARD_TEMPERATURES`
+    /// (comma-separated) it prints the time to propose and to weigh, how
+    /// many deals of weight 1 the ensemble is worth (see
+    /// [`effective_size`]) and how many different deals it holds, and the
+    /// mean error, over positions, of the mean of the high card points and
+    /// the lengths of the suits of the hidden hands, as the proposals alone
+    /// give it and as the weighted ensemble does.  One thread, so that the
+    /// times mean something.
+    #[test]
+    #[ignore]
+    fn report_the_play_weighted_dealer() {
+        use crate::ai::ensemble::effective_size;
+        use crate::ai::playout::{copy_of, one_of_each_run};
+        use std::time::{Duration, Instant};
+        let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
+        let games = number("PLAY_YARD_GAMES", 200);
+        let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
+        let count = number("PLAY_YARD_DEALS", 100);
+        let proposals = number("PLAY_YARD_PROPOSALS", count * 10);
+        let temperatures: Vec<f64> = var("PLAY_YARD_TEMPERATURES", "0.5,1,2,4").split(',').map(|t| t.trim().parse().unwrap()).collect();
+        let mut positions: Vec<GameState<()>> = Vec::new();
+        for (i, game) in crate::ai::opening_lead::candidates::opening_leads(23, games).iter().enumerate() {
+            let convention: &Convention = game.system.table();
+            let mut rng = StdRng::seed_from_u64(i as u64);
+            let mut game = copy_of(game);
+            while !game.hand_done {
+                if one_of_each_run(&game).len() > 1 && View::new(&game, convention).is_some() && rng.gen_range(0.0..1.0) < share {
+                    positions.push(copy_of(&game));
+                }
+                let card = model_card(&competitor, &game, convention);
+                game.play(card);
+            }
+        }
+        // What is compared of a hand: its high card points and the lengths
+        // of its suits.
+        let features = |hand: Cards| -> [f64; 5] {
+            let length = |suit: Suit| hand.in_suit(suit).len() as f64;
+            [
+                hand.high_card_points() as f64,
+                length(Suit::Clubs),
+                length(Suit::Diamonds),
+                length(Suit::Hearts),
+                length(Suit::Spades),
+            ]
+        };
+        let mean_features = |deals: &[Weighted], i: usize| -> [f64; 5] {
+            let weight: f64 = deals.iter().map(|d| d.1).sum();
+            let mut mean = [0.0; 5];
+            for &(deal, w) in deals {
+                for (m, f) in mean.iter_mut().zip(features(deal[i])) {
+                    *m += w * f / weight;
+                }
+            }
+            mean
+        };
+        // Each variant is the deals proposed at a time, the steps of the walk
+        // after, the most deals proposed and the worth to stop at, as
+        // `proposals:steps:at_most:worth`, the last two being optional.
+        let variants: Vec<(usize, usize, usize, f64)> = var("PLAY_YARD_VARIANTS", &format!("{proposals}:0"))
+            .split(',')
+            .map(|v| {
+                let parts: Vec<&str> = v.trim().split(':').collect();
+                let proposals = parts[0].parse().unwrap();
+                (proposals, parts[1].parse().unwrap(), parts.get(2).map_or(proposals, |p| p.parse().unwrap()), parts.get(3).map_or(0.0, |p| p.parse().unwrap()))
+            })
+            .collect();
+        println!("{} positions from {games} games; {count} deals wanted", positions.len());
+        let misses: Vec<Option<f64>> = var("PLAY_YARD_MISSES", "none,0.1")
+            .split(',')
+            .map(chance_of_a_miss)
+            .collect();
+        let gold_deals = number("PLAY_YARD_GOLD", 5000);
+        for (&temperature, &miss) in temperatures.iter().flat_map(|t| misses.iter().map(move |m| (t, m))) {
+            // What the ensemble should say of each hidden hand, from many
+            // more proposals than any variant makes.
+            let gold_reading = Reading { model: &competitor, temperature, miss, proposals: gold_deals, at_most: gold_deals, worth: 0.0, steps: 0 };
+            let mut gold_rng = StdRng::seed_from_u64(99);
+            let gold: Vec<Option<[[f64; 5]; 2]>> = positions
+                .iter()
+                .map(|game| {
+                    let convention: &Convention = game.system.table();
+                    let hidden = Hidden::new(game, convention)?;
+                    let gold_auction = miss.map(|m| (hidden.replay(convention), m));
+                    let (deals, likelihoods) = hidden.weighed_proposals(&mut gold_rng, game, convention, &gold_reading, gold_auction.as_ref());
+                    let weighted: Vec<Weighted> = deals.into_iter().zip(likelihoods).collect();
+                    (!weighted.is_empty() && weighted.iter().any(|d| d.1 > 0.0)).then(|| [mean_features(&weighted, 0), mean_features(&weighted, 1)])
+                })
+                .collect();
+            for &(proposals, steps, at_most, worth) in &variants {
+                let reading = Reading { model: &competitor, temperature, miss, proposals, at_most, worth, steps };
+                let mut rng = StdRng::seed_from_u64(7);
+                let (mut propose, mut weigh, mut walk) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+                let (mut raw, mut ensemble_worth, mut different, mut short, mut n) = (Vec::new(), 0.0, 0.0, 0, 0);
+                let (mut proposed, mut accepted, mut tried) = ([0usize; 4], [0usize; 4], 0usize);
+                // The different deals of the ensemble, in the positions whose
+                // proposals are worth under a twentieth of themselves, and in
+                // the rest.
+                let (mut tight, mut loose) = (Vec::new(), Vec::new());
+                // The errors with the proposals alone and with the weights, for
+                // each feature, over every hidden hand of every position.
+                let mut errors: [Vec<f64>; 5] = Default::default();
+                let mut weighted_errors: [Vec<f64>; 5] = Default::default();
+                let (mut sampling_tight, mut sampling_loose): ([Vec<f64>; 2], [Vec<f64>; 2]) = Default::default();
+                for (position, game) in positions.iter().enumerate() {
+                    let convention: &Convention = game.system.table();
+                    let Some(hidden) = Hidden::new(game, convention) else { continue };
+                    let started = Instant::now();
+                    let auction = miss.map(|m| (hidden.replay(convention), m));
+                    let (proposed_deals, likelihoods) = hidden.weighed_proposals(&mut rng, game, convention, &reading, auction.as_ref());
+                    propose += started.elapsed();
+                    if proposed_deals.len() < count {
+                        short += 1;
+                    }
+                    if proposed_deals.is_empty() {
+                        continue;
+                    }
+                    tried += proposed_deals.len();
+                    let started = Instant::now();
+                    let chosen = crate::ai::ensemble::resample(&mut rng, &proposed_deals, &likelihoods, count);
+                    weigh += started.elapsed();
+                    let all: Vec<Weighted> = proposed_deals.iter().zip(&likelihoods).map(|(&d, &l)| (d, l)).collect();
+                    raw.push(effective_size(&all) / all.len() as f64);
+                    let ensemble: Vec<Weighted> = if steps == 0 {
+                        chosen
+                    } else {
+                        let started = Instant::now();
+                        let each: Vec<[Cards; 2]> = chosen
+                            .iter()
+                            .flat_map(|&(deal, times)| std::iter::repeat_n(deal, times as usize))
+                            .collect();
+                        let walked = hidden.walk(&mut rng, game, convention, &reading, auction.as_ref(), &each, steps);
+                        walk += started.elapsed();
+                        for k in 0..4 {
+                            proposed[k] += walked.proposed[k];
+                            accepted[k] += walked.accepted[k];
+                        }
+                        walked.deals.into_iter().map(|d| (d, 1.0)).collect()
+                    };
+                    n += 1;
+                    ensemble_worth += effective_size(&ensemble);
+                    let mut once: Vec<[Cards; 2]> = ensemble.iter().map(|d| d.0).collect();
+                    once.sort_by_key(|d| format!("{d:?}"));
+                    once.dedup();
+                    different += once.len() as f64;
+                    if *raw.last().unwrap() < 0.05 { &mut tight } else { &mut loose }.push(once.len() as f64);
+                    let plain: Vec<Weighted> = proposed_deals.iter().map(|&d| (d, 1.0)).collect();
+                    for (i, &seat) in hidden.seats().iter().enumerate() {
+                        let real = features(game.hands[seat]);
+                        let (plain, weighted) = (mean_features(&plain, i), mean_features(&ensemble, i));
+                        if let Some(gold) = &gold[position] {
+                            let group = if *raw.last().unwrap() < 0.05 { &mut sampling_tight } else { &mut sampling_loose };
+                            group[0].push((weighted[0] - gold[i][0]).abs());
+                            group[1].push((1..5).map(|f| (weighted[f] - gold[i][f]).abs()).sum::<f64>() / 4.0);
+                        }
+                        for f in 0..5 {
+                            errors[f].push((plain[f] - real[f]).abs());
+                            weighted_errors[f].push((weighted[f] - real[f]).abs());
+                        }
+                    }
+                }
+                raw.sort_by(f64::total_cmp);
+                let each = |total: Duration| total.as_secs_f64() * 1e3 / n as f64;
+                println!(
+                    "temperature {temperature}, {} calls, {proposals} proposals (to {at_most}, worth {worth}), {steps} steps: {:.0} proposals, {:.2} ms to propose and weigh, {:.2} to resample and {:.2} to walk a position; the proposals are worth {:.0}% of themselves (a tenth of positions under {:.0}%); the ensemble is worth {:.1} deals of {:.1} different; {short} positions of {n} with fewer than {count} proposals",
+                    miss.map_or("bounds only".to_string(), |m| format!("miss {m}")),
+                    tried as f64 / n as f64,
+                    each(propose),
+                    each(weigh),
+                    each(walk),
+                    100.0 * raw.iter().sum::<f64>() / raw.len() as f64,
+                    100.0 * raw[raw.len() / 10],
+                    ensemble_worth / n as f64,
+                    different / n as f64
+                );
+                let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+                println!(
+                    "  sampling error against {} proposals: points {:.3} tight, {:.3} others; suit lengths {:.3} tight, {:.3} others",
+                    gold_reading.at_most, mean(&sampling_tight[0]), mean(&sampling_loose[0]), mean(&sampling_tight[1]), mean(&sampling_loose[1])
+                );
+                println!(
+                    "  {} tight positions with {:.1} different deals, {} others with {:.1}; steps made of 1 to 4 cards: {:.1}% {:.1}% {:.1}% {:.1}%",
+                    tight.len(), mean(&tight), loose.len(), mean(&loose),
+                    100.0 * accepted[0] as f64 / proposed[0].max(1) as f64,
+                    100.0 * accepted[1] as f64 / proposed[1].max(1) as f64,
+                    100.0 * accepted[2] as f64 / proposed[2].max(1) as f64,
+                    100.0 * accepted[3] as f64 / proposed[3].max(1) as f64,
+                );
+                for (f, name) in ["points", "clubs", "diamonds", "hearts", "spades"].into_iter().enumerate() {
+                    let (plain, _) = mean_and_error(&errors[f]);
+                    let (weighted, _) = mean_and_error(&weighted_errors[f]);
+                    let gains: Vec<f64> = errors[f].iter().zip(&weighted_errors[f]).map(|(a, b)| a - b).collect();
+                    let (gain, gain_error) = mean_and_error(&gains);
+                    println!("  {name:8}: error {plain:.3} with the proposals, {weighted:.3} weighted: {gain:+.3} ({gain_error:.3}) better");
+                }
+            }
+        }
+    }
+
+    /// How fast [`Hidden::draw`] is, in the positions of
+    /// [`report_the_play_weighted_dealer`]: the deals tried for 1000 drawn,
+    /// and the time of a try, with `PLAY_YARD_MISS` (0.1) for the chance of
+    /// a miss.
+    #[test]
+    #[ignore]
+    fn report_the_speed_of_drawing() {
+        use crate::ai::playout::{copy_of, one_of_each_run};
+        let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1")).expect("a chance of a miss, not none");
+        let games = number("PLAY_YARD_GAMES", 30);
+        let mut rng = StdRng::seed_from_u64(3);
+        let (mut tried, mut drawn, mut compile, mut draw, mut n) = (0, 0, std::time::Duration::ZERO, std::time::Duration::ZERO, 0);
+        for (i, game) in crate::ai::opening_lead::candidates::opening_leads(23, games).iter().enumerate() {
+            let convention: &Convention = game.system.table();
+            let mut game = copy_of(game);
+            let mut coin = StdRng::seed_from_u64(i as u64);
+            while !game.hand_done {
+                if one_of_each_run(&game).len() > 1 && View::new(&game, convention).is_some() && coin.gen_range(0.0..1.0) < 0.25 {
+                    if let Some(hidden) = Hidden::new(&game, convention) {
+                        let started = std::time::Instant::now();
+                        let replay = hidden.replay(convention);
+                        compile += started.elapsed();
+                        let started = std::time::Instant::now();
+                        let dealt = hidden.draw(&mut rng, 1000, &replay, miss, 200_000);
+                        draw += started.elapsed();
+                        tried += dealt.tried;
+                        drawn += dealt.deals.len();
+                        n += 1;
+                    }
+                }
+                let card = model_card(&competitor, &game, convention);
+                game.play(card);
+            }
+        }
+        println!(
+            "{n} positions: {:.2} ms to compile the replay; {} deals tried and {} drawn a position, {:.2} us a try",
+            compile.as_secs_f64() * 1e3 / n as f64,
+            tried / n,
+            drawn / n,
+            draw.as_secs_f64() * 1e6 / tried as f64
+        );
+    }
+
+    /// The chance of a miss that `text` says (see [`Hidden::draw`]): a chance
+    /// from 0 to 1, or "none" for no use of the calls beyond their bounds.
+    fn chance_of_a_miss(text: &str) -> Option<f64> {
+        if text.trim() == "none" {
+            return None;
+        }
+        let chance: f64 = text.trim().parse().unwrap_or_else(|_| panic!("a chance of a miss, or none, not {text}"));
+        assert!((0.0..=1.0).contains(&chance), "a chance of a miss from 0 to 1, not {text}");
+        Some(chance)
+    }
+
+    /// One ensemble for the playout yardstick, as `spec` says: "ensemble"
+    /// (deals that fit what the player has seen), "bounds" (also within the
+    /// bounds that the calls showed), or "play:T:P:S", the deals that the play
+    /// of `competitor` makes likely, at temperature T, from P proposals and
+    /// with S steps of the walk (see [`Hidden::read_the_play`]).  `miss` is
+    /// the chance of a call that the robot would not have made.
+    fn ensemble_for_yardstick(
+        spec: &str,
+        hidden: &Hidden,
+        game: &GameState<()>,
+        competitor: &Model,
+        miss: Option<f64>,
+        count: usize,
+        rng: &mut StdRng,
+    ) -> Vec<Weighted> {
+        let convention: &Convention = game.system.table();
+        let parts: Vec<&str> = spec.split(':').collect();
+        match parts[0] {
+            "ensemble" => hidden.ensemble(rng, count, None).into_iter().map(|d| (d, 1.0)).collect(),
+            "bounds" => hidden.within_bounds(rng, count).deals.into_iter().map(|d| (d, 1.0)).collect(),
+            "play" => {
+                let proposals = parts[2].parse().unwrap();
+                let reading = Reading {
+                    model: competitor,
+                    temperature: parts[1].parse().unwrap(),
+                    miss,
+                    proposals,
+                    at_most: proposals,
+                    worth: 0.0,
+                    steps: parts[3].parse().unwrap(),
+                };
+                hidden.read_the_play(rng, game, convention, &reading, count)
+            }
+            other => panic!("no ensemble called {other}"),
+        }
+    }
+
+    /// Whether the loss of the playout yardstick is partly luck of the
+    /// choice of the best card, and how much.  The loss of a play is the mean
+    /// over the deals of the tricks of the best card, less those of the card
+    /// played; but the best of several cards on a few deals is the one that
+    /// those deals favour, so its mean is too high, and the loss is too big,
+    /// the more so the fewer different deals there are.  Here each position
+    /// has two ensembles that are dealt separately, and the loss is also
+    /// worked out by choosing the best card on one and valuing it on the
+    /// other (and the other way round, and the mean of the two), which has no
+    /// such bias, but is a little low where the best card is not clear.  For
+    /// each of the ensembles of `PLAY_YARD_ENSEMBLES` (comma-separated, see
+    /// [`ensemble_for_yardstick`]; `ensemble,bounds,play:0.5:1000:0` by
+    /// default) it prints the two losses, with the standard errors, and how
+    /// many different deals an ensemble has.  Positions as in
+    /// [`score_on_the_playout_yardstick`] (`PLAY_YARD_COMPETITOR`,
+    /// `PLAY_YARD_GAMES` (40), `PLAY_YARD_SHARE` (0.25), `PLAY_YARD_DEALS`
+    /// (100), `PLAY_YARD_MISS` (0.1), `PLAY_THREADS`).
+    #[test]
+    #[ignore]
+    fn check_the_loss_for_the_winners_curse() {
+        use crate::ai::playout::{copy_of, one_of_each_run, run_of, weighted_card_values};
+        let competitor = read_model(&std::env::var("PLAY_YARD_COMPETITOR").expect("PLAY_YARD_COMPETITOR"));
+        let games = number("PLAY_YARD_GAMES", 40);
+        let share: f64 = var("PLAY_YARD_SHARE", "0.25").parse().unwrap();
+        let count = number("PLAY_YARD_DEALS", 100);
+        let miss = chance_of_a_miss(&var("PLAY_YARD_MISS", "0.1"));
+        let specs: Vec<String> =
+            var("PLAY_YARD_ENSEMBLES", "ensemble,bounds,play:0.5:1000:0").split(',').map(|s| s.trim().to_string()).collect();
+        let threads = number("PLAY_THREADS", std::thread::available_parallelism().map_or(4, |n| n.get()));
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+        let deals = crate::ai::opening_lead::candidates::opening_leads(23, games);
+        let positions: Vec<(GameState<()>, Vec<Card>)> = workers.install(|| {
+            deals
+                .par_iter()
+                .enumerate()
+                .map(|(i, game)| {
+                    let convention: &Convention = game.system.table();
+                    let mut rng = StdRng::seed_from_u64(i as u64);
+                    let mut game = copy_of(game);
+                    let mut kept = Vec::new();
+                    while !game.hand_done {
+                        let runs: Vec<Card> = one_of_each_run(&game).collect();
+                        if runs.len() > 1 && View::new(&game, convention).is_some() && rng.gen_range(0.0..1.0) < share {
+                            kept.push((copy_of(&game), runs));
+                        }
+                        let card = model_card(&competitor, &game, convention);
+                        game.play(card);
+                    }
+                    kept
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .flatten()
+                .collect()
+        });
+        println!("{} positions from {games} games, {count} deals in each of two ensembles", positions.len());
+        for spec in &specs {
+            let started = std::time::Instant::now();
+            // For each position: the naive loss, the loss when the best card
+            // is chosen on one ensemble and valued on the other, and how
+            // many different deals the first has.
+            let rows: Vec<Option<(f64, f64, f64)>> = workers.install(|| {
+                positions
+                    .par_iter()
+                    .enumerate()
+                    .map(|(i, (game, runs))| {
+                        let convention: &Convention = game.system.table();
+                        let hidden = Hidden::new(game, convention)?;
+                        let mut rng = StdRng::seed_from_u64(1000 + i as u64);
+                        let a = ensemble_for_yardstick(spec, &hidden, game, &competitor, miss, count, &mut rng);
+                        let b = ensemble_for_yardstick(spec, &hidden, game, &competitor, miss, count, &mut rng);
+                        let both = [&competitor, &competitor];
+                        let on_a = weighted_card_values(game, runs, &a, both, convention)?;
+                        let on_b = weighted_card_values(game, runs, &b, both, convention)?;
+                        let played = run_of(runs, model_card(&competitor, game, convention));
+                        let best = |values: &[f64]| (0..values.len()).fold(0, |best, i| if values[i] > values[best] { i } else { best });
+                        let naive = 0.5 * (on_a[best(&on_a)] - on_a[played] + on_b[best(&on_b)] - on_b[played]);
+                        // Chosen on one, valued on the other.
+                        let split = 0.5 * (on_b[best(&on_a)] - on_b[played] + on_a[best(&on_b)] - on_a[played]);
+                        let mut once: Vec<[Cards; 2]> = a.iter().map(|d| d.0).collect();
+                        once.sort_by_key(|d| format!("{d:?}"));
+                        once.dedup();
+                        Some((naive, split, once.len() as f64))
+                    })
+                    .collect()
+            });
+            let rows: Vec<(f64, f64, f64)> = rows.into_iter().flatten().collect();
+            let naive: Vec<f64> = rows.iter().map(|r| r.0).collect();
+            let split: Vec<f64> = rows.iter().map(|r| r.1).collect();
+            let different: Vec<f64> = rows.iter().map(|r| r.2).collect();
+            let (naive, naive_error) = mean_and_error(&naive);
+            let (split, split_error) = mean_and_error(&split);
+            println!(
+                "{spec}: {} positions, {:.1} different deals; loss {naive:.4} ({naive_error:.4}), chosen on one ensemble and valued on the other {split:.4} ({split_error:.4}) ({:.0} s)",
+                rows.len(),
+                different.iter().sum::<f64>() / different.len() as f64,
+                started.elapsed().as_secs_f64()
+            );
+        }
     }
 
     /// How long each player takes to choose a card, at `PLAY_TIME_TRICKS` (7)
