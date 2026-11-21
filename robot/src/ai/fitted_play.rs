@@ -2383,8 +2383,9 @@ mod tests {
     /// a player of any card, partners as well as opponents, so that no
     /// learner can count on playing with itself.  A model chooses each card at
     /// random with its chances at `PLAY_SELF_TEMPERATURE` (1).  Each learner
-    /// moves its weights by a step of Adam of size `PLAY_SELF_RATE` (0.01) up
-    /// the gradient of the tricks its side takes after each of its own
+    /// moves its weights by a step of Adam of size `PLAY_SELF_RATE` (0.01),
+    /// halved every `PLAY_SELF_RATE_HALVING` rounds of the run if that is
+    /// set, but never below `PLAY_SELF_RATE_LEAST` (0), up the gradient of the tricks its side takes after each of its own
     /// choices, less the mean of that at the same trick over the plays of the
     /// same deal, so that what it learns is what made a play of a deal better
     /// than the others.  So that the learners keep trying other cards where
@@ -2539,6 +2540,16 @@ mod tests {
         let report = number("PLAY_SELF_REPORT", 10);
         let temperature = float("PLAY_SELF_TEMPERATURE", if learning == Learning::Playouts { 0.1 } else { 1.0 });
         let rate = float("PLAY_SELF_RATE", 0.01);
+        let halving = float("PLAY_SELF_RATE_HALVING", 0.0);
+        let least = float("PLAY_SELF_RATE_LEAST", 0.0);
+        // The rate after `done` rounds of the run.
+        let rate_after = |done: usize| {
+            if halving > 0.0 {
+                (rate * 0.5f64.powf(done as f64 / halving)).max(least)
+            } else {
+                rate
+            }
+        };
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
@@ -2933,6 +2944,7 @@ mod tests {
                 } else {
                     1.0
                 };
+                let rate = rate_after(round - first_round);
                 for p in &mut learner.network.params {
                     *p *= 1.0 - rate * ramp * decay;
                 }
