@@ -281,6 +281,18 @@ impl Network {
         std::fs::write(path, text).unwrap();
     }
 
+    /// Multiplies the score of every candidate by `factor`, exactly: the
+    /// linear weights and the output weights are multiplied, and the units,
+    /// which do not depend on them, are left as they are.
+    #[cfg(test)]
+    pub(crate) fn scale_scores(&mut self, factor: f64) {
+        let outputs = self.outputs();
+        let (start, rest) = self.params.split_at_mut(outputs);
+        for p in start[..self.entries].iter_mut().chain(rest) {
+            *p *= factor;
+        }
+    }
+
     /// The network of these sizes written to the file `path`.
     #[cfg(test)]
     pub(crate) fn read(path: &str, entries: usize, hidden: usize, second: usize) -> Network {
@@ -429,5 +441,22 @@ fn the_gradient_is_the_slope_with(second: usize) {
         down.params[j] -= 1e-6;
         let slope = (up.score(&entries) - down.score(&entries)) / 2e-6;
         assert!((slope - gradient[j]).abs() < 1e-4, "parameter {j}: {slope} and {}", gradient[j]);
+    }
+}
+
+#[test]
+fn scaling_the_scores_multiplies_every_score() {
+    for second in [0, 2] {
+        let mut network = Network::new(10, 3, second, 1);
+        let mut rng = StdRng::seed_from_u64(3);
+        for p in &mut network.params {
+            *p += rng.gen_range(-0.5..0.5);
+        }
+        let mut scaled = network.clone();
+        scaled.scale_scores(0.3);
+        for entries in [[1, 4, 7], [0, 2, 9], [3, 5, 8]] {
+            let (score, now) = (network.score(&entries), scaled.score(&entries));
+            assert!((now - 0.3 * score).abs() < 1e-12, "{entries:?}: {now} for {score}");
+        }
     }
 }
