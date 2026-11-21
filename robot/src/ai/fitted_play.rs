@@ -1352,6 +1352,35 @@ mod tests {
         }
     }
 
+    /// The deals that playouts are played on keep every hand that the player
+    /// to play can see, and deal the others the cards that they hold between
+    /// them, as many to each as before, none of a suit that it has shown out
+    /// of; with no deals asked for, the game is as it was dealt.
+    #[test]
+    fn playouts_deal_only_the_hands_that_the_player_cannot_see() {
+        let mut rng = StdRng::seed_from_u64(5);
+        for game in some_games() {
+            let convention = game.system.convention();
+            let game = crate::ai::playout::copy_of(&game);
+            let seats = Hidden::new(&game, &convention).unwrap().seats();
+            assert_eq!(deals_of(&game, &convention, 0, &mut rng)[0].hands, game.hands);
+            let deals = deals_of(&game, &convention, 5, &mut rng);
+            assert_eq!(deals.len(), 5);
+            for deal in deals {
+                for seat in (0..4).map(Seat::from) {
+                    if seats.contains(&seat) {
+                        assert_eq!(deal.hands[seat].len(), game.hands[seat].len());
+                        assert!((deal.hands[seat] & game.shown_out[seat]).is_empty());
+                    } else {
+                        assert_eq!(deal.hands[seat], game.hands[seat]);
+                    }
+                    assert_eq!(deal.original_hands[seat] - deal.hands[seat], game.original_hands[seat] - game.hands[seat]);
+                }
+                assert_eq!(deal.hands[seats[0]] + deal.hands[seats[1]], game.hands[seats[0]] + game.hands[seats[1]]);
+            }
+        }
+    }
+
     /// The model that the build includes, when there is one, is of the shape
     /// that this code plays by.
     #[test]
@@ -2009,17 +2038,37 @@ mod tests {
     /// a `share` of those of more than one card with up to `most` tricks
     /// left, and `per_game` of those of more than one run of touching cards
     /// in each game with no player of any card, chosen at random once the
-    /// game is over, which are fitted to the `level` and the `apart`
-    /// accuracies, in tricks (see [`learn_from_playouts`]): an infinite
-    /// `level` leaves the level of the scores out, and the tricks are not
-    /// put at a level.
+    /// game is over, which are played out on `deals` deals of the hands
+    /// that the player cannot see (see [`deals_of`]) and fitted to the
+    /// `level` and the `apart` accuracies, in tricks (see
+    /// [`learn_from_playouts`]): an infinite `level` leaves the level of the
+    /// scores out, and the tricks are not put at a level.
     #[derive(Clone, Copy)]
     struct Playouts {
         share: f64,
         most: usize,
         per_game: usize,
+        deals: usize,
         level: f64,
         apart: f64,
+    }
+
+    /// `count` deals of the hands that the player to play in `game` cannot
+    /// see that fit what they have seen (see [`Hidden::ensemble`]), each as
+    /// the game would be with them, or none if there is no one to play; or,
+    /// with `count` 0, the game as it was dealt.
+    fn deals_of(game: &GameState<()>, convention: &Convention, count: usize, rng: &mut StdRng) -> Vec<GameState<()>> {
+        if count == 0 {
+            return vec![crate::ai::playout::copy_of(game)];
+        }
+        let Some(hidden) = Hidden::new(game, convention) else {
+            return Vec::new();
+        };
+        hidden
+            .ensemble(rng, count, None)
+            .iter()
+            .map(|deal| crate::ai::playout::dealt_as(game, hidden.seats(), deal))
+            .collect()
     }
 
     /// What a learner's choices played out add up to in self-play: the
@@ -2218,11 +2267,23 @@ mod tests {
             let weight = later.len() as f64 / chosen as f64;
             for i in rand::seq::index::sample(rng, later.len(), chosen) {
                 let (number, game, runs, legal, side): &(usize, GameState<()>, Vec<Card>, Vec<Card>, usize) = &later[i];
-                let seed = rng.gen::<u64>();
-                let values: Vec<f64> = runs
-                    .iter()
-                    .map(|&card| playout(game, card, convention, learners, players, seed)[*side] as f64)
+                // Each deal is played out after each card, so that the cards
+                // are compared on the same deals.
+                let deals: Vec<(GameState<()>, u64)> = deals_of(game, convention, playouts.deals, rng)
+                    .into_iter()
+                    .map(|deal| (deal, rng.gen::<u64>()))
                     .collect();
+                if deals.is_empty() {
+                    continue;
+                }
+                let mean = |card: Card, players: [Player; 4]| -> f64 {
+                    deals
+                        .iter()
+                        .map(|(deal, seed)| playout(deal, card, convention, learners, players, *seed)[*side] as f64)
+                        .sum::<f64>()
+                        / deals.len() as f64
+                };
+                let values: Vec<f64> = runs.iter().map(|&card| mean(card, players)).collect();
                 let mut tricks: Vec<f64> =
                     legal.iter().map(|&card| values[crate::ai::playout::run_of(runs, card)]).collect();
                 let decision = &mut decisions[*number];
@@ -2232,8 +2293,8 @@ mod tests {
                     let learner = decision.learner;
                     let own = model_card(&learners[learner], game, convention);
                     let won = if *side == 0 { game.ns_tricks } else { game.ew_tricks };
-                    let alone = playout(game, own, convention, learners, [Player::Learning(learner); 4], seed)[*side] - won;
-                    let shift = alone as f64 - values[crate::ai::playout::run_of(runs, own)];
+                    let alone = mean(own, [Player::Learning(learner); 4]) - won as f64;
+                    let shift = alone - values[crate::ai::playout::run_of(runs, own)];
                     tricks.iter_mut().for_each(|t| *t += shift);
                 }
                 decision.played_out = Some(tricks);
@@ -2413,7 +2474,11 @@ mod tests {
     /// run of touching cards, with up to `PLAY_SELF_PLAYOUT_TRICKS` (13)
     /// tricks left, are chosen at random once the game is over, and played
     /// out (see [`playout`]) by the players of the game, after each run, on
-    /// the deal as it was dealt.  Each learner's step is then down the slope
+    /// the same `PLAY_SELF_PLAYOUT_DEALS` (100) deals of the hands that the
+    /// player cannot see that fit what they have seen, as the playout
+    /// yardstick values cards (see [`score_on_the_playout_yardstick`]), or
+    /// with 0 on the deal as it was dealt, and the tricks after each card
+    /// are their mean over the deals.  Each learner's step is then down the slope
     /// of the squares of how far its score of each card that it could have
     /// played is from the tricks after it, each choice weighted by 1 over
     /// its chance of being played out, so that a game's choices count the
@@ -2483,6 +2548,7 @@ mod tests {
                 share: float("PLAY_SELF_PLAYOUT_SHARE", 0.0),
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: 0,
+                deals: 0,
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
             },
@@ -2490,6 +2556,7 @@ mod tests {
                 share: 0.0,
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: number("PLAY_SELF_PLAYOUTS", 1),
+                deals: number("PLAY_SELF_PLAYOUT_DEALS", 100),
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
             },

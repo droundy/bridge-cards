@@ -193,13 +193,7 @@ pub(crate) fn card_values<C>(
     }
     let mut totals = vec![0usize; cards.len()];
     for deal in deals {
-        let mut base = copy_of(game);
-        for (seat, cards) in seats.into_iter().zip(*deal) {
-            // What the seat has played is the same in every deal.
-            let played = game.original_hands[seat] - game.hands[seat];
-            base.hands[seat] = cards;
-            base.original_hands[seat] = played + cards;
-        }
+        let base = dealt_as(game, seats, deal);
         for (total, &card) in totals.iter_mut().zip(cards) {
             let mut playout = copy_of(&base);
             playout.play(card);
@@ -212,6 +206,19 @@ pub(crate) fn card_values<C>(
         }
     }
     Some(totals.into_iter().map(|t| t as f64 / deals.len() as f64).collect())
+}
+
+/// `game` with the hands of `seats` those of `deal`, as though they had been
+/// dealt those cards and the cards that they have played.
+pub(crate) fn dealt_as<C>(game: &GameState<C>, seats: [Seat; 2], deal: &[Cards; 2]) -> GameState<()> {
+    let mut base = copy_of(game);
+    for (seat, cards) in seats.into_iter().zip(*deal) {
+        // What the seat has played is the same in every deal.
+        let played = game.original_hands[seat] - game.hands[seat];
+        base.hands[seat] = cards;
+        base.original_hands[seat] = played + cards;
+    }
+    base
 }
 
 /// Plays `game` out to the end, north and south's cards by `models[0]` and
