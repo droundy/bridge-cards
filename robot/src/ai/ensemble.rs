@@ -181,14 +181,22 @@ impl Hidden {
         deals
     }
 
-    /// An ensemble of `count` deals, or fewer if the budget of deals to try
-    /// runs out first, each of them drawn at random from the deals that
-    /// agree with what is known, where a deal that misses `n` of the calls
-    /// that `replay` makes is `miss` to the power `n` as likely as one that
-    /// misses none.  This is what [`Hidden::ensemble`] with a replay only
-    /// approximates, with a chance for deals that miss some calls and none
-    /// of the dependence of the ensemble on how many deals were tried.  When
-    /// no deal that is tried misses few enough calls it is the closest.
+    /// An ensemble of `count` deals, each of them drawn at random from the
+    /// deals that agree with what is known, where a deal that misses `n` of
+    /// the calls that `replay` makes is `miss` to the power `n` as likely as
+    /// one that misses none.  This is what [`Hidden::ensemble`] with a replay
+    /// only approximates, with a chance for deals that miss some calls and
+    /// none of the dependence of the ensemble on how many deals were tried.
+    ///
+    /// A deal with a hand outside the bounds that its calls showed
+    /// ([`Hidden::fit_the_bidding`]) is never drawn, and neither is one that
+    /// misses more calls than [`most_missed`] allows for `miss`.  When the
+    /// budget of deals to try runs out before `count` have been drawn, the
+    /// ensemble is made up to `count` with the deals that came closest to
+    /// being bid as the auction was, those within the bounds first and then
+    /// those that miss fewest, so a rare auction does not leave a handful of
+    /// deals for the player to choose by, and an auction that no deal makes
+    /// leaves only the closest.
     pub(crate) fn posterior(
         &self,
         rng: &mut impl Rng,
@@ -200,38 +208,50 @@ impl Hidden {
         let Some(proposer) = self.proposer() else {
             return dealt;
         };
-        // The deals with the fewest misses so far, which are all there is
-        // when no deal is accepted.
-        let mut closest: Vec<[Cards; 2]> = Vec::new();
-        let mut fewest = usize::MAX;
+        let most = most_missed(miss);
+        // The best deals so far, closest first, each with its key: whether
+        // it is outside the bounds, and how many calls it misses.
+        let mut closest: Vec<((bool, usize), [Cards; 2])> = Vec::new();
         while dealt.tried < BUDGET && dealt.deals.len() < count {
             dealt.tried += 1;
             let deal = proposer.deal(rng);
-            let most = if dealt.deals.is_empty() {
-                usize::MAX
-            } else {
-                MOST_MISSED
+            // Count the misses of a deal only as far as it could matter: to be
+            // drawn, or to be among the closest, which is every deal until
+            // there are `count` of them and then those that beat the worst.
+            let limit = match closest.last() {
+                Some(&((false, worst), _)) if closest.len() >= count => most.max(worst),
+                _ => usize::MAX,
             };
-            let Some(missed) = replay.calls_missed_within(&deal, most) else {
+            let Some(missed) = replay.calls_missed_within(&deal, limit) else {
                 continue;
             };
+            let fits = self.fit_the_bidding(&deal);
+            let key = (!fits, missed);
+            if closest.len() < count || closest.last().is_some_and(|&(worst, _)| key < worst) {
+                let at = closest.partition_point(|&(other, _)| other <= key);
+                closest.insert(at, (key, deal));
+                closest.truncate(count);
+            }
+            if !fits || missed > most {
+                continue;
+            }
             if missed == 0 {
                 dealt.exact += 1;
             }
-            if missed < fewest {
-                fewest = missed;
-                closest.clear();
-            }
-            if missed == fewest && closest.len() < count {
-                closest.push(deal);
-            }
-            if missed <= MOST_MISSED && (missed == 0 || rng.gen_bool(miss.powi(missed as i32))) {
+            if missed == 0 || rng.gen_bool(miss.powi(missed as i32)) {
                 dealt.deals.push(deal);
             }
         }
-        if dealt.deals.is_empty() {
-            dealt.deals = closest;
+        let drawn = dealt.deals.len();
+        for (_, deal) in closest {
+            if dealt.deals.len() >= count {
+                break;
+            }
+            if !dealt.deals.contains(&deal) {
+                dealt.deals.push(deal);
+            }
         }
+        dealt.padded = dealt.deals.len() - drawn;
         dealt
     }
 
@@ -390,12 +410,29 @@ impl<const N: usize> Replay<N> {
 /// robot would, with the hand that they have: the chance that a deal that
 /// misses a call is as likely as one that makes it.  People do not bid as the
 /// robot does, so a deal that misses a call or two is not out of the question.
+///
+/// This is the weight of a miss against deals that are already within the
+/// bounds that the calls showed (see [`Hidden::posterior`]), and not against
+/// every deal, which is why it can be as large as it is: most deals that miss
+/// a call are outside the bounds, and are not drawn at all.  Of the ensembles
+/// of the cost report, at least nine in ten of the deals make every call, and
+/// so do two in three for the opener of 1NT, which only one deal in 200 makes.
 pub(crate) const MISS: f64 = 0.1;
 
-/// The most calls that a deal can miss and still be in an ensemble, which is
-/// the truncation of the chance `MISS.powi(missed)` that is already below a
-/// thousandth.
-const MOST_MISSED: usize = 3;
+/// The chance below which a deal is not worth drawing.
+const NEGLIGIBLE: f64 = 1e-4;
+
+/// The most calls that a deal can miss and still have a chance of
+/// [`NEGLIGIBLE`] or more, when each miss has the chance `miss`.
+fn most_missed(miss: f64) -> usize {
+    if miss <= 0.0 {
+        0
+    } else if miss >= 1.0 {
+        usize::MAX
+    } else {
+        (NEGLIGIBLE.ln() / miss.ln()).floor() as usize
+    }
+}
 
 /// How many deals are tried for an ensemble before it is made of what has
 /// been found, with the ensemble kept to the deals that fit the auction as
@@ -409,8 +446,12 @@ pub(crate) struct Dealt {
     pub(crate) deals: Vec<[Cards; 2]>,
     /// How many deals were tried to find them.
     pub(crate) tried: usize,
-    /// How many of those make every call.
+    /// How many of those make every call, within the bounds that the calls
+    /// showed.
     pub(crate) exact: usize,
+    /// How many of `deals` are not drawn but are the closest that were tried,
+    /// to make up the ensemble when the budget ran out.
+    pub(crate) padded: usize,
 }
 
 /// The deal as the solver has it, for a deal of the hands that cannot be seen:
@@ -1063,6 +1104,11 @@ mod tests {
         }
     }
 
+    /// The deals of `dealt` that were drawn, and not made up from the closest.
+    fn drawn(dealt: &Dealt) -> &[[Cards; 2]] {
+        &dealt.deals[..dealt.deals.len() - dealt.padded]
+    }
+
     #[test]
     fn a_posterior_gives_deals_that_miss_a_call_their_chance() {
         let game = one_notrump_by_west();
@@ -1076,18 +1122,71 @@ mod tests {
         let missing = |deals: &[[Cards; 2]]| {
             deals.iter().filter(|deal| replay.calls_missed(deal) > 0).count()
         };
-        assert_eq!(0, missing(&strict.deals));
-        assert!(missing(&soft.deals) > 0);
-        // Allowing three misses is allowing everything that this auction has
-        // calls to miss, so the deals are as they are dealt, and most of
-        // them miss a call.
-        assert!(missing(&anything.deals) > 1000);
-        assert!(missing(&soft.deals) < missing(&anything.deals));
-        // The opener of 1NT shows more points than a hand that is dealt.
-        let points = |hand: Cards| hand.high_card_points();
-        let (strict_points, _) = mean_of(&strict.deals, 1, points);
-        let (anything_points, _) = mean_of(&anything.deals, 1, points);
-        assert!(strict_points > anything_points + 2.0);
+        assert_eq!(0, missing(drawn(&strict)));
+        assert!(missing(drawn(&soft)) > 0);
+        // Allowing every miss is allowing every deal within the bounds that
+        // the calls showed, and a few of those miss a call.
+        assert!(missing(drawn(&anything)) > 0);
+        assert!(missing(drawn(&soft)) <= missing(drawn(&anything)));
+        // No deal that is drawn is outside the bounds that the calls showed.
+        for dealt in [&strict, &soft, &anything] {
+            assert!(drawn(dealt).iter().all(|deal| hidden.fit_the_bidding(deal)));
+        }
+    }
+
+    #[test]
+    fn most_missed_follows_the_chance_of_a_miss() {
+        assert_eq!(0, most_missed(0.0));
+        assert_eq!(2, most_missed(0.01));
+        assert_eq!(13, most_missed(0.5));
+        assert_eq!(usize::MAX, most_missed(1.0));
+        // Fewer misses are allowed the less likely each is.
+        assert!(most_missed(MISS) < most_missed(0.5));
+    }
+
+    #[test]
+    fn a_posterior_is_made_up_to_the_count_when_few_deals_make_the_auction() {
+        // About one in 200 deals makes this auction, so the budget finds
+        // about a hundred of the two thousand.
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let replay = hidden.replay(&convention);
+        let mut rng = StdRng::seed_from_u64(45);
+        let dealt = hidden.posterior(&mut rng, 2000, &replay, 0.0);
+        assert_eq!(2000, dealt.deals.len());
+        assert!(dealt.padded > 1000, "{}", dealt.padded);
+        assert_eq!(2000 - dealt.padded, dealt.exact);
+        // The deals that make it up are those within the bounds that came
+        // closest, before any outside them, and none is there twice.
+        assert!(drawn(&dealt).iter().all(|deal| hidden.fit_the_bidding(deal)));
+        let made_up = &dealt.deals[2000 - dealt.padded..];
+        let outside = made_up
+            .iter()
+            .position(|deal| !hidden.fit_the_bidding(deal))
+            .unwrap_or(made_up.len());
+        assert!(made_up[outside..]
+            .iter()
+            .all(|deal| !hidden.fit_the_bidding(deal)));
+        let once: std::collections::HashSet<_> = dealt.deals.iter().collect();
+        assert_eq!(dealt.deals.len(), once.len());
+    }
+
+    #[test]
+    fn most_of_a_posterior_makes_the_auction_when_a_few_deals_do() {
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let replay = hidden.replay(&convention);
+        let mut rng = StdRng::seed_from_u64(46);
+        let dealt = hidden.posterior(&mut rng, 100, &replay, MISS);
+        assert_eq!(0, dealt.padded);
+        let exact = dealt
+            .deals
+            .iter()
+            .filter(|deal| replay.calls_missed(deal) == 0)
+            .count();
+        assert!(exact * 3 >= dealt.deals.len() * 2, "{exact} of 100");
     }
 
     #[test]
@@ -1146,6 +1245,7 @@ mod tests {
             let games = games(tricks_left, 48);
             let (mut old, mut compile, mut new) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
             let (mut tried, mut exact, mut short) = (0, 0, 0);
+            let (mut ensemble_size, mut exact_in_ensemble, mut padded) = (0, 0, 0);
             let mut slowest = Duration::ZERO;
             let mut old_short = 0;
             for game in &games {
@@ -1169,17 +1269,27 @@ mod tests {
                 tried += dealt.tried;
                 exact += dealt.exact;
                 short += (dealt.deals.len() < count) as usize;
+                ensemble_size += dealt.deals.len();
+                exact_in_ensemble += dealt
+                    .deals
+                    .iter()
+                    .filter(|deal| replay.calls_missed(deal) == 0)
+                    .count();
+                padded += dealt.padded;
             }
             let n = games.len() as u32;
             println!(
                 "{tricks_left:2} tricks left: old {:?}; compile {:?} + deal {:?} (slowest {:?}); \
-                 tried {} a situation, {:.0}% exact; ensembles under {count}: new {short}, old (under half) {old_short}",
+                 tried {} a situation, {:.0}% of the deals tried exact; {:.0}% of the ensemble exact, {:.0}% made up; \
+                 ensembles under {count}: new {short}, old (under half) {old_short}",
                 old / n,
                 compile / n,
                 new / n,
                 slowest,
                 tried / games.len(),
                 100.0 * exact as f64 / tried as f64,
+                100.0 * exact_in_ensemble as f64 / ensemble_size.max(1) as f64,
+                100.0 * padded as f64 / ensemble_size.max(1) as f64,
             );
         }
     }
