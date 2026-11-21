@@ -25,6 +25,8 @@
 //! gives every deal that it keeps the same weight, as though each hand were as
 //! likely as any other that would have been bid the same way.
 
+#[cfg(test)]
+use super::fitted_play::{play_likelihood_above, Model};
 use super::opening_lead::{likely_opening_leads, Auction, Unseen};
 use super::{CallMatcher, Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
@@ -195,17 +197,23 @@ impl Hidden {
         while dealt.tried < BUDGET && dealt.deals.len() < count {
             dealt.tried += 1;
             let deal = proposer.deal(rng);
-            // Count the misses of a deal only as far as it could matter: to be
-            // drawn, or to be among the closest, which is every deal until
+            let hands = replay.hands(&deal);
+            let fits = self.fit_the_bounds(&hands);
+            // A deal outside the bounds is not drawn, and is only among the
+            // closest if there are not `count` within them.
+            if !fits && closest.len() >= count && closest.last().is_some_and(|&((outside, _), _)| !outside) {
+                continue;
+            }
+            // Count the misses of a deal only as far as it could matter: to
+            // be drawn, or to be among the closest, which is every deal until
             // there are `count` of them and then those that beat the worst.
             let limit = match closest.last() {
                 Some(&((false, worst), _)) if closest.len() >= count => most.max(worst),
                 _ => usize::MAX,
             };
-            let Some(missed) = replay.calls_missed_within(&deal, limit) else {
+            let Some(missed) = replay.calls_missed_by(&hands, limit) else {
                 continue;
             };
-            let fits = self.fit_the_bidding(&deal);
             let key = (!fits, missed);
             if closest.len() < count || closest.last().is_some_and(|&(worst, _)| key < worst) {
                 let at = closest.partition_point(|&(other, _)| other <= key);
@@ -235,12 +243,285 @@ impl Hidden {
         dealt
     }
 
+    #[cfg(test)]
+    /// `count` deals, or as many as the budget finds, each as likely as any
+    /// other of the deals within the bounds that the calls of each hand
+    /// showed ([`Hidden::fit_the_bidding`]), and no others.  Nothing is
+    /// assumed of the calls beyond what their bounds say, so a player who bid
+    /// as the robot would not is as likely to have the hand as one who bid as
+    /// the robot would, if the hand is within the bounds.
+    pub(crate) fn within_bounds(&self, rng: &mut impl Rng, count: usize) -> Dealt {
+        let mut dealt = Dealt::default();
+        let Some(proposer) = self.proposer() else {
+            return dealt;
+        };
+        while dealt.tried < BUDGET && dealt.deals.len() < count {
+            dealt.tried += 1;
+            let deal = proposer.deal(rng);
+            if self.fit_the_bidding(&deal) {
+                dealt.deals.push(deal);
+            }
+        }
+        dealt
+    }
+
+    #[cfg(test)]
+    /// How likely the play so far of the hidden hands makes each of `deals`,
+    /// by the play model of `reading` (see [`play_likelihood`]): a failure to
+    /// ruff, a card led from the top of a sequence or a signal says something
+    /// of the hands that it was played from.
+    pub(crate) fn likelihoods<C>(
+        &self,
+        game: &GameState<C>,
+        convention: &Convention,
+        reading: &Reading,
+        deals: &[[Cards; 2]],
+    ) -> Vec<f64> {
+        // A deal whose likelihood falls below a negligible part of the best
+        // so far is given up on early, and has none.
+        let mut best = 0.0f64;
+        deals
+            .iter()
+            .map(|&deal| {
+                let likelihood = play_likelihood_above(
+                    game,
+                    convention,
+                    self.seats,
+                    deal,
+                    reading.model,
+                    reading.temperature,
+                    best * NEGLIGIBLE,
+                );
+                best = best.max(likelihood);
+                likelihood
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    /// Each of `deals`, moved about by `steps` steps of a random walk that
+    /// has as many deals as there are within the bounds that the calls showed,
+    /// each as likely as the play so far makes it, for the stationary
+    /// distribution: a step swaps one or more cards (as many as the toss of a
+    /// coin keeps coming up heads, to at most four) between the hands, among
+    /// those that either may hold, and is made if the new deal is within the
+    /// bounds, and by a chance of the new likelihood over the old.  Starting
+    /// from deals already chosen by their likelihoods it does not have to
+    /// find its way to the likely deals: it makes the deals that were chosen
+    /// more than once different, and so many chains of a few steps are as
+    /// good as a few of many.  Where the likely deals are few, and few of the
+    /// proposals are among them, it can find more of them than proposals do.
+    #[expect(clippy::too_many_arguments, reason = "the arguments are all of what a walk is made from")]
+    pub(crate) fn walk<C>(
+        &self,
+        rng: &mut impl Rng,
+        game: &GameState<C>,
+        convention: &Convention,
+        reading: &Reading,
+        auction: Option<&Auction2>,
+        deals: &[[Cards; 2]],
+        steps: usize,
+    ) -> Walked {
+        let mut walked = Walked::default();
+        let Some(proposer) = self.proposer() else {
+            walked.deals = deals.to_vec();
+            return walked;
+        };
+        // How likely a deal is: the chance of its play, and of its auction,
+        // where each call that the robot would not have made has a chance of
+        // at least [`WALK_MISS`], so that a deal that misses more calls is
+        // still moved toward those that miss fewer.
+        let of_the_auction = |deal: &[Cards; 2]| match auction {
+            Some((replay, miss)) => {
+                let missed = replay.calls_missed_by(&replay.hands(deal), usize::MAX).unwrap_or(0);
+                miss.max(WALK_MISS).powi(missed as i32)
+            }
+            None => 1.0,
+        };
+        // The chance of the play of a deal, or 0 once it is under `floor`.
+        let of_the_play = |deal: [Cards; 2], floor: f64| {
+            play_likelihood_above(game, convention, self.seats, deal, reading.model, reading.temperature, floor)
+        };
+        walked.deals = deals
+            .iter()
+            .map(|&start| {
+                let mut deal = start;
+                let mut chance = of_the_play(start, 0.0) * of_the_auction(&start);
+                for _ in 0..steps {
+                    let mut most = 1;
+                    while most < 4 && rng.gen_bool(0.5) {
+                        most += 1;
+                    }
+                    let mut movable = [deal[0] & proposer.free, deal[1] & proposer.free];
+                    let most = most.min(movable[0].len()).min(movable[1].len());
+                    if most == 0 {
+                        break;
+                    }
+                    let out = movable[0].pick_rng(rng, most).unwrap();
+                    let back = movable[1].pick_rng(rng, most).unwrap();
+                    let moved = [deal[0] - out + back, deal[1] - back + out];
+                    walked.proposed[most - 1] += 1;
+                    if !self.fit_the_bidding(&moved) {
+                        continue;
+                    }
+                    // The step is made if `u` times the chance now is no more
+                    // than the new chance, and so the play of the new deal
+                    // need not be worked out past the point where its chance
+                    // is less than that.
+                    let u = rng.gen_range(0.0..1.0);
+                    let by_the_auction = of_the_auction(&moved);
+                    if by_the_auction <= 0.0 && chance > 0.0 {
+                        continue;
+                    }
+                    let floor = if chance > 0.0 { u * chance / by_the_auction } else { 0.0 };
+                    let by_the_play = of_the_play(moved, floor);
+                    if chance <= 0.0 || (by_the_play > 0.0 && u * chance <= by_the_play * by_the_auction) {
+                        walked.accepted[most - 1] += 1;
+                        deal = moved;
+                        chance = by_the_play * by_the_auction;
+                    }
+                }
+                deal
+            })
+            .collect();
+        walked
+    }
+
+    #[cfg(test)]
+    /// Deals within the bounds that the calls showed (see
+    /// [`Hidden::within_bounds`]), each with its likelihood (see
+    /// [`Hidden::likelihoods`]): `reading.proposals` at a time, until the
+    /// likelihoods are worth `reading.worth` deals of weight 1, or
+    /// `reading.at_most` have been proposed.  Where the play leaves few deals
+    /// likely, that takes many proposals, and where it does not, one batch.
+    pub(crate) fn weighed_proposals<C>(
+        &self,
+        rng: &mut impl Rng,
+        game: &GameState<C>,
+        convention: &Convention,
+        reading: &Reading,
+        replay: Option<&Auction2>,
+    ) -> (Vec<[Cards; 2]>, Vec<f64>) {
+        let (mut deals, mut likelihoods) = (Vec::new(), Vec::new());
+        while deals.len() < reading.at_most {
+            let batch = reading.proposals.min(reading.at_most - deals.len());
+            let mut stuck = false;
+            let more = match replay {
+                Some((replay, miss)) => {
+                    let dealt = self.draw(rng, batch, replay, *miss, batch * TRIES_PER_DEAL);
+                    // When none is drawn, the closest are all there is, and
+                    // asking again would only find them again.
+                    stuck = dealt.deals.is_empty();
+                    if stuck {
+                        self.posterior(rng, batch, replay, *miss).deals
+                    } else {
+                        dealt.deals
+                    }
+                }
+                None => self.within_bounds(rng, batch).deals,
+            };
+            if more.is_empty() {
+                break;
+            }
+            likelihoods.extend(self.likelihoods(game, convention, reading, &more));
+            deals.extend(more);
+            let weighed: Vec<Weighted> = deals.iter().copied().zip(likelihoods.iter().copied()).collect();
+            if stuck || effective_size(&weighed) >= reading.worth {
+                break;
+            }
+        }
+        (deals, likelihoods)
+    }
+
+    #[cfg(test)]
+    /// An ensemble of about `count` deals for a play model to be compared
+    /// on: deals within the bounds that the calls showed, proposed until the
+    /// play so far makes enough of them likely ([`Hidden::weighed_proposals`]),
+    /// chosen by how likely it makes each ([`resample`]) and then, if
+    /// `reading.steps` is not 0, moved about ([`Hidden::walk`]).
+    pub(crate) fn read_the_play<C>(
+        &self,
+        rng: &mut impl Rng,
+        game: &GameState<C>,
+        convention: &Convention,
+        reading: &Reading,
+        count: usize,
+    ) -> Vec<Weighted> {
+        let auction = reading.miss.map(|miss| (self.replay(convention), miss));
+        let (deals, likelihoods) = self.weighed_proposals(rng, game, convention, reading, auction.as_ref());
+        let weighed: Vec<Weighted> = deals.iter().copied().zip(likelihoods.iter().copied()).collect();
+        let chosen = resample(rng, &deals, &likelihoods, count);
+        // Where the proposals are not worth what was asked, the play and the
+        // auction leave few deals likely, and a walk from those that were
+        // found finds more.
+        let steps = match reading.steps {
+            0 if effective_size(&weighed) < reading.worth => FALLBACK_STEPS,
+            steps => steps,
+        };
+        if steps == 0 {
+            return chosen;
+        }
+        let each: Vec<[Cards; 2]> = chosen
+            .iter()
+            .flat_map(|&(deal, times)| std::iter::repeat_n(deal, times as usize))
+            .collect();
+        self.walk(rng, game, convention, reading, auction.as_ref(), &each, steps)
+            .deals
+            .into_iter()
+            .map(|deal| (deal, 1.0))
+            .collect()
+    }
+
+    #[cfg(test)]
+    /// As [`Hidden::posterior`], but only the deals that are drawn, as many
+    /// as `count`, or fewer when `budget` deals have been tried first, with no
+    /// deals made up from the closest.  Without keeping track of those, a deal
+    /// outside the bounds that the calls showed costs no more than finding
+    /// that it is, which most are.
+    pub(crate) fn draw(
+        &self,
+        rng: &mut impl Rng,
+        count: usize,
+        replay: &Replay<2>,
+        miss: f64,
+        budget: usize,
+    ) -> Dealt {
+        let mut dealt = Dealt::default();
+        let Some(proposer) = self.proposer() else {
+            return dealt;
+        };
+        let most = most_missed(miss);
+        while dealt.tried < budget && dealt.deals.len() < count {
+            dealt.tried += 1;
+            let deal = proposer.deal(rng);
+            let hands = replay.hands(&deal);
+            if !self.fit_the_bounds(&hands) {
+                continue;
+            }
+            let Some(missed) = replay.calls_missed_by(&hands, most) else {
+                continue;
+            };
+            if missed == 0 {
+                dealt.exact += 1;
+            }
+            if missed == 0 || rng.gen_bool(miss.powi(missed as i32)) {
+                dealt.deals.push(deal);
+            }
+        }
+        dealt
+    }
+
     /// Whether `hands` are hands that the auction could have been made with.
     fn fit_the_bidding(&self, hands: &[Cards; 2]) -> bool {
+        self.fit_the_bounds(&[0, 1].map(|i| (hands[i] + self.played[i]).values()))
+    }
+
+    /// Whether `bid`, the values of the hands that bid, are within the
+    /// bounds that their calls showed.
+    fn fit_the_bounds(&self, bid: &[HandValuation; 2]) -> bool {
         (0..2).all(|i| {
-            let dealt = (hands[i] + self.played[i]).values();
             let (min, max) = self.bounds[i];
-            !min.exceeds(dealt) && !dealt.exceeds(max)
+            !min.exceeds(bid[i]) && !bid[i].exceeds(max)
         })
     }
 
@@ -370,11 +651,22 @@ impl<const N: usize> Replay<N> {
     /// How many of the calls would not have been made with the hands of
     /// `deal`, or `None` as soon as that is more than `most`.
     pub(crate) fn calls_missed_within(&self, deal: &[Cards; N], most: usize) -> Option<usize> {
+        self.calls_missed_by(&self.hands(deal), most)
+    }
+
+    /// The hands that the hands of `deal` were when they bid, which are
+    /// what the calls are tried against.
+    pub(crate) fn hands(&self, deal: &[Cards; N]) -> [HandValuation; N] {
+        std::array::from_fn(|i| (deal[i] + self.played[i]).values())
+    }
+
+    /// As [`Replay::calls_missed_within`], for the values of the hands that
+    /// bid, from [`Replay::hands`].
+    pub(crate) fn calls_missed_by(&self, hands: &[HandValuation; N], most: usize) -> Option<usize> {
         let mut missed = 0;
-        for i in 0..N {
-            let hand = (deal[i] + self.played[i]).values();
-            for (matcher, call) in &self.calls[i] {
-                if matcher.bid_for(&hand) != *call {
+        for (hand, calls) in hands.iter().zip(&self.calls) {
+            for (matcher, call) in calls {
+                if matcher.bid_for(hand) != *call {
                     missed += 1;
                     if missed > most {
                         return None;
@@ -414,6 +706,11 @@ fn most_missed(miss: f64) -> usize {
     }
 }
 
+#[cfg(test)]
+/// How many deals [`Hidden::draw`] tries for each that it is to draw, at the
+/// most, which is a great many for an auction that few deals make.
+const TRIES_PER_DEAL: usize = 200;
+
 /// How many deals are tried for an ensemble before it is made of what has
 /// been found, with the ensemble kept to the deals that fit the auction as
 /// well as can be.
@@ -432,6 +729,103 @@ pub(crate) struct Dealt {
     /// How many of `deals` are not drawn but are the closest that were tried,
     /// to make up the ensemble when the budget ran out.
     pub(crate) padded: usize,
+}
+
+#[cfg(test)]
+/// The auction of the hidden hands compiled for the bidding system, with the
+/// chance of a call that the robot would not have made.
+pub(crate) type Auction2 = (Replay<2>, f64);
+
+#[cfg(test)]
+/// The least chance of a miss that [`Hidden::walk`] gives a deal.
+const WALK_MISS: f64 = 0.05;
+
+#[cfg(test)]
+/// How many steps [`Hidden::read_the_play`] walks when the deals proposed are
+/// too few to be worth what was asked.
+const FALLBACK_STEPS: usize = 10;
+
+/// A deal of the hidden hands, and how many times as much as a deal of weight
+/// 1 it counts for.
+pub(crate) type Weighted = ([Cards; 2], f64);
+
+#[cfg(test)]
+/// How an ensemble is made to agree with the play so far: by the play model
+/// `model` at `temperature` (see [`Hidden::likelihoods`]), from deals
+/// proposed `proposals` at a time until their likelihoods are worth `worth`
+/// deals of weight 1 (see [`effective_size`]) or `at_most` have been
+/// proposed, and moved about for `steps` steps ([`Hidden::walk`]).  The
+/// deals are proposed as the auction makes them likely by the bidding system
+/// of the game, where each call that the robot would not have made has the
+/// chance `miss` ([`Hidden::posterior`]), or, if there is none, as likely as
+/// any other within the bounds that the calls showed
+/// ([`Hidden::within_bounds`]).
+#[derive(Clone, Copy)]
+pub(crate) struct Reading<'a> {
+    pub(crate) model: &'a Model,
+    pub(crate) temperature: f64,
+    pub(crate) miss: Option<f64>,
+    pub(crate) proposals: usize,
+    pub(crate) at_most: usize,
+    pub(crate) worth: f64,
+    pub(crate) steps: usize,
+}
+
+#[cfg(test)]
+/// What [`Hidden::walk`] did: the deals it ended on, and how many steps of
+/// each size, of one card to four, it tried and made.
+#[derive(Debug, Default)]
+pub(crate) struct Walked {
+    pub(crate) deals: Vec<[Cards; 2]>,
+    pub(crate) proposed: [usize; 4],
+    pub(crate) accepted: [usize; 4],
+}
+
+#[cfg(test)]
+/// `deals` chosen `count` times with the chances `likelihoods` (in
+/// proportion), by systematic resampling: the deals that were chosen, and
+/// how many times each was.  `count` weights in all, unless no deal has a
+/// likelihood, when it is the first `count` deals of weight 1.
+pub(crate) fn resample(
+    rng: &mut impl Rng,
+    deals: &[[Cards; 2]],
+    likelihoods: &[f64],
+    count: usize,
+) -> Vec<Weighted> {
+    let total: f64 = likelihoods.iter().sum();
+    if !(total > 0.0 && total.is_finite()) {
+        return deals.iter().take(count).map(|&deal| (deal, 1.0)).collect();
+    }
+    let step = total / count as f64;
+    let mut next = rng.gen_range(0.0..step);
+    let mut passed = 0.0;
+    let mut chosen = Vec::new();
+    for (&deal, &likelihood) in deals.iter().zip(likelihoods) {
+        passed += likelihood;
+        let mut times = 0;
+        while next < passed && times < count {
+            times += 1;
+            next += step;
+        }
+        if times > 0 {
+            chosen.push((deal, times as f64));
+        }
+    }
+    chosen
+}
+
+#[cfg(test)]
+/// How many deals of weight 1 the `deals` are worth, the effective sample
+/// size of their weights: the square of their sum over the sum of their
+/// squares.
+pub(crate) fn effective_size(deals: &[Weighted]) -> f64 {
+    let sum: f64 = deals.iter().map(|d| d.1).sum();
+    let squares: f64 = deals.iter().map(|d| d.1 * d.1).sum();
+    if squares > 0.0 {
+        sum * sum / squares
+    } else {
+        0.0
+    }
 }
 
 /// The deal as the solver has it, for a deal of the hands that cannot be seen:
@@ -1417,6 +1811,127 @@ mod tests {
                     "{:?}",
                     game.bids
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn resampling_chooses_the_deals_by_their_likelihoods() {
+        let mut rng = StdRng::seed_from_u64(51);
+        let game = one_notrump_by_west();
+        let convention = BiddingSystem::Sayc.convention();
+        let hidden = Hidden::new(&game, &convention).unwrap();
+        let deals = hidden.within_bounds(&mut rng, 4).deals;
+        // The second deal has no chance, the third nine times the first.
+        let chosen = resample(&mut rng, &deals, &[1.0, 0.0, 9.0, 0.0], 100);
+        assert!(chosen.iter().all(|c| c.0 != deals[1] && c.0 != deals[3]));
+        let weight = |deal: [Cards; 2]| chosen.iter().find(|c| c.0 == deal).map_or(0.0, |c| c.1);
+        assert_eq!(100.0, chosen.iter().map(|c| c.1).sum::<f64>());
+        assert_eq!(10.0, weight(deals[0]));
+        assert_eq!(90.0, weight(deals[2]));
+        // With no chance for any, the first are each chosen once.
+        let none = resample(&mut rng, &deals, &[0.0; 4], 3);
+        assert_eq!(vec![(deals[0], 1.0), (deals[1], 1.0), (deals[2], 1.0)], none);
+    }
+
+    #[test]
+    fn the_effective_size_is_the_number_of_deals_of_equal_weight() {
+        let deal = [Cards::EMPTY; 2];
+        assert_eq!(4.0, effective_size(&[(deal, 3.0); 4]));
+        let lopsided = effective_size(&[(deal, 100.0), (deal, 1.0), (deal, 1.0)]);
+        assert!(lopsided > 1.0 && lopsided < 1.1, "{lopsided}");
+        assert_eq!(0.0, effective_size(&[]));
+    }
+
+    #[test]
+    fn reading_the_play_deals_what_is_known_of_the_hidden_hands() {
+        use crate::ai::fitted_play::random_model;
+        let model = random_model(6);
+        let mut rng = StdRng::seed_from_u64(52);
+        for tricks_left in [11, 7, 3] {
+            for game in games(tricks_left, 4) {
+                let convention = convention_of(game.system);
+                let hidden = Hidden::new(&game, convention).unwrap();
+                for (miss, steps) in [(None, 0), (Some(0.1), 0), (Some(0.1), 3), (None, 3)] {
+                    let reading = Reading {
+                        model: &model,
+                        temperature: 1.0,
+                        miss,
+                        proposals: 40,
+                        at_most: 120,
+                        worth: 30.0,
+                        steps,
+                    };
+                    let ensemble = hidden.read_the_play(&mut rng, &game, convention, &reading, 20);
+                    assert!(!ensemble.is_empty());
+                    for (deal, weight) in ensemble {
+                        assert!(weight >= 1.0);
+                        assert_eq!(hidden.pool, deal[0] + deal[1]);
+                        assert!((deal[0] & deal[1]).is_empty());
+                        for i in 0..2 {
+                            assert_eq!(hidden.sizes[i], deal[i].len());
+                            assert!((deal[i] & hidden.forbidden[i]).is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_walk_keeps_every_deal_within_the_bounds() {
+        use crate::ai::fitted_play::random_model;
+        let model = random_model(7);
+        let mut rng = StdRng::seed_from_u64(53);
+        for game in games(9, 6) {
+            let convention = convention_of(game.system);
+            let hidden = Hidden::new(&game, convention).unwrap();
+            let reading = Reading {
+                model: &model,
+                temperature: 1.0,
+                miss: Some(MISS),
+                proposals: 30,
+                at_most: 30,
+                worth: 0.0,
+                steps: 0,
+            };
+            let auction = (hidden.replay(convention), MISS);
+            let (deals, _) = hidden.weighed_proposals(&mut rng, &game, convention, &reading, Some(&auction));
+            let deals: Vec<[Cards; 2]> = deals.into_iter().take(10).collect();
+            let walked = hidden.walk(&mut rng, &game, convention, &reading, Some(&auction), &deals, 8);
+            assert_eq!(deals.len(), walked.deals.len());
+            for deal in walked.deals {
+                assert!(hidden.fit_the_bidding(&deal));
+                assert_eq!(hidden.pool, deal[0] + deal[1]);
+                for i in 0..2 {
+                    assert_eq!(hidden.sizes[i], deal[i].len());
+                    assert!((deal[i] & hidden.forbidden[i]).is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn weighted_values_are_the_means_over_the_deals_counted_by_their_weights() {
+        use crate::ai::fitted_play::random_model;
+        use crate::ai::playout::{card_values, weighted_card_values};
+        let model = random_model(8);
+        let mut rng = StdRng::seed_from_u64(54);
+        for game in games(4, 3) {
+            let convention = convention_of(game.system);
+            let hidden = Hidden::new(&game, convention).unwrap();
+            let deals = hidden.within_bounds(&mut rng, 3).deals;
+            if deals.len() < 3 {
+                continue;
+            }
+            let cards: Vec<Card> = game.could_be_played().collect();
+            // The first deal twice, and the second and the third once.
+            let each = [deals[0], deals[0], deals[1], deals[2]];
+            let weighted = [(deals[0], 2.0), (deals[1], 1.0), (deals[2], 1.0)];
+            let plain = card_values(&game, &cards, &each, [&model, &model], convention).unwrap();
+            let by_weight = weighted_card_values(&game, &cards, &weighted, [&model, &model], convention).unwrap();
+            for (a, b) in plain.iter().zip(&by_weight) {
+                assert!((a - b).abs() < 1e-9, "{a} {b}");
             }
         }
     }

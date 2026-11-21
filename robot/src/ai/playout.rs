@@ -11,7 +11,7 @@
 //! price is that the cards played after the first are the model's, not
 //! the best that anyone could find.
 
-use super::ensemble::{trump_of, Hidden};
+use super::ensemble::{trump_of, Hidden, Weighted};
 use super::fitted_play::{model, Model, View};
 use super::{PlayAI, RandomPlay};
 use crate::{GameState, Seat};
@@ -186,15 +186,29 @@ pub(crate) fn card_values<C>(
     models: [&Model; 2],
     convention: &super::Convention,
 ) -> Option<Vec<f64>> {
+    let weighted: Vec<Weighted> = deals.iter().map(|&deal| (deal, 1.0)).collect();
+    weighted_card_values(game, cards, &weighted, models, convention)
+}
+
+/// As [`card_values`], with the mean weighted by how much each of `deals`
+/// counts for, so that a deal that counts for many is played out once.
+pub(crate) fn weighted_card_values<C>(
+    game: &GameState<C>,
+    cards: &[Card],
+    deals: &[Weighted],
+    models: [&Model; 2],
+    convention: &super::Convention,
+) -> Option<Vec<f64>> {
     let seats = Hidden::new(game, convention)?.seats();
     let ours = game.turn()? as usize % 2;
-    if deals.is_empty() {
+    let weight: f64 = deals.iter().map(|d| d.1).sum();
+    if deals.is_empty() || weight <= 0.0 {
         return None;
     }
-    let mut totals = vec![0usize; cards.len()];
-    for deal in deals {
+    let mut totals = vec![0.0; cards.len()];
+    for &(deal, weight) in deals {
         let mut base = copy_of(game);
-        for (seat, cards) in seats.into_iter().zip(*deal) {
+        for (seat, cards) in seats.into_iter().zip(deal) {
             // What the seat has played is the same in every deal.
             let played = game.original_hands[seat] - game.hands[seat];
             base.hands[seat] = cards;
@@ -204,14 +218,15 @@ pub(crate) fn card_values<C>(
             let mut playout = copy_of(&base);
             playout.play(card);
             finish(&mut playout, models, convention);
-            *total += if ours == 0 {
-                playout.ns_tricks
-            } else {
-                playout.ew_tricks
-            };
+            *total += weight
+                * if ours == 0 {
+                    playout.ns_tricks
+                } else {
+                    playout.ew_tricks
+                } as f64;
         }
     }
-    Some(totals.into_iter().map(|t| t as f64 / deals.len() as f64).collect())
+    Some(totals.into_iter().map(|t| t / weight).collect())
 }
 
 /// Plays `game` out to the end, north and south's cards by `models[0]` and
