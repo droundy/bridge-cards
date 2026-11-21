@@ -2,5 +2,13 @@
 # `current` happens to land in memory does not show up as a difference
 # between them.  See "Very fast functions, and where the code sits" in the
 # README of the scaling crate.
+#
+# The repository's own .cargo/config.toml is read here too, and Cargo uses
+# target rustflags in place of `build.rustflags`, so on that target its
+# x86-64-v2 flag is repeated here beside the alignment, or the alignment would
+# be lost.
 [build]
 rustflags = ["-C", "llvm-args=-align-all-functions=6"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2", "-C", "llvm-args=-align-all-functions=6"]

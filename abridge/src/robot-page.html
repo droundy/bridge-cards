@@ -11,8 +11,21 @@
 
 <body>
     <script type="module">
-        import init, { choose_play } from '/robot.js';
+        import init, { choose_play, choose_play_by_model } from '/robot.js';
         await init();
+
+        // Who plays the cards: the robot, or the model that self-play
+        // learned.  The bids are the robot's either way.  The choice is
+        // remembered in this browser.
+        const player = document.getElementById('player');
+        try {
+            player.value = localStorage.getItem('robot-player') || 'robot';
+        } catch (e) {}
+        player.addEventListener('change', () => {
+            try {
+                localStorage.setItem('robot-player', player.value);
+            } catch (e) {}
+        });
     
         var ws_protocol = 'ws://';
         if (location.protocol == 'https:') {
@@ -30,7 +43,8 @@
             const time_to_load = 100; // Time to wait before using the CPU so that the player UI doesn't get bogged down.
             await new Promise(r => setTimeout(r, time_to_load));
             const start = performance.now();
-            let action = choose_play(event.data);
+            const choose = player.value === 'model' ? choose_play_by_model : choose_play;
+            let action = choose(event.data);
             const end = performance.now();
             console.log(`Chose to do ${action} based on ${event.data} which took ${end - start} ms`);
             if (end - start < min_play_time) {
@@ -54,6 +68,12 @@
             ws.send(action);
         }
     </script>
+    <label for="player">Cards played by
+        <select id="player">
+            <option value="robot">the robot</option>
+            <option value="model">the model learned by self-play</option>
+        </select>
+    </label>
     <main id="main">Robot ai stuff here.</main>
 </body>
 

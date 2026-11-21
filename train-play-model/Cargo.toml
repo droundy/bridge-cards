@@ -1,0 +1,9 @@
+[package]
+name = "train-play-model"
+version = "0.1.0"
+edition = "2021"
+description = "Trains the robot's play model further by self-play and publishes the result"
+publish = false
+
+[dependencies]
+sha2 = "0.10"

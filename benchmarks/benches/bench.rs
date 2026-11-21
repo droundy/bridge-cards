@@ -1,6 +1,8 @@
 //! Runs the benchmarks that `bridge-deck` and `bridge-solver` register with
 //! their `benchmarks` feature, from both the working tree and the committed
-//! main branch.  Each is reported against its own older version.
+//! main branch.  Each is reported against its own older version.  `robot`'s
+//! are only from the working tree, since `main` has no `benchmarks` feature
+//! there to build.
 //!
 //! `cargo bench -- "single dummy"` runs only the groups whose names contain
 //! "single dummy".
@@ -10,6 +12,7 @@ use bridge_deck as _;
 use bridge_deck_main as _;
 use bridge_solver as _;
 use bridge_solver_main as _;
+use robot as _;
 
 fn main() -> Result<(), scaling::RegistrationError> {
     let filters: Vec<String> = std::env::args()
