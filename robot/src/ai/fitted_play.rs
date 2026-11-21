@@ -1220,7 +1220,7 @@ pub(crate) fn random_model(seed: u64) -> Model {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden, Reading, Weighted};
+    use crate::ai::ensemble::{card_values, plays_for_the_leaders, starting_with, trump_of, Hidden, Reading, Weighted, MISS};
     use crate::ai::fitting;
     use crate::situations::Generator;
     use rand::rngs::StdRng;
@@ -1407,28 +1407,34 @@ mod tests {
     /// The deals that playouts are played on keep every hand that the player
     /// to play can see, and deal the others the cards that they hold between
     /// them, as many to each as before, none of a suit that it has shown out
-    /// of; with no deals asked for, the game is as it was dealt.
+    /// of, whether or not they are read from the play, and count for as many
+    /// deals as were asked for; with no deals asked for, the game is as it
+    /// was dealt.
     #[test]
     fn playouts_deal_only_the_hands_that_the_player_cannot_see() {
         let mut rng = StdRng::seed_from_u64(5);
+        let model = random_model(10);
         for game in some_games() {
             let convention = game.system.convention();
             let game = crate::ai::playout::copy_of(&game);
             let seats = Hidden::new(&game, &convention).unwrap().seats();
-            assert_eq!(deals_of(&game, &convention, 0, &mut rng)[0].hands, game.hands);
-            let deals = deals_of(&game, &convention, 5, &mut rng);
-            assert_eq!(deals.len(), 5);
-            for deal in deals {
-                for seat in (0..4).map(Seat::from) {
-                    if seats.contains(&seat) {
-                        assert_eq!(deal.hands[seat].len(), game.hands[seat].len());
-                        assert!((deal.hands[seat] & game.shown_out[seat]).is_empty());
-                    } else {
-                        assert_eq!(deal.hands[seat], game.hands[seat]);
+            let as_dealt = deals_of(&game, &convention, 0, None, &mut rng);
+            assert_eq!((as_dealt[0].0.hands, as_dealt[0].1), (game.hands, 1.0));
+            for reading in [None, Some((&model, 1.0))] {
+                let deals = deals_of(&game, &convention, 5, reading, &mut rng);
+                assert_eq!(5.0, deals.iter().map(|d| d.1).sum::<f64>());
+                for (deal, _) in deals {
+                    for seat in (0..4).map(Seat::from) {
+                        if seats.contains(&seat) {
+                            assert_eq!(deal.hands[seat].len(), game.hands[seat].len());
+                            assert!((deal.hands[seat] & game.shown_out[seat]).is_empty());
+                        } else {
+                            assert_eq!(deal.hands[seat], game.hands[seat]);
+                        }
+                        assert_eq!(deal.original_hands[seat] - deal.hands[seat], game.original_hands[seat] - game.hands[seat]);
                     }
-                    assert_eq!(deal.original_hands[seat] - deal.hands[seat], game.original_hands[seat] - game.hands[seat]);
+                    assert_eq!(deal.hands[seats[0]] + deal.hands[seats[1]], game.hands[seats[0]] + game.hands[seats[1]]);
                 }
-                assert_eq!(deal.hands[seats[0]] + deal.hands[seats[1]], game.hands[seats[0]] + game.hands[seats[1]]);
             }
         }
     }
@@ -2091,7 +2097,8 @@ mod tests {
     /// left, and `per_game` of those of more than one run of touching cards
     /// in each game with no player of any card, chosen at random once the
     /// game is over, which are played out on `deals` deals of the hands
-    /// that the player cannot see (see [`deals_of`]) and fitted to the
+    /// that the player cannot see (see [`deals_of`]), read from the play at
+    /// the temperature `reading` if that is set, and fitted to the
     /// `level` and the `apart` accuracies, in tricks (see
     /// [`learn_from_playouts`]): an infinite `level` leaves the level of the
     /// scores out, and the tricks are not put at a level.
@@ -2101,25 +2108,54 @@ mod tests {
         most: usize,
         per_game: usize,
         deals: usize,
+        reading: Option<f64>,
         level: f64,
         apart: f64,
     }
 
-    /// `count` deals of the hands that the player to play in `game` cannot
-    /// see that fit what they have seen (see [`Hidden::ensemble`]), each as
-    /// the game would be with them, or none if there is no one to play; or,
-    /// with `count` 0, the game as it was dealt.
-    fn deals_of(game: &GameState<()>, convention: &Convention, count: usize, rng: &mut StdRng) -> Vec<GameState<()>> {
+    /// About `count` deals of the hands that the player to play in `game`
+    /// cannot see, each as the game would be with them and with how much it
+    /// counts for, or none if there is no one to play; or, with `count` 0,
+    /// the game as it was dealt.  With `reading`, a play model and a
+    /// temperature, they are the deals that the bidding system and the play
+    /// so far make likely, the play read by that model as though it had
+    /// played every card (see [`Hidden::read_the_play`], with what the
+    /// playout yardstick uses: ten proposals a deal, walked when they are
+    /// worth under half the deals, and a chance of [`MISS`] for each call
+    /// that the robot would not have made); without, deals that fit only the
+    /// sizes of the hands and the suits that they have shown out of (see
+    /// [`Hidden::ensemble`]).
+    fn deals_of(
+        game: &GameState<()>,
+        convention: &Convention,
+        count: usize,
+        reading: Option<(&Model, f64)>,
+        rng: &mut StdRng,
+    ) -> Vec<(GameState<()>, f64)> {
         if count == 0 {
-            return vec![crate::ai::playout::copy_of(game)];
+            return vec![(crate::ai::playout::copy_of(game), 1.0)];
         }
         let Some(hidden) = Hidden::new(game, convention) else {
             return Vec::new();
         };
-        hidden
-            .ensemble(rng, count, None)
+        let dealt: Vec<Weighted> = match reading {
+            Some((model, temperature)) => {
+                let reading = Reading {
+                    model,
+                    temperature,
+                    miss: Some(MISS),
+                    proposals: 10 * count,
+                    at_most: 10 * count,
+                    worth: (count / 2) as f64,
+                    steps: 0,
+                };
+                hidden.read_the_play(rng, game, convention, &reading, count)
+            }
+            None => hidden.ensemble(rng, count, None).into_iter().map(|deal| (deal, 1.0)).collect(),
+        };
+        dealt
             .iter()
-            .map(|deal| crate::ai::playout::dealt_as(game, hidden.seats(), deal))
+            .map(|(deal, weight)| (crate::ai::playout::dealt_as(game, hidden.seats(), deal), *weight))
             .collect()
     }
 
@@ -2321,19 +2357,21 @@ mod tests {
                 let (number, game, runs, legal, side): &(usize, GameState<()>, Vec<Card>, Vec<Card>, usize) = &later[i];
                 // Each deal is played out after each card, so that the cards
                 // are compared on the same deals.
-                let deals: Vec<(GameState<()>, u64)> = deals_of(game, convention, playouts.deals, rng)
+                let reading = playouts.reading.map(|t| (&learners[decisions[*number].learner], t));
+                let deals: Vec<(GameState<()>, f64, u64)> = deals_of(game, convention, playouts.deals, reading, rng)
                     .into_iter()
-                    .map(|deal| (deal, rng.gen::<u64>()))
+                    .map(|(deal, weight)| (deal, weight, rng.gen::<u64>()))
                     .collect();
-                if deals.is_empty() {
+                let counted: f64 = deals.iter().map(|d| d.1).sum();
+                if deals.is_empty() || counted <= 0.0 {
                     continue;
                 }
                 let mean = |card: Card, players: [Player; 4]| -> f64 {
                     deals
                         .iter()
-                        .map(|(deal, seed)| playout(deal, card, convention, learners, players, *seed)[*side] as f64)
+                        .map(|(deal, w, seed)| w * playout(deal, card, convention, learners, players, *seed)[*side] as f64)
                         .sum::<f64>()
-                        / deals.len() as f64
+                        / counted
                 };
                 let values: Vec<f64> = runs.iter().map(|&card| mean(card, players)).collect();
                 let mut tricks: Vec<f64> =
@@ -2527,10 +2565,15 @@ mod tests {
     /// tricks left, are chosen at random once the game is over, and played
     /// out (see [`playout`]) by the players of the game, after each run, on
     /// the same `PLAY_SELF_PLAYOUT_DEALS` (100) deals of the hands that the
-    /// player cannot see that fit what they have seen, as the playout
-    /// yardstick values cards (see [`score_on_the_playout_yardstick`]), or
-    /// with 0 on the deal as it was dealt, and the tricks after each card
-    /// are their mean over the deals.  Each learner's step is then down the slope
+    /// player cannot see, as the playout yardstick values cards (see
+    /// [`score_on_the_playout_yardstick`]), or with 0 on the deal as it was
+    /// dealt, and the tricks after each card are their mean over the deals.
+    /// With `PLAY_SELF_DEALER` `play` (the default), the deals are those that
+    /// the bidding system and the play so far make likely, the play read by
+    /// the learner's own model at `PLAY_SELF_DEALER_TEMPERATURE` (1), as
+    /// though it had played every card; with `ensemble`, any that fit the
+    /// sizes of the hands and the suits that they have shown out of (see
+    /// [`deals_of`]).  Each learner's step is then down the slope
     /// of the squares of how far its score of each card that it could have
     /// played is from the tricks after it, each choice weighted by 1 over
     /// its chance of being played out, so that a game's choices count the
@@ -2601,6 +2644,7 @@ mod tests {
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: 0,
                 deals: 0,
+                reading: None,
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
             },
@@ -2609,6 +2653,11 @@ mod tests {
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: number("PLAY_SELF_PLAYOUTS", 1),
                 deals: number("PLAY_SELF_PLAYOUT_DEALS", 100),
+                reading: match var("PLAY_SELF_DEALER", "play").as_str() {
+                    "play" => Some(float("PLAY_SELF_DEALER_TEMPERATURE", 1.0)),
+                    "ensemble" => None,
+                    other => panic!("PLAY_SELF_DEALER is play or ensemble, not {other}"),
+                },
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
             },
