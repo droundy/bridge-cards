@@ -77,6 +77,7 @@ impl Generator {
             game.ew_tricks = 0;
             game.hand_done = false;
             game.shown_out = Seated::new([Cards::EMPTY; 4]);
+            game.tricks.clear();
             let cards_before = 4 * (13 - tricks_left) + wanted.1;
             for _ in 0..cards_before {
                 let legal: Vec<Card> = game.could_be_played().collect();

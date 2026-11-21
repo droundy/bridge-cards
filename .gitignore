@@ -1,3 +1,6 @@
 /target
 /benchmarks/target
 Cargo.lock
+
+# The play model's weights, which are not kept in git (see robot/build.rs).
+robot/src/ai/play_model.bin

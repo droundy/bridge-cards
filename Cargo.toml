@@ -50,5 +50,6 @@ members = [
     "abridge",
     "bridge-solver",
     "robot",
+    "train-play-model",
     "wording"
 ]

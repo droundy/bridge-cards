@@ -1,4 +1,4 @@
-# Runs the benchmarks that bridge-deck and bridge-solver register with their
+# Runs the benchmarks that bridge-deck, bridge-solver and robot register with their
 # `benchmarks` feature, from both the working tree and the committed main
 # branch, so that each is compared with its older self.
 #
@@ -17,7 +17,6 @@ publish = false
 
 bridge-deck = { path = "..", features = ["benchmarks"] }
 bridge-solver = { path = "../bridge-solver", features = ["benchmarks"] }
-
 robot = { path = "../robot", features = ["benchmarks"] }
 
 bridge-deck-main = { package = "bridge-deck", git = "https://github.com/droundy/bridge-cards", branch = "main", features = ["benchmarks"] }

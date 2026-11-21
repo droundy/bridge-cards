@@ -20,6 +20,9 @@ bridge-deck = { version = "0.1.1", path = ".." }
 rand = "0.8.0"
 scaling = { version = "0.10.2", optional = true }
 
+[dev-dependencies]
+serde_json = "1.0"
+
 [features]
 
 # Registers the benchmarks in src/benches.rs with scaling.  benchmarks/ runs

@@ -25,10 +25,13 @@
 //! gives every deal that it keeps the same weight, as though each hand were as
 //! likely as any other that would have been bid the same way.
 
+use super::opening_lead::{likely_opening_leads, Auction, Unseen};
 use super::{CallMatcher, Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
-use bridge_solver::{Naive, Starting};
+#[cfg(test)]
+use bridge_solver::Naive;
+use bridge_solver::{DoubleDummy, Starting};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -101,7 +104,6 @@ impl Hidden {
     }
 
     /// The seats of the two hands.
-    #[cfg(feature = "benchmarks")]
     pub(crate) fn seats(&self) -> [Seat; 2] {
         self.seats
     }
@@ -113,17 +115,8 @@ impl Hidden {
     /// and this is what it is tested against.
     #[cfg(test)]
     pub(crate) fn calls_missed(&self, deal: &[Cards; 2], convention: &Convention) -> usize {
-        (0..2)
-            .map(|i| {
-                let hand = (deal[i] + self.played[i]).values();
-                self.calls[i]
-                    .iter()
-                    .filter(|&&call| {
-                        convention.bid_for(&self.bids[..call], &hand) != self.bids[call]
-                    })
-                    .count()
-            })
-            .sum()
+        let hands = [0, 1].map(|i| (deal[i] + self.played[i]).values());
+        calls_missed(convention, &self.bids, &self.calls, &hands)
     }
 
     /// The auction of the two hands compiled for `convention`, so that a deal
@@ -133,11 +126,7 @@ impl Hidden {
     }
 
     /// The `count` of `deals` that come closest to being bid as the auction
-    /// was, by `convention`: the deals that the robot would have bid the
-    /// auction with, and then those that miss fewest of its calls.  People do
-    /// not always bid as the robot does, so there may be no deal that makes
-    /// every call, and a deal that misses one may be as likely as one that
-    /// makes them all.
+    /// was, by `convention` (see [`closest`]).
     pub(crate) fn closest_to_the_auction(
         &self,
         deals: Vec<[Cards; 2]>,
@@ -145,16 +134,7 @@ impl Hidden {
         count: usize,
     ) -> Vec<[Cards; 2]> {
         let replay = self.replay(convention);
-        let mut ranked: Vec<(usize, [Cards; 2])> = deals
-            .into_iter()
-            .map(|deal| (replay.calls_missed(&deal), deal))
-            .collect();
-        ranked.sort_by_key(|&(missed, _)| missed);
-        ranked
-            .into_iter()
-            .take(count)
-            .map(|(_, deal)| deal)
-            .collect()
+        closest(deals, count, |deal| replay.calls_missed(deal))
     }
 
     /// An ensemble of `count` deals, or fewer if the cards cannot be dealt.
@@ -497,13 +477,40 @@ pub(crate) fn trump_of<C>(game: &GameState<C>) -> Option<Suit> {
     }
 }
 
+/// For each card in `legal`, the tricks that the side of whoever leads this
+/// trick wins by playing it, when `starting` has every hand, with best play
+/// after that, where `in_trick` have been played to the trick already.
+/// `legal` must be every card that can be played.
+pub(crate) fn card_values(
+    starting: Starting,
+    trump: Option<Suit>,
+    in_trick: &[Card],
+    legal: Cards,
+) -> Vec<(Card, f64)> {
+    let values: Vec<(Card, f64)> = DoubleDummy::new(trump)
+        .tricks_after_each(starting.hands, in_trick)
+        .into_iter()
+        .map(|(card, tricks)| (card, tricks as f64))
+        .collect();
+    debug_assert!(values.iter().map(|&(card, _)| card).eq(legal));
+    values
+}
+
 /// How many of the tricks left the side of whoever leads this trick wins,
 /// when everything is known, after `plays` have been made to the trick.
-fn trick_value(
+///
+/// This is a minimax search over the rest of the trick, with alpha-beta
+/// pruning: a branch is skipped once it cannot change the value, so the value
+/// is exactly what searching every branch would find.  `alpha` and `beta` are
+/// the best that the leader's side and the other side are already sure of.
+#[cfg(test)]
+fn naive_trick_value(
     solver: &mut Naive,
     starting: Starting,
     trump: Option<Suit>,
     plays: &mut Vec<Card>,
+    mut alpha: f64,
+    mut beta: f64,
 ) -> f64 {
     if plays.len() == 4 {
         let trick = starting.after([plays[0], plays[1], plays[2], plays[3]], trump);
@@ -515,25 +522,35 @@ fn trick_value(
     } else {
         starting.hands[seat].following_suit(plays[0].suit())
     };
+    // The leader and the partner of the leader want the most tricks.
+    let most = seat & 1 == 0;
     let mut best: Option<f64> = None;
     for card in legal {
         plays.push(card);
-        let value = trick_value(solver, starting, trump, plays);
+        let value = naive_trick_value(solver, starting, trump, plays, alpha, beta);
         plays.pop();
-        best = Some(match best {
-            // The leader and the partner of the leader want the most tricks.
-            Some(best) if seat & 1 == 0 => best.max(value),
+        let so_far = match best {
+            Some(best) if most => best.max(value),
             Some(best) => best.min(value),
             None => value,
-        });
+        };
+        best = Some(so_far);
+        if most {
+            alpha = alpha.max(so_far);
+        } else {
+            beta = beta.min(so_far);
+        }
+        if alpha >= beta {
+            break;
+        }
     }
     best.expect("a hand has to have a card to play")
 }
 
-/// For each card in `legal`, the tricks that the side of whoever leads this
-/// trick wins by playing it, when `starting` has every hand, with best play
-/// after that, where `in_trick` have been played to the trick already.
-pub(crate) fn card_values(
+/// [`card_values`] worked out by trying every play to the trick and solving
+/// what follows each with [`Naive`], which the faster solver must agree with.
+#[cfg(test)]
+fn naive_card_values(
     starting: Starting,
     trump: Option<Suit>,
     in_trick: &[Card],
@@ -544,7 +561,14 @@ pub(crate) fn card_values(
     legal
         .map(|card| {
             plays.push(card);
-            let value = trick_value(&mut solver, starting, trump, &mut plays);
+            let value = naive_trick_value(
+                &mut solver,
+                starting,
+                trump,
+                &mut plays,
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+            );
             plays.pop();
             (card, value)
         })
@@ -562,7 +586,8 @@ pub(crate) fn plays_for_the_leaders<C>(game: &GameState<C>) -> bool {
     in_trick & 1 == 0
 }
 
-/// The most tricks left for which a card is chosen by the ensemble.
+/// The most tricks left for which a card is chosen by the ensemble, unless
+/// [`EnsemblePlay::solving_up_to`] says otherwise.
 const MOST_TRICKS: usize = 7;
 
 /// How many deals of the hands that cannot be seen to try each card in, with
@@ -589,12 +614,48 @@ fn deals_for(tricks_left: usize) -> usize {
 #[derive(Debug)]
 pub struct EnsemblePlay {
     rng: StdRng,
-    /// The conventions that auctions have been read with, each with the system
-    /// it is the convention of, so that each is built only once.
-    conventions: Vec<(BiddingSystem, Convention)>,
     /// Whether to keep the deals that come closest to being bid as the
     /// auction was.
     replay: bool,
+    /// The most tricks left for which it solves the ensemble.
+    most_tricks: usize,
+}
+
+/// How many of the calls made with `hands` the robot would not have made with
+/// them, bidding by `convention`, where `calls[i]` are the places in `bids` of
+/// the calls made with `hands[i]`.
+pub(crate) fn calls_missed(
+    convention: &Convention,
+    bids: &[Bid],
+    calls: &[Vec<usize>],
+    hands: &[HandValuation],
+) -> usize {
+    calls
+        .iter()
+        .zip(hands)
+        .map(|(calls, hand)| {
+            calls
+                .iter()
+                .filter(|&&call| convention.bid_for(&bids[..call], hand) != bids[call])
+                .count()
+        })
+        .sum()
+}
+
+/// The `count` of `deals` that miss fewest calls by `missed`: the deals that
+/// the robot would have bid the auction with, and then those that miss fewest
+/// of its calls.  People do not always bid as the robot does, so there may be
+/// no deal that makes every call, and a deal that misses one may be as likely
+/// as one that makes them all.
+pub(crate) fn closest<D>(mut deals: Vec<D>, count: usize, missed: impl Fn(&D) -> usize) -> Vec<D> {
+    deals.sort_by_cached_key(|deal| missed(deal));
+    deals.truncate(count);
+    deals
+}
+
+/// The convention of `system`, shared (see [`BiddingSystem::table`]).
+fn convention_of(system: BiddingSystem) -> &'static Convention {
+    system.table()
 }
 
 impl EnsemblePlay {
@@ -608,11 +669,7 @@ impl EnsemblePlay {
     }
 
     fn with_rng(rng: StdRng) -> Self {
-        EnsemblePlay {
-            rng,
-            conventions: Vec::new(),
-            replay: false,
-        }
+        EnsemblePlay { rng, replay: false, most_tricks: MOST_TRICKS }
     }
 
     /// This player, choosing by an ensemble of the deals that the robot would
@@ -625,6 +682,17 @@ impl EnsemblePlay {
         }
     }
 
+    /// This player, solving the ensemble with up to `tricks` tricks left
+    /// (and not only [`MOST_TRICKS`]).  Each trick more makes a choice
+    /// several times slower: with 10 tricks left it solves each card on 12
+    /// deals of 10 cards a hand.
+    pub fn solving_up_to(self, tricks: usize) -> Self {
+        EnsemblePlay {
+            most_tricks: tricks,
+            ..self
+        }
+    }
+
     /// The ensemble of `count` deals of the hands that the player cannot see,
     /// with what the player knows of them.
     fn ensemble<C>(
@@ -632,13 +700,7 @@ impl EnsemblePlay {
         game: &GameState<C>,
         count: usize,
     ) -> Option<(Hidden, Vec<[Cards; 2]>)> {
-        let known = self.conventions.iter().position(|(s, _)| *s == game.system);
-        let i = known.unwrap_or_else(|| {
-            let convention = game.system.convention();
-            self.conventions.push((game.system, convention));
-            self.conventions.len() - 1
-        });
-        let convention = &self.conventions[i].1;
+        let convention = convention_of(game.system);
         let hidden = Hidden::new(game, convention)?;
         let deals = if self.replay {
             let replay = hidden.replay(convention);
@@ -649,6 +711,47 @@ impl EnsemblePlay {
         Some((hidden, deals))
     }
 }
+
+impl EnsemblePlay {
+    /// The opening lead, if it is the opening lead: of the leads that
+    /// [`likely_opening_leads`] thinks likeliest, the one that takes the
+    /// most tricks on average over an ensemble of the three hands that the
+    /// leader cannot see.  Solving a lead with every trick left takes most
+    /// of a second a deal, so only a few leads are tried, on a few deals.
+    fn opening_lead<C>(&mut self, game: &GameState<C>) -> Option<Card> {
+        let convention = convention_of(game.system);
+        let unseen = Unseen::new(game, convention)?;
+        let hand = game.hands[game.turn()?];
+        let leads = likely_opening_leads(&Auction::new(game)?, hand);
+        let leads = &leads[..OPENING_LEADS_TRIED.min(leads.len())];
+        let deals = unseen.ensemble(
+            &mut self.rng,
+            hand,
+            OPENING_LEAD_DEALS,
+            self.replay.then_some(convention),
+        );
+        let trump = trump_of(game);
+        let mut totals = vec![0; leads.len()];
+        for deal in deals {
+            let mut solver = DoubleDummy::new(trump);
+            for (total, &lead) in totals.iter_mut().zip(leads) {
+                *total += solver.tricks_after(deal, &[lead]);
+            }
+        }
+        // The most tricks, and of leads as good, the likeliest.
+        let most = *totals.iter().max()?;
+        let best = totals.iter().position(|&total| total == most)?;
+        Some(leads[best])
+    }
+}
+
+/// How many of the likeliest opening leads [`EnsemblePlay`] tries.  An
+/// ensemble of a few deals adds little to the first of them, and each lead
+/// takes most of a second a deal to solve.
+const OPENING_LEADS_TRIED: usize = 2;
+
+/// How many deals [`EnsemblePlay`] tries the opening leads on.
+const OPENING_LEAD_DEALS: usize = 4;
 
 impl Default for EnsemblePlay {
     fn default() -> Self {
@@ -663,7 +766,10 @@ impl PlayAI for EnsemblePlay {
         if legal.len() == 1 {
             return legal.min().unwrap();
         }
-        if tricks_left > MOST_TRICKS {
+        if let Some(lead) = self.opening_lead(game) {
+            return lead;
+        }
+        if tricks_left > self.most_tricks {
             return RandomPlay.play(game);
         }
         let Some((hidden, deals)) = self.ensemble(game, deals_for(tricks_left)) else {
@@ -1295,6 +1401,27 @@ mod tests {
     }
 
     #[test]
+    fn card_values_agree_with_solving_every_play_with_naive() {
+        for tricks_left in [2, 3, 4, 5, 6] {
+            for game in games(tricks_left, 8) {
+                let convention = game.system.convention();
+                let hidden = Hidden::new(&game, &convention).unwrap();
+                let mut rng = StdRng::seed_from_u64(12);
+                let (deal, _) = hidden.sample(&mut rng).unwrap();
+                let (starting, in_trick) = starting_with(&game, &hidden, deal).unwrap();
+                let legal = game.could_be_played();
+                let trump = trump_of(&game);
+                assert_eq!(
+                    naive_card_values(starting, trump, &in_trick, legal),
+                    card_values(starting, trump, &in_trick, legal),
+                    "{:?}",
+                    game.bids
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_player_plays_a_legal_card_whatever_the_stage() {
         let mut player = EnsemblePlay::seeded(1);
         for tricks_left in [13, 8, 7, 4, 2] {
@@ -1303,6 +1430,44 @@ mod tests {
                 assert!(game.could_be_played().contains(card), "{card:?}");
             }
         }
+    }
+
+    /// Timing and a checksum of the choices, for optimizing. Run with
+    /// `cargo test -p robot --release timing_for_optimizing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn timing_for_optimizing() {
+        let mut all = Vec::new();
+        for tricks_left in 2..=7 {
+            all.push((tricks_left, games(tricks_left, 16)));
+        }
+        let mut checksum = 0u64;
+        let mut plays = 0;
+        let warm = std::time::Instant::now();
+        for system in [
+            BiddingSystem::Sheets,
+            BiddingSystem::Sayc,
+            BiddingSystem::TwoOverOne,
+        ] {
+            convention_of(system);
+        }
+        eprintln!("WARMUP secs={:.3}", warm.elapsed().as_secs_f64());
+        let started = std::time::Instant::now();
+        for (tricks_left, games) in &all {
+            let mut player = EnsemblePlay::seeded(*tricks_left as u64);
+            for game in games {
+                let card = player.play(game);
+                let text = format!("{card:?}");
+                for byte in text.bytes() {
+                    checksum = checksum.wrapping_mul(131).wrapping_add(byte as u64);
+                }
+                plays += 1;
+            }
+        }
+        eprintln!(
+            "TIMING plays={plays} secs={:.3} checksum={checksum}",
+            started.elapsed().as_secs_f64()
+        );
     }
 
     #[test]

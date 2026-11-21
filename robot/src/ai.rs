@@ -1,7 +1,7 @@
 use crate::{bid_follows, Action, Bid, GameState};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
-use regex::RegexSet;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
 use wasm_bindgen::prelude::*;
 
 /// The bidding system a table plays.
@@ -39,13 +39,24 @@ impl BiddingSystem {
             BiddingSystem::TwoOverOne => "two-over-one",
         }
     }
-    /// The conventions this system bids by.
-    pub fn convention(self) -> Convention {
-        match self {
-            BiddingSystem::Sheets => Convention::sheets(),
-            BiddingSystem::Sayc => Convention::sayc(),
-            BiddingSystem::TwoOverOne => Convention::two_over_one(),
-        }
+    /// The conventions this system bids by, shared.
+    pub fn convention(self) -> Arc<Convention> {
+        self.table().clone()
+    }
+    /// The conventions this system bids by.  A table takes a while to build
+    /// and remembers the meanings it has found, so each system's is built
+    /// once and shared by every game and robot.
+    pub(crate) fn table(self) -> &'static Arc<Convention> {
+        static TABLES: [OnceLock<Arc<Convention>>; BiddingSystem::ALL.len()] =
+            [const { OnceLock::new() }; BiddingSystem::ALL.len()];
+        let index = BiddingSystem::ALL.iter().position(|&s| s == self).unwrap();
+        TABLES[index].get_or_init(|| {
+            Arc::new(match self {
+                BiddingSystem::Sheets => Convention::sheets(),
+                BiddingSystem::Sayc => Convention::sayc(),
+                BiddingSystem::TwoOverOne => Convention::two_over_one(),
+            })
+        })
     }
 }
 
@@ -89,6 +100,21 @@ pub fn choose_play(serialized_game: &str) -> Option<String> {
     serde_json::to_string(&ai.play(&game)).ok()
 }
 
+/// What [`choose_play`] chooses, except that the cards are played by the
+/// play model learned by self-play ([`fitted_play::ModelPlay`]), which
+/// chooses without searching.  The bids are the same.
+#[wasm_bindgen]
+pub fn choose_play_by_model(serialized_game: &str) -> Option<String> {
+    crate::utils::set_panic_hook();
+    let game = serde_json::from_str::<GameState<()>>(serialized_game).ok()?;
+    let action = if game.bidder().is_some() {
+        BridgeAi::with_system(game.system).play(&game)
+    } else {
+        Action::Play(game.hand_playing()?, fitted_play::ModelPlay.play(&game))
+    };
+    serde_json::to_string(&action).ok()
+}
+
 pub trait BidAI: std::fmt::Debug {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid;
 }
@@ -120,8 +146,17 @@ fn all_bids() -> Vec<Bid> {
 /// describes a legal bid and fits the hand is the one used, and when that
 /// entry describes several legal bids the highest is chosen.  With no such
 /// entry it passes.
-#[derive(Debug)]
-pub struct ConventionalBid(pub Convention);
+#[derive(Clone, Debug)]
+pub struct ConventionalBid(pub Arc<Convention>);
+impl ConventionalBid {
+    /// The bid that this table makes with `hand` after `history`, and what it
+    /// means, or `None` to pass.
+    #[cfg(any(test, feature = "benchmarks"))]
+    fn choose(&self, history: &[Bid], hand: Cards) -> Option<(Bid, Convention)> {
+        self.0.choose(history, &hand.values())
+    }
+}
+
 impl BidAI for ConventionalBid {
     fn bid(&mut self, history: &[Bid], hand: Cards) -> Bid {
         self.0.bid_for(history, &hand.values())
@@ -132,6 +167,12 @@ impl Convention {
     /// The bid that the robot makes by this table with `hand` after
     /// `history`, as [`ConventionalBid`] says.
     pub(crate) fn bid_for(&self, history: &[Bid], hand: &HandValuation) -> Bid {
+        self.choose(history, hand).map_or(Bid::Pass, |(b, _)| b)
+    }
+
+    /// The bid that this table makes with `hand` after `history`, and what it
+    /// means, or `None` to pass.
+    fn choose(&self, history: &[Bid], hand: &HandValuation) -> Option<(Bid, Convention)> {
         let mut bids = history.to_vec();
         bids.push(Bid::Pass);
         let mut best: Option<(usize, Bid, Convention)> = None;
@@ -147,10 +188,14 @@ impl Convention {
                 .contract_known(history, hand)
                 .map(|(b, c)| (usize::MAX, b, c));
         }
-        if let Some((_, b, _)) = best {
-            b
-        } else {
-            Bid::Pass
+        best.map(|(_, b, c)| (b, c))
+    }
+
+    /// Forget the meanings found so far, so that a benchmark finds them again.
+    #[cfg(feature = "benchmarks")]
+    fn forget_meanings(&self) {
+        if let Convention::Ordered { meanings, .. } = self {
+            meanings.forget();
         }
     }
 
@@ -171,10 +216,10 @@ impl Convention {
             let auction = bids_string(&bids);
             let default = self.default_for(&auction, &bids);
             for i in self.candidates(&auction) {
-                if !self.entries()[i].matches(&auction, &bids) {
+                if !self.entries()[i].matches(&bids) {
                     continue;
                 }
-                if let Some(c) = self.resolve(i, &auction, &bids, default) {
+                if let Some(c) = self.resolve(i, &bids, default) {
                     entries.push((i, b, c));
                 }
             }
@@ -236,10 +281,10 @@ impl Convention {
             if before <= i {
                 break;
             }
-            if !self.entries()[i].matches(&auction, bids) {
+            if !self.entries()[i].matches(bids) {
                 continue;
             }
-            if let Some(c) = self.resolve(i, &auction, bids, default) {
+            if let Some(c) = self.resolve(i, bids, default) {
                 if c.fits(hand) {
                     return Some((i, c));
                 }
@@ -468,13 +513,22 @@ impl PlayAI for RandomPlay {
 
 use display_as::{format_as, with_template, DisplayAs, FormattedString, HTML, UTF8};
 mod advice;
+mod auction;
+#[cfg(feature = "benchmarks")]
+mod benches;
 mod booklet;
 pub(crate) mod ensemble;
+pub(crate) mod opening_lead;
+mod fitting;
+pub(crate) mod fitted_play;
 pub use ensemble::EnsemblePlay;
+mod playout;
+pub use playout::PlayoutPlay;
 #[cfg(test)]
 mod daily_columns;
 pub(crate) mod rules;
 mod sayc;
+use auction::{Auctions, Pattern};
 pub use booklet::Booklet;
 use rules::{
     asking_fits, comes_last, contracted_fits, explored_fits, Asking, Choice, Exploration, Reason,
@@ -618,8 +672,8 @@ impl Fit {
     }
 }
 
-/// The meaning of bids, as a table of entries that each match auctions with
-/// a regex over `bids_string`.  The table is an `Ordered` list, and its order
+/// The meaning of bids, as a table of entries that each describe auctions, as
+/// the `Auctions` that they are written as.  The table is an `Ordered` list, and its order
 /// is the robot's order of preference: `ConventionalBid` bids the first entry
 /// that matches a legal bid and fits the hand.  Every entry that matches a
 /// bid describes it, so a later entry for the same bid is a fallback, and
@@ -632,7 +686,7 @@ impl Fit {
 #[derive(Clone, Debug)]
 pub enum Convention {
     Simple {
-        regex: RegexSet,
+        auctions: Auctions,
         the_description: FormattedString<HTML>,
         the_name: &'static str,
         max: HandValuation,
@@ -641,7 +695,7 @@ pub enum Convention {
     },
     /// Like `Simple`, but the hand may fit in any of several ways.
     Rule {
-        regex: RegexSet,
+        auctions: Auctions,
         the_description: FormattedString<HTML>,
         the_name: &'static str,
         fits: Vec<Fit>,
@@ -649,13 +703,13 @@ pub enum Convention {
     },
     Natural {
         the_name: &'static str,
-        regex: RegexSet,
+        auctions: Auctions,
         min: HandValuation,
         max: HandValuation,
     },
     Forced {
         the_name: &'static str,
-        regex: RegexSet,
+        auctions: Auctions,
         min: HandValuation,
         max: HandValuation,
     },
@@ -665,7 +719,7 @@ pub enum Convention {
     /// rules give the bid a meaning.
     Contract {
         the_name: &'static str,
-        regex: RegexSet,
+        auctions: Auctions,
     },
     /// What the contract rules make of a bid: the hands that make it, and
     /// why.  Placing a contract opposite a limit bid shows nothing, so then
@@ -812,11 +866,16 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
 }
 
 /// What the auctions a table has been asked about mean, remembered.  A copy
-/// of a table starts with none remembered.
+/// of a table starts with none remembered.  It forgets them all once it holds
+/// [`Meanings::MOST`], since a table that lives long, such as the one a robot
+/// tab or self-play bids every deal with, would otherwise remember every
+/// auction it has seen.
 #[derive(Default)]
 pub struct Meanings(std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>);
 
 impl Meanings {
+    /// The most auctions remembered at once.
+    const MOST: usize = 1000;
     /// What `bids` mean, from `find` the first time.
     fn get(&self, bids: &[Bid], find: impl FnOnce() -> Option<Convention>) -> Option<Convention> {
         let key = bids_string(bids);
@@ -825,11 +884,20 @@ impl Meanings {
         }
         // Not holding the lock, since finding a meaning asks about others.
         let meaning = find();
-        self.0.lock().unwrap().insert(key, meaning.clone());
+        let mut remembered = self.0.lock().unwrap();
+        if remembered.len() >= Self::MOST {
+            remembered.clear();
+        }
+        remembered.insert(key, meaning.clone());
         meaning
     }
     fn clear(&mut self) {
         self.0.get_mut().unwrap().clear();
+    }
+    /// Forget what has been found, so that a benchmark can find it again.
+    #[cfg(feature = "benchmarks")]
+    fn forget(&self) {
+        self.0.lock().unwrap().clear();
     }
 }
 
@@ -855,83 +923,6 @@ fn hull(
     )
 }
 
-/// The bid that `pattern` ends in, if it names one bid.
-fn final_bid(pattern: &str) -> Option<Bid> {
-    let p = pattern.strip_suffix('$')?;
-    let last = p.rsplit([' ', '*']).next()?;
-    match last {
-        "P" => return Some(Bid::Pass),
-        "X" => return Some(Bid::Double),
-        "XX" => return Some(Bid::Redouble),
-        _ => (),
-    }
-    let mut chars = last.chars().rev();
-    let strain = chars.next()?;
-    let level = chars.next()?.to_digit(10)? as usize;
-    match strain {
-        'N' => Some(Bid::NT(level)),
-        s => Suit::ALL
-            .iter()
-            .find(|suit| suit.latin() == s)
-            .map(|&suit| Bid::Suit(level, suit)),
-    }
-}
-
-/// `pattern`, with a final group of alternatives such as `(1N [PX] 2|2N [PX]
-/// 3)C$` written out as one pattern per alternative.
-fn expand_final_group(pattern: &str) -> Vec<String> {
-    let unchanged = || vec![pattern.to_string()];
-    // The last group, which must have alternatives and be followed by the
-    // rest of the bid.
-    let close = match pattern.rfind(')') {
-        Some(close) => close,
-        None => return unchanged(),
-    };
-    let mut depth = 0;
-    let mut open = None;
-    for (i, c) in pattern[..=close].char_indices().rev() {
-        match c {
-            ')' => depth += 1,
-            '(' => {
-                depth -= 1;
-                if depth == 0 {
-                    open = Some(i);
-                    break;
-                }
-            }
-            _ => (),
-        }
-    }
-    let open = match open {
-        Some(open) => open,
-        None => return unchanged(),
-    };
-    // Split the group at the `|`s that are not inside a smaller group.
-    let inner = &pattern[open + 1..close];
-    let mut alternatives = Vec::new();
-    let (mut depth, mut start) = (0, 0);
-    for (i, c) in inner.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            '|' if depth == 0 => {
-                alternatives.push(&inner[start..i]);
-                start = i + 1;
-            }
-            _ => (),
-        }
-    }
-    alternatives.push(&inner[start..]);
-    if alternatives.len() == 1 {
-        return unchanged();
-    }
-    let (prefix, rest) = (&pattern[..open], &pattern[close + 1..]);
-    alternatives
-        .into_iter()
-        .map(|alternative| format!("{prefix}{alternative}{rest}"))
-        .collect()
-}
-
 impl Convention {
     /// The entries of a table, or this convention alone.
     fn entries(&self) -> &[Convention] {
@@ -940,10 +931,10 @@ impl Convention {
             _ => std::slice::from_ref(self),
         }
     }
-    /// Does this entry's regex match `auction`, whose bids are `bids`?
-    fn matches(&self, auction: &str, bids: &[Bid]) -> bool {
-        match self.regex() {
-            Some(regex) => regex.is_match(auction),
+    /// Do this entry's auctions include `bids`?
+    fn matches(&self, bids: &[Bid]) -> bool {
+        match self.auctions() {
+            Some(auctions) => auctions.matches(bids),
             None => self.applies(bids),
         }
     }
@@ -1044,8 +1035,8 @@ impl Convention {
         let mut found: Vec<Convention> = self
             .candidates(&auction)
             .into_iter()
-            .filter(|&i| self.entries()[i].matches(&auction, actual_bids))
-            .filter_map(|i| self.resolve(i, &auction, actual_bids, default))
+            .filter(|&i| self.entries()[i].matches(actual_bids))
+            .filter_map(|i| self.resolve(i, actual_bids, default))
             .collect();
         match found.len() {
             0 => None,
@@ -1061,18 +1052,18 @@ impl Convention {
         let mut default = None;
         for i in self.candidates(auction) {
             match &self.entries()[i] {
-                Convention::Simple { regex, .. } | Convention::Rule { regex, .. }
-                    if regex.is_match(auction) =>
+                Convention::Simple { auctions, .. } | Convention::Rule { auctions, .. }
+                    if auctions.matches(bids) =>
                 {
                     return None;
                 }
-                Convention::Natural { regex, .. } | Convention::Forced { regex, .. }
-                    if default.is_none() && regex.is_match(auction) =>
+                Convention::Natural { auctions, .. } | Convention::Forced { auctions, .. }
+                    if default.is_none() && auctions.matches(bids) =>
                 {
                     default = Some(i);
                 }
-                Convention::Contract { regex, .. }
-                    if default.is_none() && regex.is_match(auction) && self.rules_decide(bids) =>
+                Convention::Contract { auctions, .. }
+                    if default.is_none() && auctions.matches(bids) && self.rules_decide(bids) =>
                 {
                     default = Some(i);
                 }
@@ -1086,26 +1077,20 @@ impl Convention {
     /// `Natural` and `Forced` entries are defaults: only `default`, from
     /// `default_for`, describes a bid.  They are adjusted for what was shown
     /// earlier, and a `Forced` one only describes a bid that partner forced.
-    fn resolve(
-        &self,
-        index: usize,
-        auction: &str,
-        bids: &[Bid],
-        default: Option<usize>,
-    ) -> Option<Convention> {
+    fn resolve(&self, index: usize, bids: &[Bid], default: Option<usize>) -> Option<Convention> {
         let in_table = matches!(self, Convention::Ordered { .. });
         let is_default = default == Some(index);
         let entry = &self.entries()[index];
         match entry {
-            Convention::Simple { regex, .. } => regex.is_match(auction).then(|| entry.clone()),
+            Convention::Simple { auctions, .. } => auctions.matches(bids).then(|| entry.clone()),
             Convention::Rule {
-                regex,
+                auctions,
                 the_description,
                 the_name,
                 fits,
                 forcing,
-            } if regex.is_match(auction) => Some(Convention::Rule {
-                regex: regex.clone(),
+            } if auctions.matches(bids) => Some(Convention::Rule {
+                auctions: auctions.clone(),
                 the_description: the_description.clone(),
                 the_name,
                 fits: fits
@@ -1122,10 +1107,10 @@ impl Convention {
             }),
             Convention::Natural {
                 the_name,
-                regex,
+                auctions,
                 min,
                 max,
-            } if regex.is_match(auction) => {
+            } if auctions.matches(bids) => {
                 if !in_table {
                     return Some(entry.clone());
                 }
@@ -1135,17 +1120,17 @@ impl Convention {
                 let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
                 Some(Convention::Natural {
                     the_name,
-                    regex: regex.clone(),
+                    auctions: auctions.clone(),
                     min,
                     max,
                 })
             }
             Convention::Forced {
                 the_name,
-                regex,
+                auctions,
                 min,
                 max,
-            } if regex.is_match(auction) => {
+            } if auctions.matches(bids) => {
                 if !in_table {
                     return Some(entry.clone());
                 }
@@ -1155,12 +1140,12 @@ impl Convention {
                 let (min, max) = self.adjust_for_earlier_bids(bids, *min, *max);
                 Some(Convention::Forced {
                     the_name,
-                    regex: regex.clone(),
+                    auctions: auctions.clone(),
                     min,
                     max,
                 })
             }
-            Convention::Contract { the_name, regex } if regex.is_match(auction) => {
+            Convention::Contract { the_name, auctions } if auctions.matches(bids) => {
                 if !in_table || !is_default {
                     return None;
                 }
@@ -1446,17 +1431,15 @@ impl Convention {
     /// The bids this entry can describe, as `bids_string` writes them, or
     /// `*` if it could be any.
     fn bids_described(&self) -> Vec<String> {
-        let regex = match self.regex() {
-            Some(regex) => regex,
+        let auctions = match self.auctions() {
+            Some(auctions) => auctions,
             None => return vec!["*".to_string()],
         };
         let mut bids = Vec::new();
-        for pattern in regex.patterns() {
-            for pattern in expand_final_group(pattern) {
-                match final_bid(&pattern) {
-                    Some(bid) => bids.push(bids_string(&[bid]).trim().to_string()),
-                    None => return vec!["*".to_string()],
-                }
+        for pattern in auctions.patterns() {
+            match pattern.last_bid() {
+                Some(bid) => bids.push(bids_string(&[bid]).trim().to_string()),
+                None => return vec!["*".to_string()],
             }
         }
         bids.sort();
@@ -1491,26 +1474,26 @@ impl Convention {
             self.explain(explanation);
         }
     }
-    /// The regex of an entry.
-    fn regex(&self) -> Option<&RegexSet> {
+    /// The auctions that an entry describes.
+    fn auctions(&self) -> Option<&Auctions> {
         match self {
-            Convention::Simple { regex, .. }
-            | Convention::Rule { regex, .. }
-            | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. }
-            | Convention::Contract { regex, .. } => Some(regex),
+            Convention::Simple { auctions, .. }
+            | Convention::Rule { auctions, .. }
+            | Convention::Natural { auctions, .. }
+            | Convention::Forced { auctions, .. }
+            | Convention::Contract { auctions, .. } => Some(auctions),
             _ => None,
         }
     }
     /// This entry, matching only `pattern`.
-    fn with_pattern(&self, pattern: &str) -> Convention {
+    fn with_pattern(&self, pattern: &Pattern) -> Convention {
         let mut entry = self.clone();
         match &mut entry {
-            Convention::Simple { regex, .. }
-            | Convention::Rule { regex, .. }
-            | Convention::Natural { regex, .. }
-            | Convention::Forced { regex, .. }
-            | Convention::Contract { regex, .. } => *regex = RegexSet::new([pattern]).unwrap(),
+            Convention::Simple { auctions, .. }
+            | Convention::Rule { auctions, .. }
+            | Convention::Natural { auctions, .. }
+            | Convention::Forced { auctions, .. }
+            | Convention::Contract { auctions, .. } => *auctions = Auctions::of(pattern.clone()),
             _ => unreachable!(),
         }
         entry
@@ -1518,23 +1501,22 @@ impl Convention {
     /// This table, sorted most forcing first and, among equally forcing
     /// entries, highest bid first, so that the robot bids the most forcing
     /// bid that fits and, among those, the highest.  Sheets is written that
-    /// way.  An entry whose regex names several bids becomes an entry for
+    /// way.  An entry whose auctions are several patterns becomes an entry for
     /// each, so that each has one place in the order.
     ///
-    /// Panics if an entry's regex does not end in a bid.
+    /// Panics if an entry's patterns do not each end in one bid.
     fn most_forcing_then_highest(self) -> Convention {
         let ranks = all_bids();
         let rank = |bid: Bid| ranks.iter().position(|&b| b == bid).unwrap();
         let mut keyed = Vec::new();
         for entry in self.entries() {
-            let regex = entry.regex().expect("only entries can be sorted");
-            for pattern in regex.patterns() {
-                for pattern in expand_final_group(pattern) {
-                    let bid = final_bid(&pattern)
-                        .unwrap_or_else(|| panic!("no final bid in {}", pattern));
-                    let key = (entry.is_forcing(), rank(bid));
-                    keyed.push((key, entry.with_pattern(&pattern)));
-                }
+            let auctions = entry.auctions().expect("only entries can be sorted");
+            for pattern in auctions.patterns() {
+                let bid = pattern
+                    .last_bid()
+                    .unwrap_or_else(|| panic!("no final bid in {}", pattern.source()));
+                let key = (entry.is_forcing(), rank(bid));
+                keyed.push((key, entry.with_pattern(pattern)));
             }
         }
         keyed.sort_by_key(|&(key, _)| std::cmp::Reverse(key));
@@ -1566,7 +1548,7 @@ impl Convention {
         let mut max_nt = max;
         max_nt.length = [5, 5, 5, 5].into();
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1N$"]).unwrap(),
             max: max_nt.with_hcp(17).with_shcp(18).with_lhcp(18),
             min: min_nt.with_hcp(15).with_shcp(15).with_lhcp(15),
             the_description: format_as!(HTML, ""),
@@ -1574,7 +1556,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2N$"]).unwrap(),
             max: max_nt
                 .with_hcp(two_nt_max.0)
                 .with_shcp(two_nt_max.1)
@@ -1585,7 +1567,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1N [PX] 2N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1N [PX] 2N$"]).unwrap(),
             max: max.with_hcp(10),
             min: min.with_hcp(8),
             the_description: format_as!(HTML, ""),
@@ -1593,7 +1575,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1N [PX] 4N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1N [PX] 4N$"]).unwrap(),
             max: max.with_hcp(17),
             min: min.with_hcp(16),
             the_description: format_as!(HTML, ""),
@@ -1601,7 +1583,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2N [PX] 3N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2N [PX] 3N$"]).unwrap(),
             max: max.with_hcp(10),
             min: min.with_hcp(5),
             the_description: format_as!(HTML, ""),
@@ -1616,14 +1598,14 @@ impl Convention {
             Fit::new(min, max)
         };
         sheets.add(Convention::Rule {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2|2N [PX] 3)C$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2|2N [PX] 3)C$"]).unwrap(),
             fits: vec![with_four(Hearts), with_four(Spades)],
             the_description: format_as!(HTML, "4-card major?"),
             the_name: "Stayman",
             forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)D$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)D$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 3, 3].into(),
                 ..max
@@ -1634,7 +1616,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)H$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)H$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 4, 0].into(),
@@ -1645,7 +1627,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)S$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2C [PX] 2|2N [PX] 3C [PX] 3)S$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 3, 13].into(),
                 ..max
@@ -1659,7 +1641,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2|2N [PX] 3)D$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2|2N [PX] 3)D$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 5, 0].into(),
@@ -1670,7 +1652,7 @@ impl Convention {
             forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*(1N [PX] 2|2N [PX] 3)H$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*(1N [PX] 2|2N [PX] 3)H$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 0, 5].into(),
@@ -1681,7 +1663,7 @@ impl Convention {
             forcing: Forcing::Forcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([
+            auctions: Auctions::new([
                 r"^(P )*1N [PX] 2D [PX] 2H$",
                 r"^(P )*1N [PX] 2H [PX] 2S$",
                 r"^(P )*2N [PX] 3D [PX] 3H$",
@@ -1719,7 +1701,7 @@ impl Convention {
         let max = HandValuation::MAX;
         let min = HandValuation::MIN;
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2C$"]).unwrap(),
             max,
             min: min.with_lhcp(base),
             the_description: format_as!(HTML, base "+ points"),
@@ -1727,7 +1709,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([format!(r"^(P )*{waiting}$")]).unwrap(),
+            auctions: Auctions::new([format!(r"^(P )*{waiting}$")]).unwrap(),
             max: max.with_lhcp(7),
             min,
             the_description: format_as!(HTML, ""),
@@ -1743,7 +1725,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2S$")]).unwrap(),
+                auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 2S$")]).unwrap(),
                 the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
                 the_name: "Strong two rebid",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
@@ -1759,7 +1741,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2H$")]).unwrap(),
+                auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 2H$")]).unwrap(),
                 the_description: format_as!(HTML, "5+ hearts, longer than spades"),
                 the_name: "Strong two rebid",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
@@ -1778,7 +1760,7 @@ impl Convention {
                 },
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3C$")]).unwrap(),
+                auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 3C$")]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "5+ clubs, longer than diamonds, no 5 card major"
@@ -1800,7 +1782,7 @@ impl Convention {
                 },
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3D$")]).unwrap(),
+                auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 3D$")]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "5+ diamonds, at least as long as clubs, no 5 card major"
@@ -1812,7 +1794,7 @@ impl Convention {
         }
         if two_notrump_rebid {
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 2N$")]).unwrap(),
+                auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 2N$")]).unwrap(),
                 max: max.with_lhcp(base + 1),
                 min: min.with_lhcp(base),
                 the_description: format_as!(HTML, ""),
@@ -1821,7 +1803,7 @@ impl Convention {
             });
         }
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([format!(r"^(P )*{waiting} [PX] 3N$")]).unwrap(),
+            auctions: Auctions::new([format!(r"^(P )*{waiting} [PX] 3N$")]).unwrap(),
             max: max.with_lhcp(base + 4),
             min: min.with_lhcp(base + 2),
             the_description: format_as!(HTML, ""),
@@ -1829,7 +1811,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([format!(r"^(P )*{waiting} ..? 4N$")]).unwrap(),
+            auctions: Auctions::new([format!(r"^(P )*{waiting} ..? 4N$")]).unwrap(),
             max: max.with_lhcp(base + 7),
             min: min.with_lhcp(base + 5),
             the_description: format_as!(HTML, ""),
@@ -1837,7 +1819,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([format!(r"^(P )*{waiting} ..? 5N$")]).unwrap(),
+            auctions: Auctions::new([format!(r"^(P )*{waiting} ..? 5N$")]).unwrap(),
             max: max.with_lhcp(base + 9),
             min: min.with_lhcp(base + 8),
             the_description: format_as!(HTML, ""),
@@ -1846,7 +1828,7 @@ impl Convention {
         });
         if natural_after_double {
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([r"^(P )*2C X 2D$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )*2C X 2D$"]).unwrap(),
                 max,
                 min: HandValuation {
                     length: [0, 5, 0, 0].into(),
@@ -1860,7 +1842,7 @@ impl Convention {
             });
         }
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2H$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2C [PX] 2H$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 5, 0].into(),
@@ -1873,7 +1855,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2S$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2C [PX] 2S$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 0, 0, 5].into(),
@@ -1886,7 +1868,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 3C$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2C [PX] 3C$"]).unwrap(),
             max,
             min: HandValuation {
                 length: [5, 0, 0, 0].into(),
@@ -1899,7 +1881,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([format!(r"^(P )*2C {diamonds} 3D$")]).unwrap(),
+            auctions: Auctions::new([format!(r"^(P )*2C {diamonds} 3D$")]).unwrap(),
             max,
             min: HandValuation {
                 length: [0, 5, 0, 0].into(),
@@ -1912,7 +1894,7 @@ impl Convention {
             forcing: Forcing::GameForcing,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*2C [PX] 2N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*2C [PX] 2N$"]).unwrap(),
             max: HandValuation {
                 length: [5, 5, 5, 5].into(),
                 ..max
@@ -1941,7 +1923,7 @@ impl Convention {
             min.length[opening] = 6;
             min.hcp_in_suit[opening] = 4;
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([&format!(r"^(P )?(P )?2{:?}$", opening)]).unwrap(),
+                auctions: Auctions::new([&format!(r"^(P )?(P )?2{:?}$", opening)]).unwrap(),
                 max,
                 min,
                 the_description: format_as!(HTML, ""),
@@ -1956,7 +1938,7 @@ impl Convention {
             min.length[opening] = 7;
             min.hcp_in_suit[opening] = 4;
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([&format!(r"^(P )?(P )?3{:?}$", opening)]).unwrap(),
+                auctions: Auctions::new([&format!(r"^(P )?(P )?3{:?}$", opening)]).unwrap(),
                 max,
                 min,
                 the_description: format_as!(HTML, ""),
@@ -1985,21 +1967,21 @@ impl Convention {
             min.length[suit] = 8;
             sheets.add(Convention::Natural {
                 the_name: "Law of total tricks",
-                regex: RegexSet::new([&format!("[12]. [12]. .*2{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("[12]. [12]. .*2{:?}$", suit)]).unwrap(),
                 max,
                 min,
             });
             min.length[suit] = 9;
             sheets.add(Convention::Natural {
                 the_name: "Law of total tricks",
-                regex: RegexSet::new([&format!("[123]. [123]. .*3{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("[123]. [123]. .*3{:?}$", suit)]).unwrap(),
                 max,
                 min,
             });
             min.length[suit] = 10;
             sheets.add(Convention::Natural {
                 the_name: "Law of total tricks",
-                regex: RegexSet::new([&format!("[123]. [123]. .*4{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("[123]. [123]. .*4{:?}$", suit)]).unwrap(),
                 max,
                 min,
             });
@@ -2007,19 +1989,19 @@ impl Convention {
 
         sheets.add(Convention::Natural {
             the_name: "Natural game",
-            regex: RegexSet::new(["3N$"]).unwrap(),
+            auctions: Auctions::new(["3N$"]).unwrap(),
             min: min.with_hcp(26),
             max: HandValuation::MAX,
         });
         sheets.add(Convention::Natural {
             the_name: "Natural",
-            regex: RegexSet::new(["6N$"]).unwrap(),
+            auctions: Auctions::new(["6N$"]).unwrap(),
             min: min.with_hcp(33),
             max: HandValuation::MAX,
         });
         sheets.add(Convention::Natural {
             the_name: "Natural",
-            regex: RegexSet::new(["7N$"]).unwrap(),
+            auctions: Auctions::new(["7N$"]).unwrap(),
             min: min.with_hcp(37),
             max: HandValuation::MAX,
         });
@@ -2028,7 +2010,7 @@ impl Convention {
             length[major] = 8;
             sheets.add(Convention::Natural {
                 the_name: "Natural game",
-                regex: RegexSet::new([&format!("4{:?}$", major)]).unwrap(),
+                auctions: Auctions::new([&format!("4{:?}$", major)]).unwrap(),
                 max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 26,
@@ -2042,7 +2024,7 @@ impl Convention {
             length[minor] = 8;
             sheets.add(Convention::Natural {
                 the_name: "Natural game",
-                regex: RegexSet::new([&format!("5{:?}$", minor)]).unwrap(),
+                auctions: Auctions::new([&format!("5{:?}$", minor)]).unwrap(),
                 max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 29,
@@ -2056,7 +2038,7 @@ impl Convention {
             length[suit] = 8;
             sheets.add(Convention::Natural {
                 the_name: "Natural",
-                regex: RegexSet::new([&format!("6{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("6{:?}$", suit)]).unwrap(),
                 max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 33,
@@ -2066,7 +2048,7 @@ impl Convention {
             });
             sheets.add(Convention::Natural {
                 the_name: "Natural",
-                regex: RegexSet::new([&format!("7{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("7{:?}$", suit)]).unwrap(),
                 max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 37,
@@ -2077,7 +2059,7 @@ impl Convention {
 
             sheets.add(Convention::Natural {
                 the_name: "Natural",
-                regex: RegexSet::new([&format!("3{:?}$", suit)]).unwrap(),
+                auctions: Auctions::new([&format!("3{:?}$", suit)]).unwrap(),
                 max: HandValuation::MAX,
                 min: HandValuation {
                     hcp: 24,
@@ -2089,7 +2071,7 @@ impl Convention {
 
         sheets.add(Convention::Forced {
             the_name: "Forced NT",
-            regex: RegexSet::new(["1. P 1N$", "2. P 2N$"]).unwrap(),
+            auctions: Auctions::new(["1. P 1N$", "2. P 2N$"]).unwrap(),
             min: HandValuation::MIN,
             max: HandValuation::MAX,
         });
@@ -2111,7 +2093,7 @@ impl Convention {
         let any = || Fit::new(HandValuation::MIN, HandValuation::MAX);
         let mut add = |the_name, regex: String, description: &str, forcing, fits| {
             self.add(Convention::Rule {
-                regex: RegexSet::new([regex]).unwrap(),
+                auctions: Auctions::new([regex]).unwrap(),
                 the_description: format_as!(HTML, description),
                 the_name,
                 fits,
@@ -2248,7 +2230,7 @@ impl Convention {
                 all_unbid[o] = 4;
             }
             sheets.add(Convention::Simple {
-                regex: RegexSet::new([&format!(r"^(P )*[123]{:?} X$", bid)]).unwrap(),
+                auctions: Auctions::new([&format!(r"^(P )*[123]{:?} X$", bid)]).unwrap(),
                 max,
                 min: HandValuation {
                     lhcp: 9,
@@ -2265,7 +2247,7 @@ impl Convention {
                     let mut length = min.length;
                     length[response] = 4;
                     sheets.add(Convention::Simple {
-                        regex: RegexSet::new([
+                        auctions: Auctions::new([
                             &format!(r"^(P )*1{:?} X P {}{:?}$", bid, level, response),
                             &format!(r"^(P )*2{:?} X P {}{:?}$", bid, level + 1, response),
                             &format!(r"^(P )*3{:?} X P {}{:?}$", bid, level + 2, response),
@@ -2288,7 +2270,7 @@ impl Convention {
                     all_unbid[o] = 4;
                 }
                 sheets.add(Convention::Simple {
-                    regex: RegexSet::new([&format!(
+                    auctions: Auctions::new([&format!(
                         r"^(P )*[123]{:?} P [123]{:?} X$",
                         bid, response
                     )])
@@ -2313,7 +2295,7 @@ impl Convention {
                     let mut length = min.length;
                     length[takeout_response] = 4;
                     sheets.add(Convention::Simple {
-                        regex: RegexSet::new([
+                        auctions: Auctions::new([
                             &format!(
                                 r"^(P )*1{:?} P 1{:?} X P {}{:?}$",
                                 bid, response, level, takeout_response
@@ -2368,7 +2350,7 @@ impl Convention {
                 ..min
             };
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P P 1H$"]).unwrap(),
+                auctions: Auctions::new([r"^P P P 1H$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
                 fits: rule_of_15(lo, max, &[ShapeRule::Longer(Hearts, Spades)]),
@@ -2385,7 +2367,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P P 1S$"]).unwrap(),
+                auctions: Auctions::new([r"^P P P 1S$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
@@ -2410,7 +2392,7 @@ impl Convention {
                 &[ShapeRule::AtLeastAsLong(Clubs, Diamonds)],
             ));
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P P 1C$"]).unwrap(),
+                auctions: Auctions::new([r"^P P P 1C$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
                 fits,
@@ -2434,7 +2416,7 @@ impl Convention {
                 &[ShapeRule::AtLeastAsLong(Diamonds, Clubs)],
             ));
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P P 1D$"]).unwrap(),
+                auctions: Auctions::new([r"^P P P 1D$"]).unwrap(),
                 the_description: format_as!(HTML, "15+ hcp + " Spades),
                 the_name: "Rule of 15 opening",
                 fits,
@@ -2452,7 +2434,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P 1H$"]).unwrap(),
+                auctions: Auctions::new([r"^P P 1H$"]).unwrap(),
                 the_description: format_as!(HTML, "5+ hearts, longer than spades"),
                 the_name: "Rule of 20 opening",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
@@ -2469,7 +2451,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P 1S$"]).unwrap(),
+                auctions: Auctions::new([r"^P P 1S$"]).unwrap(),
                 the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
                 the_name: "Rule of 20 opening",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
@@ -2489,7 +2471,7 @@ impl Convention {
             let mut three = hi;
             three.length[Diamonds] = 3;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P 1C$"]).unwrap(),
+                auctions: Auctions::new([r"^P P 1C$"]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "No 5 card major, more clubs than diamonds, or 3-3"
@@ -2514,7 +2496,7 @@ impl Convention {
             let mut four = lo;
             four.length[Diamonds] = 4;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^P P 1D$"]).unwrap(),
+                auctions: Auctions::new([r"^P P 1D$"]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "No 5 card major, more diamonds than clubs, or 4-4"
@@ -2538,7 +2520,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )?1H$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )?1H$"]).unwrap(),
                 the_description: format_as!(HTML, "5+ hearts, longer than spades"),
                 the_name: "Opening bid",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::Longer(Hearts, Spades))],
@@ -2555,7 +2537,7 @@ impl Convention {
                 max,
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )?1S$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )?1S$"]).unwrap(),
                 the_description: format_as!(HTML, "5+ spades, at least as long as hearts"),
                 the_name: "Opening bid",
                 fits: vec![Fit::new(lo, hi).with(ShapeRule::AtLeastAsLong(Spades, Hearts))],
@@ -2574,7 +2556,7 @@ impl Convention {
             let mut three = hi;
             three.length[Diamonds] = 3;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )?1C$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )?1C$"]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "No 5 card major, more clubs than diamonds, or 3-3"
@@ -2599,7 +2581,7 @@ impl Convention {
             let mut four = lo;
             four.length[Diamonds] = 4;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )?1D$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )?1D$"]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "No 5 card major, more diamonds than clubs, or 4-4"
@@ -2625,7 +2607,7 @@ impl Convention {
             let mut five = lo;
             five.length[Spades] = 5;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )*1. [PX] 1S$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )*1. [PX] 1S$"]).unwrap(),
                 the_description: format_as!(HTML, "4+ spades, longer than hearts, or 5-5"),
                 the_name: "Response",
                 fits: vec![
@@ -2647,7 +2629,7 @@ impl Convention {
             let mut four = hi;
             four.length[Spades] = 4;
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )*1. [PX] 1H$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )*1. [PX] 1H$"]).unwrap(),
                 the_description: format_as!(HTML, "4+ hearts, longer than spades, or 4-4"),
                 the_name: "Response",
                 fits: vec![
@@ -2670,7 +2652,7 @@ impl Convention {
                 },
             );
             sheets.add(Convention::Rule {
-                regex: RegexSet::new([r"^(P )*1. [PX] 1D$"]).unwrap(),
+                auctions: Auctions::new([r"^(P )*1. [PX] 1D$"]).unwrap(),
                 the_description: format_as!(
                     HTML,
                     "4+ diamonds, at least as long as clubs, no 4 card major"
@@ -2682,7 +2664,7 @@ impl Convention {
         }
         sheets.add(Convention::Simple {
             the_name: "Up the line",
-            regex: RegexSet::new([r"^(P )*1[CD] P 1[DH] [PX] 1S$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1[CD] P 1[DH] [PX] 1S$"]).unwrap(),
             the_description: format_as!(HTML, ""),
             max: HandValuation {
                 length: [13, 13, 3, 4].into(),
@@ -2703,7 +2685,7 @@ impl Convention {
             max.length[opening] = 13;
             sheets.add(Convention::Simple {
                 the_name: "Single raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
+                auctions: Auctions::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
@@ -2712,7 +2694,7 @@ impl Convention {
             });
             sheets.add(Convention::Simple {
                 the_name: "Limit raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
+                auctions: Auctions::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
@@ -2729,7 +2711,7 @@ impl Convention {
             };
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor weak raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
+                auctions: Auctions::new([&format!("^(P )*1{:?} [PX] 3{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(10),
@@ -2739,7 +2721,7 @@ impl Convention {
             min_support.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Inverted minor limit raise",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
+                auctions: Auctions::new([&format!("^(P )*1{:?} [PX] 2{:?}$", opening, opening)])
                     .unwrap(),
                 the_description: format_as!(HTML, ""),
                 max: max.with_hcp(12),
@@ -2765,7 +2747,7 @@ impl Convention {
                 let splinterbid = if response > opening { 3 } else { 4 };
                 sheets.add(Convention::Simple {
                     the_name: "Splinter",
-                    regex: RegexSet::new([&format!(
+                    auctions: Auctions::new([&format!(
                         "^(P )*1{:?} [PX] {}{:?}$",
                         opening, splinterbid, response
                     )])
@@ -2780,7 +2762,7 @@ impl Convention {
                     min.length[response] = 4;
                     sheets.add(Convention::Simple {
                         the_name: "2/1 response",
-                        regex: RegexSet::new([&format!(
+                        auctions: Auctions::new([&format!(
                             "^(P )*1{:?} [PX] 2{:?}$",
                             opening, response
                         )])
@@ -2797,7 +2779,7 @@ impl Convention {
             min_jacoby.length[opening] = 4;
             sheets.add(Convention::Simple {
                 the_name: "Jacoby 2NT",
-                regex: RegexSet::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
+                auctions: Auctions::new([&format!("^(P )*1{:?} [PX] 2N$", opening)]).unwrap(),
                 the_description: format_as!(HTML, ""),
                 max,
                 min: min_jacoby.with_shcp(13),
@@ -2822,7 +2804,7 @@ impl Convention {
                 let splinterbid = if response > opening { 3 } else { 4 };
                 sheets.add(Convention::Simple {
                     the_name: "Splinter",
-                    regex: RegexSet::new([&format!(
+                    auctions: Auctions::new([&format!(
                         "^(P )*1{:?} [PX] {}{:?}$",
                         opening, splinterbid, response
                     )])
@@ -2837,7 +2819,7 @@ impl Convention {
 
         sheets.add(Convention::Simple {
             the_name: "Impossible response",
-            regex: RegexSet::new([r"^(P )*1C [PX] 1N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1C [PX] 1N$"]).unwrap(),
             min: max,
             max,
             the_description: format_as!(HTML, "Never bid: bid a four card suit instead"),
@@ -2845,7 +2827,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new([r"^(P )*1D [PX] 1N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1D [PX] 1N$"]).unwrap(),
             max: HandValuation {
                 length: [13, 4, 3, 3].into(),
                 hcp: 10,
@@ -2857,7 +2839,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new([r"^(P )*1H [PX] 1N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1H [PX] 1N$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 2, 3].into(),
                 hcp: 10,
@@ -2869,7 +2851,7 @@ impl Convention {
         });
         sheets.add(Convention::Simple {
             the_name: "Weak response",
-            regex: RegexSet::new([r"^(P )*1S [PX] 1N$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1S [PX] 1N$"]).unwrap(),
             max: HandValuation {
                 length: [13, 13, 13, 2].into(),
                 hcp: 10,
@@ -2891,7 +2873,7 @@ impl Convention {
         sheets.add_preempts();
 
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*P$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*P$"]).unwrap(),
             max: max.with_lhcp(12),
             min,
             the_description: format_as!(HTML, ""),
@@ -2899,7 +2881,7 @@ impl Convention {
             forcing: Forcing::Passable,
         });
         sheets.add(Convention::Simple {
-            regex: RegexSet::new([r"^(P )*1. P P$"]).unwrap(),
+            auctions: Auctions::new([r"^(P )*1. P P$"]).unwrap(),
             max: max.with_hcp(5),
             min,
             the_description: format_as!(HTML, ""),
@@ -2917,8 +2899,11 @@ impl Convention {
                 let bid = if overcall > opening { 1 } else { 2 };
                 sheets.add(Convention::Simple {
                     the_name: "Direct overcall",
-                    regex: RegexSet::new([&format!("^(P )*1{:?} {}{:?}$", opening, bid, overcall)])
-                        .unwrap(),
+                    auctions: Auctions::new([&format!(
+                        "^(P )*1{:?} {}{:?}$",
+                        opening, bid, overcall
+                    )])
+                    .unwrap(),
                     max: max.with_hcp(17),
                     min: min_overcall,
                     the_description: format_as!(HTML, ""),
@@ -2927,7 +2912,7 @@ impl Convention {
 
                 sheets.add(Convention::Simple {
                     the_name: "Overcall",
-                    regex: RegexSet::new([&format!(
+                    auctions: Auctions::new([&format!(
                         "^(P )*1{:?} P P {}{:?}$",
                         opening, bid, overcall
                     )])
@@ -2955,7 +2940,7 @@ impl Convention {
                     min_overcall.length[overcall] = 5;
                     sheets.add(Convention::Simple {
                         the_name: "Overcall",
-                        regex: RegexSet::new([&format!(
+                        auctions: Auctions::new([&format!(
                             "^(P )*1{:?} P {}{:?} {}{:?}$",
                             opening, responsebid, response, bid, overcall
                         )])
@@ -2980,7 +2965,7 @@ fn test_bidai() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     let weak_hand = Cards::from_str("C 2345 D 234 H 234 S 234").unwrap();
     assert_eq!(
         Bid::NT(1),
@@ -3000,7 +2985,7 @@ fn test_bidai_rebids_after_strong_two() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     // Each of these opens 2C with 23 lhcp, and must not pass partner's 2D.
     for (hand, rebid) in [
         ("S AK3 H KQ4 D AQ5 C AJ32", NT(2)),
@@ -3022,7 +3007,7 @@ fn test_bidai_third_seat_rule_of_20() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sheets = ConventionalBid(Convention::sheets());
+    let mut sheets = ConventionalBid(BiddingSystem::Sheets.convention());
     // With 12 lhcp, third seat opens a five-card major.
     let spades = Cards::from_str("S AQ432 H 32 D KJ2 C J32").unwrap();
     assert_eq!(Suit(1, Spades), sheets.bid(&[Pass, Pass], spades));
@@ -3054,10 +3039,10 @@ fn test_sheets() {
 
 /// Bid `deals` seeded deals with the robot in all four seats.  Each result is
 /// the seed, the hands (dealer first) and the auction.
-#[cfg(test)]
-fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
+#[cfg(any(test, feature = "benchmarks"))]
+fn seeded_deals(convention: Arc<Convention>, deals: u64) -> Vec<(u64, Vec<Cards>, Vec<Bid>)> {
     use rand::SeedableRng;
-    let mut bidder = ConventionalBid(convention);
+    let bidder = ConventionalBid(convention);
     let mut out = Vec::new();
     for seed in 0..deals {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -3069,7 +3054,9 @@ fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec
         hands.push(deck);
         let mut bids = Vec::new();
         while bids.len() < 4 || bids[bids.len() - 3..] != [Bid::Pass, Bid::Pass, Bid::Pass] {
-            let bid = bidder.bid(&bids, hands[bids.len() % 4]);
+            let bid = bidder
+                .choose(&bids, hands[bids.len() % 4])
+                .map_or(Bid::Pass, |(bid, _)| bid);
             bids.push(bid);
             assert!(
                 bids.len() < 60,
@@ -3084,7 +3071,7 @@ fn seeded_deals(convention: Convention, deals: u64) -> Vec<(u64, Vec<Cards>, Vec
 
 /// One line per deal with the seed and the auction.
 #[cfg(test)]
-fn seeded_auctions(convention: Convention, deals: u64) -> String {
+fn seeded_auctions(convention: Arc<Convention>, deals: u64) -> String {
     let mut out = String::new();
     for (seed, _, bids) in seeded_deals(convention, deals) {
         out.push_str(&format!("{} {}\n", seed, bids_string(&bids)));
@@ -3124,13 +3111,83 @@ fn dump_auctions() {
     std::fs::write(std::env::var("AUCTION_DUMP").unwrap(), out).unwrap();
 }
 
+/// Write to the file named by `MATCH_DUMP`, for each system, which of the
+/// entries of its table match each of many auctions: the auctions that
+/// seeded deals lead to and every bid that could follow each prefix, and
+/// random legal auctions.  Each entry is its name and a hash of its bounds, in
+/// table order.  Diff the file from before a change to how entries match
+/// auctions against the file from after it.
+#[test]
+#[ignore]
+fn dump_matches() {
+    use rand::{Rng, SeedableRng};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut out = String::new();
+    for system in BiddingSystem::ALL {
+        let table = system.convention();
+        // Every auction to ask about, by how `bids_string` writes it.
+        let mut auctions: std::collections::BTreeMap<String, Vec<Bid>> = Default::default();
+        let mut add_prefixes = |bids: &[Bid]| {
+            for n in 0..bids.len() {
+                for b in legal_bids(&bids[..n]) {
+                    let mut auction = bids[..n].to_vec();
+                    auction.push(b);
+                    auctions.insert(bids_string(&auction), auction);
+                }
+            }
+        };
+        for (_, _, bids) in seeded_deals(table.clone(), 200) {
+            add_prefixes(&bids);
+        }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+        for _ in 0..3000 {
+            let mut bids: Vec<Bid> = Vec::new();
+            while bids.len() < 4 || bids[bids.len() - 3..] != [Bid::Pass, Bid::Pass, Bid::Pass] {
+                if bids.len() >= 14 {
+                    break;
+                }
+                let legal = legal_bids(&bids);
+                bids.push(if rng.gen_bool(0.4) {
+                    Bid::Pass
+                } else {
+                    legal[rng.gen_range(0..legal.len())]
+                });
+            }
+            add_prefixes(&bids);
+        }
+        out.push_str(&format!("{} auctions: {}\n", system.name(), auctions.len()));
+        for (auction, bids) in &auctions {
+            let matching: Vec<String> = table
+                .entries()
+                .iter()
+                .filter(|e| e.matches(bids))
+                .map(|e| {
+                    let mut hasher = DefaultHasher::new();
+                    format!("{:?}", e.bounds()).hash(&mut hasher);
+                    format!("{}#{:x}", e.name().into_string(), hasher.finish())
+                })
+                .collect();
+            if !matching.is_empty() {
+                out.push_str(&format!(
+                    "{} {} => {}\n",
+                    system.name(),
+                    auction,
+                    matching.join(" | ")
+                ));
+            }
+        }
+    }
+    std::fs::write(std::env::var("MATCH_DUMP").unwrap(), out).unwrap();
+}
+
 #[test]
 fn test_sayc_openings() {
     use bridge_deck::Suit::*;
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     for (hand, opening) in [
         ("S AK3 H KQ4 D QJ5 C J932", NT(1)),
         ("S AQ432 H K32 D KJ2 C 32", Suit(1, Spades)),
@@ -3153,7 +3210,7 @@ fn test_sayc_responses() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     for (hand, response) in [
         ("S Q32 H K54 D J543 C 654", Suit(2, Spades)),
         ("S AJ43 H Q32 D K32 C 432", Suit(3, Spades)),
@@ -3175,7 +3232,7 @@ fn test_sayc_opener_rebids() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     // Opening 1H, partner responds 1S.
     for (hand, rebid) in [
         ("S K432 H AQ876 D 32 C K2", Suit(2, Spades)),
@@ -3197,8 +3254,8 @@ fn test_two_over_one_differs_from_sayc() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut sayc = ConventionalBid(Convention::sayc());
-    let mut two_over_one = ConventionalBid(Convention::two_over_one());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
+    let mut two_over_one = ConventionalBid(BiddingSystem::TwoOverOne.convention());
     let auction = [Suit(1, Spades), Pass];
     // Ten points with a five card suit: a two level response in SAYC, a
     // forcing notrump in two over one.
@@ -3230,8 +3287,8 @@ fn test_major_raise_with_three_card_support() {
     use Bid::*;
 
     for (name, mut system) in [
-        ("SAYC", ConventionalBid(Convention::sayc())),
-        ("2/1", ConventionalBid(Convention::two_over_one())),
+        ("SAYC", ConventionalBid(BiddingSystem::Sayc.convention())),
+        ("2/1", ConventionalBid(BiddingSystem::TwoOverOne.convention())),
     ] {
         // Three card support and a minimum raises the major, even though
         // the two over one forcing notrump is also available.
@@ -3257,8 +3314,8 @@ fn test_two_over_one_forcing_notrump_and_limit_raise() {
     use std::str::FromStr;
     use Bid::*;
 
-    let mut two_over_one = ConventionalBid(Convention::two_over_one());
-    let mut sayc = ConventionalBid(Convention::sayc());
+    let mut two_over_one = ConventionalBid(BiddingSystem::TwoOverOne.convention());
+    let mut sayc = ConventionalBid(BiddingSystem::Sayc.convention());
     // Eleven points with a doubleton in the major still start with 1NT.
     for (hand, opening) in [
         ("S 32 H KQ4 D QJ543 C K54", Spades),
@@ -3555,25 +3612,7 @@ fn sayc_opener_rebids_as_the_booklet_says() {
 }
 
 #[test]
-fn sheets_regexes_each_end_in_one_bid() {
-    use bridge_deck::Suit::*;
-    use Bid::*;
-    assert_eq!(Some(Suit(2, Clubs)), final_bid(r"^(P )*1N [PX] 2C$"));
-    assert_eq!(Some(NT(4)), final_bid(r"^(P )*2C [PX] 2D ..? 4N$"));
-    assert_eq!(Some(Suit(3, Spades)), final_bid(r"[123]. [123]. .*3S$"));
-    assert_eq!(Some(Double), final_bid(r"^(P )?[123]C X$"));
-    assert_eq!(None, final_bid(r"^(P )*1N [PX] [23]C$"));
-    assert_eq!(
-        vec![r"^(P )*1N [PX] 2C$", r"^(P )*2N [PX] 3C$"],
-        expand_final_group(r"^(P )*(1N [PX] 2|2N [PX] 3)C$")
-    );
-    assert_eq!(vec!["^(P )*1N$"], expand_final_group("^(P )*1N$"));
-    assert_eq!(
-        vec!["^P 1(C|D)$", "^P 1(C|H)$"],
-        expand_final_group("^P (1(C|D)|1(C|H))$")
-    );
-    assert_eq!(vec!["^1NT$", "^2NT$"], expand_final_group("^(1|2)NT$"));
-    assert_eq!(vec!["1N)$"], expand_final_group("1N)$"));
+fn sheets_patterns_each_end_in_one_bid() {
     // Sorting Sheets panics if any entry names more than one bid.
     Convention::sheets();
 }
@@ -3593,7 +3632,7 @@ fn shape_rules_and_alternatives() {
     assert!(!ShapeRule::Longer(Spades, Hearts).holds(&values("S AK432 H KQ432 D Q C J2")));
     // A rule fits a hand that fits any of its ways.
     let rule = Convention::Rule {
-        regex: RegexSet::new(["1C"]).unwrap(),
+        auctions: Auctions::new(["1C$"]).unwrap(),
         the_description: format_as!(HTML, ""),
         the_name: "Test",
         fits: vec![
@@ -3740,18 +3779,17 @@ fn bids_with_several_entries_describe_them_all() {
 /// not defaults describe the same bid, or where a default is listed before an
 /// entry that is not, with how often each occurs.
 #[cfg(test)]
-fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
+fn overlaps(convention: &Arc<Convention>, deals: u64) -> Vec<(usize, String)> {
     let mut seen = std::collections::BTreeMap::new();
     for (_, _, bids) in seeded_deals(convention.clone(), deals) {
         for n in 0..bids.len() {
             for b in legal_bids(&bids[..n]) {
                 let mut auction = bids[..n].to_vec();
                 auction.push(b);
-                let auction = bids_string(&auction);
                 let matching: Vec<&Convention> = convention
                     .entries()
                     .iter()
-                    .filter(|e| e.regex().unwrap().is_match(&auction))
+                    .filter(|e| e.matches(&auction))
                     .collect();
                 let is_default = |e: &&Convention| {
                     matches!(e, Convention::Natural { .. } | Convention::Forced { .. })
@@ -3768,7 +3806,7 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
                             format!(
                                 "{} {}",
                                 e.name().into_string(),
-                                e.regex().unwrap().patterns()[0]
+                                e.auctions().unwrap().patterns()[0].source()
                             )
                         })
                         .collect();
@@ -3784,7 +3822,7 @@ fn overlaps(convention: &Convention, deals: u64) -> Vec<(usize, String)> {
 /// bid forces, for want of anything that fits, and a call whose meaning does
 /// not cover the hand that made it, so that partner is told something false.
 #[cfg(test)]
-fn holes(convention: &Convention, deals: u64) -> Vec<String> {
+fn holes(convention: &Arc<Convention>, deals: u64) -> Vec<String> {
     let mut holes = Vec::new();
     for (seed, hands, bids) in seeded_deals(convention.clone(), deals) {
         for n in 0..bids.len() {
@@ -3910,7 +3948,7 @@ fn a_strong_two_rebids_the_longer_suit() {
 fn sheets_entries_do_not_overlap() {
     assert_eq!(
         Vec::<(usize, String)>::new(),
-        overlaps(&Convention::sheets(), 200)
+        overlaps(&BiddingSystem::Sheets.convention(), 200)
     );
 }
 

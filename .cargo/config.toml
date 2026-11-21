@@ -1,0 +1,11 @@
+# Native builds on Linux may use the instructions of x86-64-v2 (from 2009),
+# hardware popcount above all, which `Cards` leans on.  The robot runs as
+# wasm, which has popcount whatever this says, so this makes native tests and
+# timings closer to what the browser does.  It applies only to this target:
+# `deploy.sh` builds the server for x86_64-unknown-linux-musl, which stays
+# portable, and anything that sets RUSTFLAGS (CI, prek) ignores it.
+#
+# Cargo takes target rustflags in place of `build.rustflags`, so
+# benchmarks/.cargo/config.toml repeats this flag beside its own.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2"]

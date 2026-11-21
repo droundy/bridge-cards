@@ -393,6 +393,14 @@ impl Cards {
         }
     }
 
+    /// The cards of the suit of `card` that rank above it.
+    pub const fn higher_than(card: Card) -> Cards {
+        let suit_start = card.offset & !15;
+        Cards {
+            bits: (0x7fff << suit_start) & !((2 << card.offset) - 1),
+        }
+    }
+
     /// Check if we contain a card
     pub const fn contains(&self, card: Card) -> bool {
         self.bits & (1 << card.offset) != 0
@@ -540,6 +548,62 @@ impl Cards {
         } else {
             insuit
         }
+    }
+    /// The lowest card of each run of these cards that touch one another
+    /// among `all` the cards that are left, which these cards should be
+    /// among.  Whoever holds a run of touching cards can play any of them,
+    /// since they win and lose the same tricks, so one stands for all.
+    pub const fn lowest_of_sequences(self, all: Cards) -> Cards {
+        // The cards of `all` just above each of these cards.  Adding 1 to a
+        // run of bits makes the carry run up through it, and the bits that
+        // are not in `all` (but not those that are not cards at all, which
+        // would carry it into the next suit) are such a run.
+        let not_left = !all.bits & (0x7fff * LANES);
+        let above = (not_left + (self.bits << 1)) & all.bits;
+        Cards {
+            bits: self.bits & !above,
+        }
+    }
+
+    /// These cards renumbered as if the cards that are not `left` had never
+    /// been in the deck: in each suit, the lowest card of `left` becomes a
+    /// 2, the next a 3, and so on.  These cards should be among `left`.
+    ///
+    /// Positions that differ only in the cards that are gone from the deck
+    /// then become the same position.
+    pub const fn renumbered_among(self, left: Cards) -> Cards {
+        let mut bits = 0;
+        let mut rest = self.bits;
+        while rest != 0 {
+            let card = rest.trailing_zeros();
+            rest &= rest - 1;
+            // How many of the cards left are below this one in its suit.
+            let suit = card & !15;
+            let below = left.bits & ((1 << card) - 1) & (0xffff << suit);
+            bits |= 1 << (suit + 2 + below.count_ones());
+        }
+        Cards { bits }
+    }
+
+    /// These cards without `gone`, renumbered as if `gone` had never been in
+    /// the deck: each card moves down a rank for each card of `gone` below it
+    /// in its suit.  For cards that have been renumbered among `left` before,
+    /// this is the same as renumbering them among `left - gone`, but the work
+    /// is in the cards that are gone, not those that are kept.
+    pub const fn renumbered_without(self, gone: Cards) -> Cards {
+        let mut bits = self.bits & !gone.bits;
+        let mut rest = gone.bits;
+        // From the highest card down, so that the cards still to close up
+        // have not moved.
+        while rest != 0 {
+            let card = 63 - rest.leading_zeros();
+            rest &= !(1 << card);
+            let below = (1 << card) - 1;
+            let suit = 0xffff << (card & !15);
+            let above_in_suit = bits & suit & !below;
+            bits = (bits & !(suit & !below)) | (above_in_suit >> 1);
+        }
+        Cards { bits }
     }
     /// A deck or hand with no cards in it.
     pub const EMPTY: Cards = Cards { bits: 0 };
@@ -788,6 +852,114 @@ fn point_counts_match_their_definitions() {
 }
 
 #[test]
+fn higher_than_is_the_cards_of_the_suit_above() {
+    for card in Cards::ALL {
+        let want = Cards::ALL
+            .filter(|other| other.suit() == card.suit() && other.rank() > card.rank())
+            .fold(Cards::EMPTY, Cards::insert);
+        assert_eq!(want, Cards::higher_than(card), "{card}");
+    }
+}
+
+#[test]
+fn lowest_of_sequences_keeps_the_lowest_card_of_each_run() {
+    let cards = |s: &str| s.parse::<Cards>().unwrap();
+    // Nothing is between the ace, the king and the queen, so the queen
+    // stands for all three.
+    assert_eq!(
+        cards("S Q H 7"),
+        cards("S AKQ H 7").lowest_of_sequences(cards("S AKQJ H 7"))
+    );
+    // The jack is between the queen and the ten, and the nine and the eight
+    // touch.
+    assert_eq!(
+        cards("S QT D 8"),
+        cards("S KQT D 98").lowest_of_sequences(cards("S KQJT D 98 H AKQ")) - cards("S K")
+    );
+    // The ace of one suit does not touch the 2 of the next.
+    assert_eq!(
+        cards("S 2 H A"),
+        cards("S 2 H A").lowest_of_sequences(cards("S 2 H A"))
+    );
+}
+
+/// Pairs of a deck of cards and some of its cards, for the tests of
+/// functions that take cards that are among others.
+#[cfg(test)]
+fn random_cards_among_others(rng: &mut impl Rng) -> (Cards, Cards) {
+    let mut deck = Cards::ALL;
+    let n = rng.gen_range(0..=52);
+    let all = deck.pick_rng(rng, n).unwrap();
+    let mut rest = all;
+    let n = rng.gen_range(0..=all.len());
+    (all, rest.pick_rng(rng, n).unwrap())
+}
+
+#[test]
+fn lowest_of_sequences_matches_its_definition() {
+    use rand::{rngs::StdRng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(2);
+    for _ in 0..20_000 {
+        let (all, mine) = random_cards_among_others(&mut rng);
+        let mut want = Cards::EMPTY;
+        for c in mine {
+            let covered = mine.into_iter().any(|d| {
+                d.suit() == c.suit()
+                    && d.rank() < c.rank()
+                    && !all
+                        .into_iter()
+                        .any(|e| e.suit() == c.suit() && d.rank() < e.rank() && e.rank() < c.rank())
+            });
+            if !covered {
+                want = want.insert(c);
+            }
+        }
+        assert_eq!(
+            want,
+            mine.lowest_of_sequences(all),
+            "{mine:?} among {all:?}"
+        );
+    }
+}
+
+#[test]
+fn renumbered_among_matches_its_definition() {
+    use rand::{rngs::StdRng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(3);
+    for _ in 0..20_000 {
+        let (left, mine) = random_cards_among_others(&mut rng);
+        let mut want = Cards::EMPTY;
+        for suit in Suit::ALL {
+            for (n, c) in left.in_suit(suit).enumerate() {
+                if mine.contains(c) {
+                    want = want.insert(Card::new(suit, 2 + n as u8));
+                }
+            }
+        }
+        assert_eq!(want, mine.renumbered_among(left), "{mine:?} among {left:?}");
+    }
+}
+
+#[test]
+fn renumbered_without_closes_up_the_gaps() {
+    use rand::{rngs::StdRng, SeedableRng};
+    let mut rng = StdRng::seed_from_u64(4);
+    for _ in 0..20_000 {
+        let (all, mine) = random_cards_among_others(&mut rng);
+        let (_, gone) = random_cards_among_others(&mut rng);
+        let gone = gone & all;
+        // Renumbered among all, and then without what is gone, is the same as
+        // renumbered among what is left.
+        assert_eq!(
+            (mine - gone).renumbered_among(all - gone),
+            mine.renumbered_among(all)
+                .renumbered_without(gone.renumbered_among(all)),
+            "{mine:?} without {gone:?} among {all:?}"
+        );
+    }
+}
+
+#[test]
 fn test_hcp() {
     assert_eq!(40, Cards::ALL.high_card_points());
     assert_eq!(10, Cards::SPADES.high_card_points());
@@ -1005,6 +1177,8 @@ mod markup;
 
 #[cfg(feature = "benchmarks")]
 mod benches;
+
+mod tuples;
 
 #[test]
 fn all_cards() {

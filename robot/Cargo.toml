@@ -9,16 +9,14 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["console_error_panic_hook"]
-
-# Registers the benchmarks in src/benches.rs with scaling.  benchmarks/ runs
-# them.
+# Registers the benchmarks in src/benches.rs and src/ai/benches.rs with
+# scaling.  benchmarks/ runs them.
 benchmarks = ["dep:scaling"]
 
 [dependencies]
 wasm-bindgen = "0.2.88"
 bridge-deck = { version = "0.1.1", path = "..", features = ["display-as", "wording"] }
 bridge-solver = { version = "0.1.0", path = "../bridge-solver" }
-regex = "1.4.3"
 display-as = { version = "0.8.0" }
 wording = { version = "0.1.0", path = "../wording" }
 serde = { version = "1.0", features = ["derive"] }
@@ -37,4 +35,5 @@ console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [dev-dependencies]
 expect-test = "1.5"
+rayon = "1.12.0"
 wasm-bindgen-test = "0.3.34"

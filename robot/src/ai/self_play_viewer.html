@@ -1,0 +1,270 @@
+<title>Self-Play Table</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.gstatic.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto&display=swap">
+<style>
+/* The game's own stylesheet, abridge/src/style.css, which the harness puts
+   here, so that the hands, the trick and the auction look as they do in the
+   game. */
+/*GAME_CSS*/
+</style>
+<style>
+/* What the viewer adds to the game's look: the page around the board, the
+   controls, and the chances of the last card.  Layout: as the game's board,
+   the auction at the side and the hands in the middle, with the controls
+   and chances on the other side; in a narrow window it is one column, the
+   auction first. */
+:root {
+  --rule: color-mix(in srgb, var(--text) 25%, var(--background));
+  --bar: color-mix(in srgb, var(--table) 70%, var(--text));
+}
+/* The game follows the system's light or dark; the published page can also
+   be told which, and these say the same as the game's two palettes. */
+:root[data-theme="dark"] {
+  --background: #1A120B; --text: #eec; --alert: #d5cea3; --dummy-background: #3C2A21;
+  --table: #3C2A21; --spades: #eeeeee; --hearts: #ee3333; --diamonds: #dd8800;
+  --clubs: lightgreen; --turn1: green; --turn2: blue; color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="light"] {
+    --background: white; --text: black; --alert: darkorange; --dummy-background: #d3d3d3;
+    --table: lightgreen; --spades: black; --hearts: red; --diamonds: #dd8800;
+    --clubs: green; --turn1: lightskyblue; --turn2: yellow; color-scheme: light;
+  }
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+}
+body {
+  font-size: 18px;
+  background: var(--background);
+  color: var(--text);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 28px;
+}
+.page { max-width: 70em; margin: 0 auto; display: grid; gap: 0.75em; }
+header { display: flex; flex-wrap: wrap; gap: 0.5em 1.5em; align-items: end; justify-content: space-between; }
+h1 { font-size: 1.3em; margin: 0; }
+.sub { font-size: small; margin: 0.2em 0 0; opacity: 0.8; }
+.pick { display: grid; gap: 0.2em; min-width: 0; max-width: 100%; }
+select { font: inherit; font-size: 0.85em; max-width: 100%; color: var(--text); background: var(--background); border: 1px solid var(--rule); border-radius: 3px; padding: 0.2em; }
+.view { display: grid; gap: 0.75em; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 60em) {
+  .view { grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr); align-items: start; }
+}
+.auction { min-width: 0; }
+.auction .bidhistory { float: none; margin: 0 auto 0.4em; }
+.contract { font-size: small; text-align: center; margin: 0; }
+.hands { min-width: 0; overflow-x: auto; }
+.hands > table td { vertical-align: middle; }
+.hand .name { white-space: nowrap; }
+.tricks { text-align: center; font-size: small; }
+.side-info { display: grid; gap: 0.6em; min-width: 0; align-content: start; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.3em; align-items: center; }
+.controls button { width: auto; min-width: 2.6em; margin: 0; padding: 0.2em 0.5em; font: inherit; font-size: 0.9em; cursor: pointer; }
+.controls .step { margin-left: auto; font-size: small; font-variant-numeric: tabular-nums; }
+.last p { margin: 0 0 0.4em; font-size: small; }
+.chances { display: grid; gap: 0.2em; }
+.chance { display: grid; grid-template-columns: 3em minmax(0, 1fr) 3em; gap: 0.5em; align-items: center; font-size: 0.9em; font-variant-numeric: tabular-nums; }
+.chance.picked { font-weight: bold; }
+.bar { height: 0.45em; border-radius: 0.25em; background: var(--rule); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--bar); }
+.empty { font-size: small; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--turn1); outline-offset: 2px; }
+</style>
+
+<div class="page">
+  <header>
+    <div>
+      <h1>Self-Play Table</h1>
+      <p class="sub" id="summary">Sample games from the play model learning against itself.</p>
+    </div>
+    <label class="pick" for="game">Game
+      <select id="game"></select>
+    </label>
+  </header>
+
+  <p class="empty" id="empty" hidden>No games yet. Self-play records a few sample games at each report; run it with PLAY_SELF_WATCH set to this file.</p>
+
+  <div class="view" id="view">
+    <div class="auction">
+      <div id="auction"></div>
+      <p class="contract" id="contract"></p>
+    </div>
+    <div class="hands">
+      <div class="hand" id="north"></div>
+      <table><tr>
+        <td><div class="hand" id="west"></div></td>
+        <td><div class="table" id="trick"></div></td>
+        <td><div class="hand" id="east"></div></td>
+      </tr></table>
+      <div class="hand" id="south"></div>
+      <div class="tricks" id="tricks"></div>
+    </div>
+    <div class="side-info">
+      <div class="controls">
+        <button id="first" aria-label="Back to the start">⏮</button>
+        <button id="prev" aria-label="Back one card">◀</button>
+        <button id="play">Play</button>
+        <button id="next" aria-label="Forward one card">▶</button>
+        <button id="last" aria-label="To the end">⏭</button>
+        <span class="step" id="step"></span>
+      </div>
+      <div class="last" id="last-card"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const GAMES = [/*GAMES*/];
+const SEATS = ["South", "West", "North", "East"];
+// Suits from clubs (0) to spades (3), with the game's class names.
+const SUIT_CLASS = ["clubs", "diamonds", "hearts", "spades"];
+const SUIT_SIGN = ["♣", "♦", "♥", "♠"];
+const STRAINS = { C: 0, D: 1, H: 2, S: 3 };
+const rankName = (r) => ({ 14: "A", 13: "K", 12: "Q", 11: "J" })[r] || String(r);
+const cardHtml = ([s, r]) => `<span class="${SUIT_CLASS[s]}">${SUIT_SIGN[s]}${rankName(r)}</span>`;
+const callHtml = (call) => {
+  if (call === "P") return "Pass";
+  if (call === "X" || call === "XX") return call;
+  const level = call[0], strain = call[1];
+  if (strain === "N") return `${level}NT`;
+  const s = STRAINS[strain];
+  return `${level}<span class="${SUIT_CLASS[s]}">${SUIT_SIGN[s]}</span>`;
+};
+const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+const seatAfter = (seat, n) => SEATS[(SEATS.indexOf(seat) + n) % 4];
+
+let gameIndex = Math.max(0, GAMES.length - 1);
+let step = 0;
+let timer = null;
+
+function trumpOf(game) {
+  const strain = game.contract ? game.contract[1] : "N";
+  return strain === "N" ? null : STRAINS[strain];
+}
+
+function winnerOf(cards, trump) {
+  let best = 0;
+  for (let i = 1; i < cards.length; i++) {
+    const [s, r] = cards[i].card, [bs, br] = cards[best].card;
+    if ((s === bs && r > br) || (s === trump && bs !== trump)) best = i;
+  }
+  return cards[best].seat;
+}
+
+// A hand as the game draws it: a line a suit, spades first, the cards
+// played already faded.
+function handHtml(cards, gone) {
+  return [3, 2, 1, 0].map((s) => {
+    const ranks = cards.filter((c) => c[0] === s).sort((a, b) => b[1] - a[1]);
+    const shown = ranks.map((c) => {
+      const played = gone.some((g) => same(g, c)) ? " playedalready" : "";
+      return `<span class="cardinhand${played}">${rankName(c[1])}</span>`;
+    }).join("");
+    return `<span class="${SUIT_CLASS[s]}"><span class="cardinhand">${SUIT_SIGN[s]}</span>${shown}</span>`;
+  }).join("<br/>");
+}
+
+function render() {
+  const game = GAMES[gameIndex];
+  document.getElementById("empty").hidden = !!game;
+  document.getElementById("view").hidden = !game;
+  if (!game) return;
+  const plays = game.plays.slice(0, step);
+  const trump = trumpOf(game);
+  const dummy = seatAfter(game.declarer, 2);
+  let ns = 0, ew = 0;
+  for (let t = 0; (t + 1) * 4 <= plays.length; t++) {
+    const winner = winnerOf(plays.slice(t * 4, t * 4 + 4), trump);
+    if (winner === "North" || winner === "South") ns++; else ew++;
+  }
+  const next = game.plays[step];
+  for (const seat of SEATS) {
+    const el = document.getElementById(seat.toLowerCase());
+    const gone = plays.filter((p) => p.seat === seat).map((p) => p.card);
+    const role = seat === game.declarer ? "declarer" : seat === dummy ? "dummy" : "defender";
+    el.className = "hand" + (seat === dummy ? " dummy" : "") + (next && next.seat === seat ? " turn" : "");
+    el.innerHTML = `<span class="name">${seat} · ${role} · ${game.players[seat]}</span>${handHtml(game.hands[seat], gone)}`;
+  }
+  // The trick on the table, in the game's order: north, west, east, south.
+  const t = step === 0 ? -1 : Math.floor((step - 1) / 4);
+  const inTrick = t < 0 ? [] : plays.slice(t * 4);
+  document.getElementById("trick").innerHTML = ["North", "West", "East", "South"].map((seat) => {
+    const p = inTrick.find((p) => p.seat === seat);
+    return p ? cardHtml(p.card) : "<span></span>";
+  }).join("");
+  document.getElementById("tricks").innerHTML = `NS: ${ns} · EW: ${ew}`;
+  // The auction, as the game's bid history: columns from the dealer.
+  const order = [0, 1, 2, 3].map((n) => seatAfter(game.dealer, n));
+  let rows = "";
+  for (let i = 0; i < game.bids.length; i += 4) {
+    rows += "<tr>" + game.bids.slice(i, i + 4).map((c) => `<td>${callHtml(c)}</td>`).join("") + "</tr>";
+  }
+  document.getElementById("auction").innerHTML =
+    `<table class="bidhistory"><tr>${order.map((s) => `<th>${s}</th>`).join("")}</tr>${rows}</table>`;
+  const needed = Number(game.contract[0]) + 6;
+  const won = game.declarer === "North" || game.declarer === "South" ? game.tricks.NS : game.tricks.EW;
+  const result = won >= needed ? `made with ${won - needed} over` : `down ${needed - won}`;
+  document.getElementById("contract").innerHTML = `${callHtml(game.contract)} by ${game.declarer}: ${result} (${won} tricks)`;
+  // The last card, and the chances its player gave each card it could play.
+  const last = plays[plays.length - 1];
+  const lastEl = document.getElementById("last-card");
+  if (!last) {
+    lastEl.innerHTML = `<p>The opening lead comes first. Step forward to start.</p>`;
+  } else if (!last.chances || last.chances.length === 0) {
+    lastEl.innerHTML = `<p>${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}.</p>`;
+  } else {
+    const bars = [...last.chances].sort((a, b) => b[1] - a[1]).map(([card, p]) => {
+      const picked = same(card, last.card) ? " picked" : "";
+      return `<div class="chance${picked}">${cardHtml(card)}<div class="bar"><span style="width:${(p * 100).toFixed(1)}%"></span></div><span>${(p * 100).toFixed(0)}%</span></div>`;
+    }).join("");
+    lastEl.innerHTML = `<p>${last.seat} played ${cardHtml(last.card)}, chosen by ${last.by}, from these chances:</p><div class="chances">${bars}</div>`;
+  }
+  document.getElementById("step").textContent = `card ${step} of ${game.plays.length}`;
+  document.getElementById("play").textContent = timer ? "Pause" : "Play";
+}
+
+function go(to) {
+  const game = GAMES[gameIndex];
+  if (!game) return;
+  step = Math.max(0, Math.min(game.plays.length, to));
+  if (step === game.plays.length) stop();
+  render();
+}
+function stop() { if (timer) { clearInterval(timer); timer = null; } }
+function toggle() {
+  if (timer) { stop(); render(); return; }
+  const game = GAMES[gameIndex];
+  if (game && step >= game.plays.length) step = 0;
+  timer = setInterval(() => go(step + 1), 750);
+  render();
+}
+
+const select = document.getElementById("game");
+GAMES.forEach((game, i) => {
+  const option = document.createElement("option");
+  option.value = i;
+  const strain = game.contract[1] === "N" ? "NT" : SUIT_SIGN[STRAINS[game.contract[1]]];
+  option.textContent = `Round ${game.round} · ${game.contract[0]}${strain} by ${game.declarer} · NS ${game.tricks.NS}, EW ${game.tricks.EW}`;
+  select.appendChild(option);
+});
+select.value = String(gameIndex);
+select.addEventListener("change", () => { stop(); gameIndex = Number(select.value); step = 0; render(); });
+document.getElementById("first").addEventListener("click", () => { stop(); go(0); });
+document.getElementById("prev").addEventListener("click", () => { stop(); go(step - 1); });
+document.getElementById("next").addEventListener("click", () => { stop(); go(step + 1); });
+document.getElementById("last").addEventListener("click", () => { stop(); go(Infinity); });
+document.getElementById("play").addEventListener("click", toggle);
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") { stop(); go(step + 1); }
+  if (e.key === "ArrowLeft") { stop(); go(step - 1); }
+  if (e.key === " ") { e.preventDefault(); toggle(); }
+});
+if (GAMES.length) {
+  const rounds = new Set(GAMES.map((g) => g.round));
+  document.getElementById("summary").textContent =
+    `${GAMES.length} sample games from ${rounds.size} reports of the play model learning against itself, up to round ${Math.max(...rounds)}.`;
+}
+render();
+</script>
