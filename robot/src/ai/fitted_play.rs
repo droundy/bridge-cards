@@ -2009,21 +2009,26 @@ mod tests {
     /// a `share` of those of more than one card with up to `most` tricks
     /// left, and `per_game` of those of more than one run of touching cards
     /// in each game with no player of any card, chosen at random once the
-    /// game is over, whose tricks are put at the `absolute` level (see
-    /// [`learn_from_playouts`]) if that is set.
+    /// game is over, which are fitted to the `level` and the `apart`
+    /// accuracies, in tricks (see [`learn_from_playouts`]): an infinite
+    /// `level` leaves the level of the scores out, and the tricks are not
+    /// put at a level.
     #[derive(Clone, Copy)]
     struct Playouts {
         share: f64,
         most: usize,
         per_game: usize,
-        absolute: bool,
+        level: f64,
+        apart: f64,
     }
 
     /// What a learner's choices played out add up to in self-play: the
     /// tricks that its likeliest cards lose to the best, how many choices,
-    /// and, learning from playouts, the sum over the choices of the mean
+    /// and, learning from playouts, the sums over the choices of the mean
     /// square of how far its scores are from the tricks that they are
-    /// fitted to, and, weighted as the choices are, the sums of the scores
+    /// fitted to, of the mean square of how far each of those misses is
+    /// from the mean miss of its choice, and of the mean of the squares
+    /// that are fitted, and, weighted as the choices are, the sums of the scores
     /// less the mean of their choice times the tricks less theirs, and of
     /// the squares of those scores, to find the factor that makes the
     /// differences of its scores nearest those of the tricks, and the sums
@@ -2034,6 +2039,8 @@ mod tests {
         lost: f64,
         choices: usize,
         off: f64,
+        off_apart: f64,
+        chi_squared: f64,
         across: f64,
         squares: f64,
         weights: f64,
@@ -2046,6 +2053,8 @@ mod tests {
             self.lost += other.lost;
             self.choices += other.choices;
             self.off += other.off;
+            self.off_apart += other.off_apart;
+            self.chi_squared += other.chi_squared;
             self.across += other.across;
             self.squares += other.squares;
             self.weights += other.weights;
@@ -2217,7 +2226,7 @@ mod tests {
                 let mut tricks: Vec<f64> =
                     legal.iter().map(|&card| values[crate::ai::playout::run_of(runs, card)]).collect();
                 let decision = &mut decisions[*number];
-                if playouts.absolute {
+                if playouts.level.is_finite() {
                     // The tricks from now on, at the level of the learner
                     // playing every seat after the card that it would play.
                     let learner = decision.learner;
@@ -2408,15 +2417,25 @@ mod tests {
     /// of the squares of how far its score of each card that it could have
     /// played is from the tricks after it, each choice weighted by 1 over
     /// its chance of being played out, so that a game's choices count the
-    /// same however many it has.  The tricks are those that its side takes
+    /// same however many it has, divided by the square of
+    /// `PLAY_SELF_LEVEL_ACCURACY` (0.5 tricks), plus the squares of how far
+    /// each of those misses is from the mean miss of the choice, divided by
+    /// the square of `PLAY_SELF_CHOICE_ACCURACY` (0.05 tricks): the first
+    /// fits the scores, the second their differences, as the sum of those
+    /// squares is that of the squared misses of the differences of every
+    /// two cards of the choice, divided by the number of cards.  Each is
+    /// then a number of accuracies, so the differences of the cards, which
+    /// are what choose a card, count a hundred times as much as the level
+    /// for the same miss.  The tricks are those that its side takes
     /// from then on, less those after the card that the learner would play,
     /// plus those after that card with the learner playing every seat: the
     /// cards differ as they do against the players of the game, but the
     /// level is the learner's own, so that a score says how many tricks
     /// there are to take, and does not go up when a weak opponent will give
-    /// tricks away later, whatever the card.  With `PLAY_SELF_ABSOLUTE` set
-    /// to 0, the scores less their mean are fitted to the tricks less
-    /// theirs instead, which leaves the level out.
+    /// tricks away later, whatever the card.  With `PLAY_SELF_LEVEL_ACCURACY`
+    /// set to `inf`, only the differences are fitted, which leaves the level
+    /// out, and with `PLAY_SELF_CHOICE_ACCURACY` set to `inf`, only the
+    /// scores.
     /// The scores are then tricks: a card a trick worse than another ends
     /// a trick below it, however unlikely it was to be played, and two
     /// cards of nearly the same worth end nearly together; and as the fit
@@ -2464,13 +2483,15 @@ mod tests {
                 share: float("PLAY_SELF_PLAYOUT_SHARE", 0.0),
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: 0,
-                absolute: false,
+                level: f64::INFINITY,
+                apart: f64::INFINITY,
             },
             Learning::Playouts => Playouts {
                 share: 0.0,
                 most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
                 per_game: number("PLAY_SELF_PLAYOUTS", 1),
-                absolute: number("PLAY_SELF_ABSOLUTE", 1) == 1,
+                level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
+                apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
             },
         };
         let softened = float("PLAY_SELF_PLAYOUT_TEMPERATURE", 1.0);
@@ -2518,9 +2539,11 @@ mod tests {
         let mut warmups: Vec<usize> = Vec::new();
         let mut snapshots: Vec<(usize, Model)> = Vec::new();
         let mut first_round = 1;
+        let mut resumed = false;
         if let Ok(path) = std::env::var("PLAY_SELF_RESUME") {
             let file = model_file::ModelFile::read(&path);
             first_round = file.round + 1;
+            resumed = true;
             for learner in file.learners {
                 warmups.push(if learner.adam.is_some() { 0 } else { 20 });
                 adams.push(learner.adam.unwrap_or_else(|| fitting::Adam::new(learner.model.network.params.len())));
@@ -2727,10 +2750,11 @@ mod tests {
                                         if learning == Learning::Playouts {
                                             if let Some(values) = &d.played_out {
                                                 // Fits the scores to the
-                                                // tricks by least squares,
-                                                // or, not absolute, the
-                                                // scores less their mean to
-                                                // the tricks less theirs.
+                                                // tricks, and their
+                                                // differences to those of the
+                                                // tricks, by least squares,
+                                                // each square divided by
+                                                // that of its accuracy.
                                                 let scores: Vec<f64> =
                                                     d.cards.iter().map(|(entries, _)| model.network.score(entries)).collect();
                                                 let n = values.len() as f64;
@@ -2738,10 +2762,14 @@ mod tests {
                                                 let score_mean = scores.iter().sum::<f64>() / n;
                                                 for (((entries, _), &value), &score) in d.cards.iter().zip(values).zip(&scores) {
                                                     let (apart, value_apart) = (score - score_mean, value - value_mean);
-                                                    let off = if playouts.absolute { score - value } else { apart - value_apart };
+                                                    let (miss, miss_apart) = (score - value, apart - value_apart);
+                                                    let (level, choice) = (playouts.level.powi(-2), playouts.apart.powi(-2));
+                                                    let off = level * miss + choice * miss_apart;
                                                     let w = d.weight;
                                                     let tally = &mut lost[d.learner];
-                                                    tally.off += off * off / n;
+                                                    tally.off += miss * miss / n;
+                                                    tally.off_apart += miss_apart * miss_apart / n;
+                                                    tally.chi_squared += (level * miss * miss + choice * miss_apart * miss_apart) / n;
                                                     tally.across += w * apart * value_apart;
                                                     tally.squares += w * apart * apart;
                                                     tally.weights += w;
@@ -2806,8 +2834,9 @@ mod tests {
             // Learning from playouts, a learner whose scores are not yet
             // tricks, as those of self-play are not, first has them made as
             // near to the tricks as one factor makes them, which keeps the
-            // order of its cards: the step of that round is skipped.
-            let calibrating = learning == Learning::Playouts && round == first_round;
+            // order of its cards: the step of that round is skipped.  A run
+            // that resumes one of these has its scores in tricks already.
+            let calibrating = learning == Learning::Playouts && round == first_round && !resumed;
             if calibrating {
                 for (i, learner) in learners.iter_mut().enumerate() {
                     let mut tally = Tally::default();
@@ -2817,7 +2846,7 @@ mod tests {
                     let (factor, shift) = tally.fit();
                     if factor.is_finite() && factor > 0.0 {
                         learner.network.scale_scores(factor);
-                        if playouts.absolute {
+                        if playouts.level.is_finite() {
                             learner.shift_scores(shift);
                             println!("learner {}'s scores are multiplied by {factor:.4} and {shift:+.3} added, to be tricks", i + 1);
                         } else {
@@ -2948,11 +2977,19 @@ mod tests {
                         lost.join(", ")
                     );
                     if learning == Learning::Playouts {
-                        let off: Vec<String> = playout_losses
-                            .iter()
-                            .map(|t| format!("{:.3}", (t.off / t.choices.max(1) as f64).sqrt()))
-                            .collect();
-                        print!(", and their scores miss the tricks by {} (root mean square)", off.join(", "));
+                        let mean = |t: &Tally, sum: f64| sum / t.choices.max(1) as f64;
+                        let off: Vec<String> =
+                            playout_losses.iter().map(|t| format!("{:.3}", mean(t, t.off).sqrt())).collect();
+                        let apart: Vec<String> =
+                            playout_losses.iter().map(|t| format!("{:.3}", mean(t, t.off_apart).sqrt())).collect();
+                        let chi: Vec<String> =
+                            playout_losses.iter().map(|t| format!("{:.2}", mean(t, t.chi_squared))).collect();
+                        print!(
+                            ", their scores miss the tricks by {}, and their differences by {} (root mean square), and the squares fitted come to {} a card",
+                            off.join(", "),
+                            apart.join(", "),
+                            chi.join(", ")
+                        );
                     }
                     playout_losses.iter_mut().for_each(|l| *l = Tally::default());
                 }
