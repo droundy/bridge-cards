@@ -1381,6 +1381,28 @@ mod tests {
         }
     }
 
+    /// The four ways of a deal hold the same cards for each side, with each
+    /// side's two hands swapped in turn.
+    #[test]
+    fn four_ways_swap_each_sides_hands() {
+        let mut dealer = (Generator::new(), StdRng::seed_from_u64(3), 0);
+        for _ in 0..5 {
+            let games: Vec<GameState<()>> =
+                four_ways(&mut dealer).iter().map(|json| serde_json::from_str(json).unwrap()).collect();
+            let sides = |g: &GameState<()>| {
+                [g.hands[Seat::South] + g.hands[Seat::North], g.hands[Seat::West] + g.hands[Seat::East]]
+            };
+            for game in &games {
+                assert_eq!(sides(game), sides(&games[0]));
+                assert_eq!(game.dealer, games[0].dealer);
+                assert!(game.played.is_empty() && game.lead.is_some());
+            }
+            let distinct: std::collections::HashSet<_> =
+                games.iter().map(|g| [Seat::South, Seat::West].map(|s| g.hands[s])).collect();
+            assert_eq!(distinct.len(), games.len());
+        }
+    }
+
     /// The model that the build includes, when there is one, is of the shape
     /// that this code plays by.
     #[test]
@@ -2366,6 +2388,9 @@ mod tests {
     /// played so often that the learners learn it rather than bridge.  When
     /// the pool is the size of a round, each of its deals is played in each
     /// round, and with `PLAY_SELF_FRESH` the same size, every deal is new.
+    /// With `PLAY_SELF_FOUR_WAYS` set to 1, the new deals come four at a time
+    /// (see [`four_ways`]), so that each side holds the same cards in four
+    /// deals and the luck of where they lie partly cancels between them.
     ///
     /// With `PLAY_SELF_ROUND_ROBIN` set to 1, each deal is played in a round
     /// robin in place of `PLAY_SELF_GROUP` plays, as team play between mixed
@@ -2692,7 +2717,13 @@ mod tests {
         let (dealt, fresh_deals) = std::sync::mpsc::sync_channel::<String>(2 * fresh);
         if fresh > 0 {
             let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64), 10);
-            std::thread::spawn(move || while dealt.send(fresh_deal(&mut dealer)).is_ok() {});
+            let four = number("PLAY_SELF_FOUR_WAYS", 0) == 1;
+            std::thread::spawn(move || loop {
+                let deals = if four { four_ways(&mut dealer) } else { vec![fresh_deal(&mut dealer)] };
+                if deals.into_iter().any(|deal| dealt.send(deal).is_err()) {
+                    break;
+                }
+            });
         }
         // The same threads play every round.
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
@@ -3110,6 +3141,33 @@ mod tests {
                 if game.played.is_empty() {
                     return json;
                 }
+            }
+        }
+    }
+
+    /// Four deals of the same new cards, each bid afresh by the robot in the
+    /// same system with the same dealer: as they were dealt, with east's and
+    /// west's hands swapped, with north's and south's, and with both, as the
+    /// JSON of each game at the opening lead.  Each side holds the same cards
+    /// in all four, so has the same strength, but each of its opponents holds
+    /// the other's, so a finesse that wins in one loses in another; the
+    /// auctions and contracts may differ.  The deals that are passed out are
+    /// left out.
+    fn four_ways(dealer: &mut (Generator, StdRng, usize)) -> Vec<String> {
+        let (generator, rng, index) = dealer;
+        loop {
+            let mut deck = Cards::ALL;
+            let mut deal = || deck.pick_rng(rng, 13).unwrap();
+            let [south, west, north, east] = [deal(), deal(), deal(), deal()];
+            let first = Seat::from(rng.gen_range(0..4usize));
+            let system = *index;
+            *index += 1;
+            let deals: Vec<String> = [[south, west, north, east], [south, east, north, west], [north, west, south, east], [north, east, south, west]]
+                .into_iter()
+                .filter_map(|hands| generator.at_the_lead(system, hands.into(), first))
+                .collect();
+            if !deals.is_empty() {
+                return deals;
             }
         }
     }

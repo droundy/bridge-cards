@@ -52,20 +52,7 @@ impl Generator {
         let mut deck = Cards::ALL;
         let mut deal = || deck.pick_rng(rng, 13).unwrap();
         let hands: Seated<Cards> = [deal(), deal(), deal(), deal()].into();
-        game.redeal();
-        game.hands = hands;
-        game.original_hands = hands;
-        game.dealer = Seat::from(rng.gen_range(0..4usize));
-        while let Some(seat) = game.bidder() {
-            let Action::Bid(bidder, bid) = ai.play(game) else {
-                return None;
-            };
-            if bidder != seat || !game.bid_is_legal(seat, bid) || game.bids.len() > 80 {
-                return None;
-            }
-            game.bids.push(bid);
-        }
-        let declarer = game.find_declarer()?;
+        let declarer = bid(game, ai, hands, Seat::from(rng.gen_range(0..4usize)))?;
         let wanted = (index % 4, (index + index / 4) % 4);
         let mut found = None;
         // Play from the start of the play as many times as it takes.
@@ -96,6 +83,37 @@ impl Generator {
         }
         found
     }
+
+    /// `hands`, dealt by `dealer`, bid by the robot in the `index`th system,
+    /// going round, as the JSON of the game at the opening lead, or `None`
+    /// when the deal was passed out.
+    #[cfg(test)]
+    pub(crate) fn at_the_lead(&mut self, index: usize, hands: Seated<Cards>, dealer: Seat) -> Option<String> {
+        let (game, ai) = &mut self.tables[index % BiddingSystem::ALL.len()];
+        let declarer = bid(game, ai, hands, dealer)?;
+        game.lead = Some(declarer.next());
+        serde_json::to_string(game).ok()
+    }
+}
+
+/// Deals `hands` in `game`, with `dealer` to call first, and has `ai` bid
+/// every seat's calls; the declarer, or `None` when the deal was passed out
+/// or the robot did not bid.
+fn bid(game: &mut GameState<()>, ai: &mut BridgeAi, hands: Seated<Cards>, dealer: Seat) -> Option<Seat> {
+    game.redeal();
+    game.hands = hands;
+    game.original_hands = hands;
+    game.dealer = dealer;
+    while let Some(seat) = game.bidder() {
+        let Action::Bid(bidder, bid) = ai.play(game) else {
+            return None;
+        };
+        if bidder != seat || !game.bid_is_legal(seat, bid) || game.bids.len() > 80 {
+            return None;
+        }
+        game.bids.push(bid);
+    }
+    game.find_declarer()
 }
 
 /// How many times to play a deal from the start for a particular role.
