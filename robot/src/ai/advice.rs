@@ -281,12 +281,22 @@ impl Convention {
         }
     }
 
-    /// The bounds a bid states outright, if it is described only by entries
-    /// that do: not by a natural bid, whose bounds say what the partnership
-    /// needs between them.
+    /// The bounds that the meaning of a call in a table states of the hand
+    /// that made it.  `self` must be a meaning as `refine` gives it from a
+    /// table: a natural or forced bid is then already reduced by what partner
+    /// and the bidder have shown, so the robot makes it only with a hand that
+    /// satisfies them, as for the other kinds of meaning.  The raw entry of a
+    /// `Natural` bid, which says what the partnership needs between them, is
+    /// not such a meaning.  A bid that shows nothing, such as a slam ask,
+    /// states nothing.
     fn stated(&self) -> Option<(HandValuation, HandValuation)> {
         match self {
-            Convention::Simple { .. } | Convention::Rule { .. } => Some(self.bounds()),
+            Convention::Simple { .. }
+            | Convention::Rule { .. }
+            | Convention::Natural { .. }
+            | Convention::Forced { .. }
+            | Convention::Contracted { .. }
+            | Convention::Explored { .. } => Some(self.bounds()),
             Convention::Either(options) if options.iter().all(|c| c.stated().is_some()) => {
                 Some(self.bounds())
             }
@@ -344,28 +354,6 @@ impl Convention {
     ) -> (HandValuation, HandValuation) {
         let shown = self.shown(history, offset);
         (shown.min, shown.max)
-    }
-
-    /// How many cards of each suit the calls of the player `offset` seats
-    /// before the next bidder show or suggest: the most that the meaning of
-    /// any one of their calls asks for.  Unlike [`Convention::shown_bounds`],
-    /// this includes the meanings that a table gives to natural bids, which
-    /// say what the partnership needs and so are not bounds on the hand, but
-    /// which still suggest the suit that they are about, as a natural new suit
-    /// or a competitive raise does.  It is what the table says of the calls
-    /// and never the calls themselves.
-    pub(super) fn suggested_lengths(&self, history: &[Bid], offset: usize) -> [u8; 4] {
-        let n = history.len();
-        let mut lengths = [0; 4];
-        for i in (0..n).filter(|i| (n - i) % 4 == offset) {
-            if let Some(meaning) = self.refine(&history[..=i]) {
-                let (min, _) = meaning.bounds();
-                for suit in Suit::ALL {
-                    lengths[suit as usize] = lengths[suit as usize].max(min.length[suit]);
-                }
-            }
-        }
-        lengths
     }
 
     /// A sentence on what `who` has shown with their bids, if they have bid
@@ -1345,4 +1333,40 @@ fn advice_names_four_of_a_major_as_the_game() {
             NT 3NT Response (Balanced, two card support): needs at most 2 hearts (you have 4) and 15–17 high card points (you have 18).
             Other 2♣ Two-level response: also fits, but the system prefers 2NT."#]],
     );
+}
+
+/// The hand that made a call lies within the bounds of what the table says
+/// the call means, for every kind of meaning but a pass (which the robot
+/// makes when nothing else fits), on the auctions that the robots bid.  The
+/// bounds of natural, forced and contract bids are what `shown_bounds` trusts.
+#[test]
+fn hands_lie_within_the_bounds_of_their_calls() {
+    let mut counts = std::collections::BTreeMap::<&str, (usize, usize)>::new();
+    for game in crate::ai::opening_lead::candidates::opening_leads(9, 600) {
+        let table = game.system.table();
+        for (i, &bid) in game.bids.iter().enumerate() {
+            let Some(meaning) = table.refine(&game.bids[..=i]) else {
+                continue;
+            };
+            let kind = match (&meaning, bid) {
+                (_, Bid::Pass) => "pass",
+                (Convention::Simple { .. } | Convention::Rule { .. }, _) => "simple or rule",
+                (Convention::Either(_), _) => "either",
+                (Convention::Natural { .. }, _) => "natural",
+                (Convention::Forced { .. }, _) => "forced",
+                (Convention::Contracted { .. }, _) => "contracted",
+                (Convention::Explored { .. }, _) => "explored",
+                _ => "other",
+            };
+            let (min, max) = meaning.bounds();
+            let values = game.hands[game.dealer + i].values();
+            let count = counts.entry(kind).or_default();
+            count.0 += 1;
+            count.1 += (min.exceeds(values) || values.exceeds(max)) as usize;
+        }
+    }
+    for (kind, (calls, outside)) in counts {
+        println!("{kind}: {outside} of {calls} calls were made with a hand outside the bounds");
+        assert!(kind == "pass" || outside == 0, "{kind}");
+    }
 }

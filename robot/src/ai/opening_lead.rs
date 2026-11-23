@@ -9,16 +9,15 @@
 //! Solving every lead on each of those deals takes seconds a deal, so
 //! [`likely_opening_leads`] guesses the order of the leads from the hand and
 //! the auction alone.  It scores each card by a few things about it and its
-//! suit (its length and honours, which suits partner and the opponents showed
-//! or suggested, whether it is trumps), with weights fitted to double-dummy
+//! suit (its length and honours, which suits partner and the opponents
+//! showed, whether it is trumps), with weights fitted to double-dummy
 //! results on deals that fit the auctions that the robot bids, by the ignored
 //! test `fit_opening_lead_weights`.
 //!
 //! No feature reads the calls.  The auction enters through the contract,
 //! which the rules of the game give, and through what the bidding system's
-//! tables say that the calls showed (`Convention::shown_bounds`) or suggested
-//! (`Convention::suggested_lengths`), such as the suit that partner's natural
-//! bid is about.
+//! tables say that the calls showed (`Convention::shown_bounds`), which
+//! includes what a natural bid says of the bidder's suit.
 
 use super::ensemble::{calls_missed, closest, OVERSAMPLE};
 use super::Convention;
@@ -63,21 +62,6 @@ impl Unseen {
                     .collect()
             }),
         })
-    }
-
-    /// What the calls of the dummy, partner and the declarer show or suggest
-    /// of each suit's length, by the tables of `convention`.
-    pub(crate) fn suggested<C>(
-        game: &GameState<C>,
-        convention: &Convention,
-        leader: Seat,
-    ) -> [[u8; 4]; 3] {
-        let bid_offset = |seat: Seat| {
-            let first = (seat as usize + 4 - game.dealer as usize) % 4;
-            (game.bids.len() + 4 - first) % 4
-        };
-        [leader + 1, leader + 2, leader + 3]
-            .map(|seat| convention.suggested_lengths(&game.bids, bid_offset(seat)))
     }
 
     /// What the auction of `game` showed of the dummy, partner and the
@@ -177,22 +161,14 @@ pub(crate) struct SuitShown {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HandShown {
     pub(crate) suits: [SuitShown; 4],
-    /// For each suit, how many cards in it the calls show or suggest, which
-    /// includes what a natural bid is about (`Convention::suggested_lengths`).
-    pub(crate) suggested: [u8; 4],
     /// The fewest and most high card points.
     pub(crate) points: (u8, u8),
 }
 
 impl HandShown {
-    /// What the bounds `min` and `max` on a hand show, and `suggested` lengths.
-    pub(crate) fn from_bounds(
-        min: &HandValuation,
-        max: &HandValuation,
-        suggested: [u8; 4],
-    ) -> HandShown {
+    /// What the bounds `min` and `max` on a hand show.
+    pub(crate) fn from_bounds(min: &HandValuation, max: &HandValuation) -> HandShown {
         HandShown {
-            suggested,
             suits: Suit::ALL.map(|suit| SuitShown {
                 length: (min.length[suit], max.length[suit]),
                 points: (min.hcp_in_suit[suit], max.hcp_in_suit[suit]),
@@ -230,15 +206,12 @@ impl Auction {
         let leader = game.turn()?;
         let convention = game.system.table();
         let bounds = Unseen::shown(game, convention, leader);
-        let suggested = Unseen::suggested(game, convention, leader);
         let (trump, level, doubled) = contract(&game.bids);
         Some(Auction {
             trump,
             level,
             doubled,
-            shown: std::array::from_fn(|seat| {
-                HandShown::from_bounds(&bounds[seat].0, &bounds[seat].1, suggested[seat])
-            }),
+            shown: bounds.map(|(min, max)| HandShown::from_bounds(&min, &max)),
         })
     }
 
@@ -258,10 +231,9 @@ impl Auction {
         }
     }
 
-    /// Whether the calls of `seat` showed or suggested at least `least` cards
-    /// in `suit`.
+    /// Whether the calls of `seat` showed at least `least` cards in `suit`.
     fn showed(&self, seat: usize, suit: Suit, least: u8) -> bool {
-        self.shown[seat].suggested[suit as usize] >= least
+        self.shown[seat].suits[suit as usize].length.0 >= least
     }
 
     /// Whether either opponent showed at least `least` cards in `suit`.
@@ -633,19 +605,27 @@ mod tests {
         }
     }
 
+    /// How many of the deals of the three unseen hands fit what the auction
+    /// showed, which is how much the ensemble has to throw away.
     #[test]
-    fn a_natural_bid_suggests_its_suit_by_the_tables() {
-        use bridge_deck::Suit::*;
-        let sayc = crate::BiddingSystem::Sayc.table();
-        // After an opening 1H, the last bidder (offset 1) has suggested hearts, and
-        // nothing says how many cards of the other suits.
-        let lengths = sayc.suggested_lengths(&[Bid::Suit(1, Hearts)], 1);
-        assert_eq!(5, lengths[Hearts as usize]);
-        assert_eq!(0, lengths[Spades as usize]);
-        // An overcall suggests its suit, and a pass suggests nothing.
-        let lengths = sayc.suggested_lengths(&[Bid::Suit(1, Hearts), Bid::Suit(1, Spades)], 1);
-        assert_eq!(5, lengths[Spades as usize]);
-        assert_eq!([0; 4], sayc.suggested_lengths(&[Bid::Suit(1, Hearts), Bid::Pass], 1));
+    #[ignore]
+    fn report_the_acceptance_of_shown_bounds() {
+        let (mut fraction, mut count, mut hopeless) = (0.0, 0, 0);
+        for game in opening_leads(7, 150) {
+            let convention = game.system.table();
+            let unseen = Unseen::new(&game, convention).unwrap();
+            let mut rng = StdRng::seed_from_u64(3);
+            let fitting = (0..2000)
+                .filter(|_| unseen.fits(&unseen.deal(&mut rng)))
+                .count();
+            fraction += fitting as f64 / 2000.0;
+            hopeless += (fitting == 0) as usize;
+            count += 1;
+        }
+        println!(
+            "{count} situations: {:.4} of random deals fit the auction; {hopeless} with none of 2000 fitting",
+            fraction / count as f64
+        );
     }
 
     #[test]
@@ -745,7 +725,6 @@ mod tests {
                     "length": hand.suits.map(|s| [s.length.0, s.length.1]),
                     "points": hand.suits.map(|s| [s.points.0, s.points.1]),
                     "hcp": [hand.points.0, hand.points.1],
-                    "suggested": hand.suggested,
                 })
             })
             .collect();
@@ -765,7 +744,6 @@ mod tests {
         let shown = std::array::from_fn(|seat| {
             let hand = &json["shown"][seat];
             HandShown {
-                suggested: std::array::from_fn(|suit| hand["suggested"][suit].as_u64().unwrap() as u8),
                 suits: std::array::from_fn(|suit| SuitShown {
                     length: pair(&hand["length"][suit]),
                     points: pair(&hand["points"][suit]),
