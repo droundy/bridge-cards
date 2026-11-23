@@ -291,6 +291,32 @@ not the design.
   against 100-deal values, by stage (leads, following, discards) and by
   side, to see whether one T describes them.
 
+## First the training, then the model (the user's order, 2026-11-23)
+
+Training on true deals comes first: learning how to train well with
+playouts before changing what is trained.  That means understanding the
+anneal (whether to anneal, from where, how fast), the learning rate, and
+which temperatures are reasonable and useful, until a run improves on the
+learners it starts from and keeps improving.  The dealer's ensembles are set
+aside: the true deal is an exact draw of the hidden hands, and the
+ensembles are biased and bought nothing that the true deal lacks.  What the
+first runs taught (`free-energy` branch, 2026-11-23):
+
+- A run's score must be built from all its cards, or untrained cards drift
+  (a run's score is T log of the mean of e<sup>s/T</sup> over its cards).
+- Scores put in tricks by a factor of about 0.015 must take Adam's steps in
+  their old units, or each step is 60–90 times too large.
+- The start's scale is fitted where the free energy is curved in it (T = 1),
+  not at a cold T<sub>opp</sub>.
+- Lowering the rate only delays the drift; a colder T<sub>opp</sub> turns
+  it around: at 0.3 the learners stayed 0.15 below their start, at 0.1
+  they rose above it after 4000 rounds.  A small model puts its accuracy
+  where the chances at T are, and the robot plays greedily, so the player's
+  T<sub>opp</sub> should be cold; a hot T belongs to the model of chances.
+- Annealing from T = 1 costs the first 1000 rounds: it melts order that a
+  trained, cold start already has.  Whether to anneal at all is being
+  measured.
+
 ## Then
 
 Once the training holds or improves the play:
@@ -298,4 +324,4 @@ Once the training holds or improves the play:
 1. The systematic study of tables and shapes, which was set aside.
 2. Separate weights for declarer and for defence: in effect one model with
    every feature crossed with a "declarer" feature.
-3. Choosing T<sub>opp</sub>, and whether it depends on the stage.
+3. Whether T<sub>opp</sub> should depend on the stage.
