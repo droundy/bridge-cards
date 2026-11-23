@@ -23,12 +23,11 @@
 //! four, and the points for a grand slam, it asks for kings, and bids the
 //! grand only with all of them.  A grand slam is never bid unasked.  Partner
 //! answers and leaves the contract to the one who asked.
-use super::super::{all_bids, Convention, Fit, Forcing};
+use super::super::{all_bids, Auctions, Convention, Fit, Forcing};
 use super::{trump, uncontested, Kind, TRUMPS};
 use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
-use regex::RegexSet;
 use std::sync::Arc;
 use wording::Text;
 
@@ -171,7 +170,7 @@ pub(super) struct Asked {
 /// A table entry made on the spot, which matches no auction of its own.
 fn entry(name: &'static str, description: &str, fits: Vec<Fit>) -> Convention {
     Convention::Rule {
-        regex: RegexSet::empty(),
+        auctions: Auctions::empty(),
         the_description: format_as!(HTML, description),
         the_name: name,
         fits,

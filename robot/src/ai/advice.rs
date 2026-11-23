@@ -303,8 +303,8 @@ impl Convention {
                 self.candidates(&auction)
                     .into_iter()
                     .find(|&i| match &conventions[i] {
-                        Convention::Simple { regex, .. } | Convention::Rule { regex, .. } => {
-                            regex.is_match(&auction)
+                        Convention::Simple { auctions, .. } | Convention::Rule { auctions, .. } => {
+                            auctions.matches(bids)
                         }
                         _ => false,
                     })
@@ -332,6 +332,33 @@ impl Convention {
             }
         }
         shown
+    }
+
+    /// The bounds on the hand that the bids of the player `offset` seats before
+    /// the next bidder show, which are a minimum and a maximum of every count
+    /// that a `HandValuation` has.
+    pub(super) fn shown_bounds(
+        &self,
+        history: &[Bid],
+        offset: usize,
+    ) -> (HandValuation, HandValuation) {
+        match self {
+            Convention::Ordered { meanings, .. } => meanings.shown_bounds(history, offset, || {
+                self.shown_bounds_unmemoised(history, offset)
+            }),
+            _ => self.shown_bounds_unmemoised(history, offset),
+        }
+    }
+
+    /// [`Convention::shown_bounds`], found afresh from the meaning of each
+    /// earlier bid.
+    pub(super) fn shown_bounds_unmemoised(
+        &self,
+        history: &[Bid],
+        offset: usize,
+    ) -> (HandValuation, HandValuation) {
+        let shown = self.shown(history, offset);
+        (shown.min, shown.max)
     }
 
     /// A sentence on what `who` has shown with their bids, if they have bid

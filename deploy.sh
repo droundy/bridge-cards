@@ -2,6 +2,8 @@
 
 set -ev
 
+./fetch-play-model.sh --exact
+
 cd robot
 wasm-pack build --target web --no-typescript --release
 cd ..

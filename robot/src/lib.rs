@@ -1,9 +1,16 @@
-pub use ai::{choose_play, BiddingSystem, Booklet, BridgeAi, Convention};
+pub use ai::{
+    choose_play, BiddingSystem, Booklet, BridgeAi, Convention, EnsemblePlay, PlayAI,
+    PlayoutPlay,
+};
 use bridge_deck::{Card, Cards};
 use display_as::{with_template, DisplayAs, HTML, UTF8};
 use serde::{Deserialize, Serialize};
 
 mod ai;
+#[cfg(feature = "benchmarks")]
+pub mod benches;
+#[cfg(any(test, feature = "benchmarks"))]
+mod situations;
 mod utils;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +215,12 @@ pub struct GameState<C> {
     /// not following suit.  The robot deals that seat none of them.
     #[serde(default = "no_cards")]
     pub shown_out: Seated<Cards>,
+    /// The tricks played so far, before any that is still being played:
+    /// who led each, and its cards in the order they were played, which is
+    /// what a player who remembers the play knows.  Games saved before this
+    /// was kept have none.
+    #[serde(default)]
+    pub tricks: Vec<(Seat, [Card; 4])>,
 
     #[serde(skip)]
     pub last_action: Option<std::time::Instant>,
@@ -215,8 +228,6 @@ pub struct GameState<C> {
     /// The bidding system the robots play and the bid descriptions explain.
     #[serde(default)]
     pub system: BiddingSystem,
-    #[serde(skip)]
-    conventions: Vec<Convention>,
 }
 
 /// No cards at any seat.
@@ -232,13 +243,6 @@ impl<C> Default for GameState<C> {
 
 impl<C> GameState<C> {
     pub fn new() -> GameState<C> {
-        Self::with_conventions(vec![Convention::sheets()])
-    }
-
-    /// A new deal at a new table that explains bids with `conventions`.
-    /// Building conventions compiles many regexes, so `redeal` hands over
-    /// the ones it already has.
-    fn with_conventions(conventions: Vec<Convention>) -> GameState<C> {
         let mut deck = Cards::ALL;
         let north = deck.pick(13).unwrap();
         let south = deck.pick(13).unwrap();
@@ -265,9 +269,9 @@ impl<C> GameState<C> {
             ns_tricks: 0,
             ew_tricks: 0,
             shown_out: no_cards(),
+            tricks: Vec::new(),
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
-            conventions,
         }
     }
 
@@ -275,7 +279,6 @@ impl<C> GameState<C> {
     /// the first bid.
     pub fn set_system(&mut self, system: BiddingSystem) {
         self.system = system;
-        self.conventions = vec![system.convention()];
     }
 
     pub fn randomseat(&self) -> Option<Seat> {
@@ -328,7 +331,7 @@ impl<C> GameState<C> {
         }
     }
     pub fn bid_convention(&self, bids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
-        self.conventions[0].refine(bids).map(|c| c.description())
+        self.system.table().refine(bids).map(|c| c.description())
     }
     pub fn bid_convention2(&self, bid: Bid, oldbids: &[Bid]) -> Option<impl DisplayAs<HTML>> {
         let mut bids = oldbids.to_vec();
@@ -336,14 +339,14 @@ impl<C> GameState<C> {
         self.bid_convention(&bids)
     }
     pub fn bid_understood2(&self, bid: Bid, otherbids: &[Bid]) -> bool {
-        self.conventions[0].refine2(bid, otherbids).is_some()
+        self.system.table().refine2(bid, otherbids).is_some()
     }
     /// Advice for `seat` on its next bid, when it is that seat's turn to bid.
     pub fn bidding_advice(&self, seat: Seat) -> Option<impl DisplayAs<HTML>> {
         if self.bidder() != Some(seat) {
             return None;
         }
-        Some(self.conventions[0].advice(&self.bids, self.hands[seat]))
+        Some(self.system.table().advice(&self.bids, self.hands[seat]))
     }
     /// Notes that something just happened at this table.
     pub fn touch(&mut self) {
@@ -356,7 +359,6 @@ impl<C> GameState<C> {
         let connections = std::mem::take(&mut self.connections);
         let count_for_me = self.count_for_me;
         let system = self.system;
-        let conventions = std::mem::take(&mut self.conventions);
         *self = Self {
             names,
             dealer,
@@ -364,7 +366,7 @@ impl<C> GameState<C> {
             ai,
             count_for_me,
             system,
-            ..GameState::with_conventions(conventions)
+            ..GameState::new()
         }
     }
 
@@ -557,6 +559,8 @@ impl<C> GameState<C> {
 
     pub fn trick_finish(&mut self) {
         if self.played.len() == 4 {
+            let cards = [self.played[0], self.played[1], self.played[2], self.played[3]];
+            self.tricks.push((self.lead.unwrap(), cards));
             let led = self.played[0].suit();
             let mut cards = Cards::EMPTY;
             for c in self.played.iter().cloned() {
@@ -729,7 +733,7 @@ fn test_bidding_system_survives_redeal_and_serialization() {
     // The convention that explains bids is the one chosen.
     assert_eq!(
         "SAYC",
-        format_as!(HTML, game.conventions[0].name()).into_string()
+        format_as!(HTML, game.system.table().name()).into_string()
     );
 
     let mut json: serde_json::Value = serde_json::to_value(&game).unwrap();
@@ -873,13 +877,17 @@ fn declarer_tricks(
             defenders_remember
         };
         let shown_out = game.shown_out;
+        let tricks = std::mem::take(&mut game.tricks);
         if !remembers {
             game.shown_out = no_cards();
+        } else {
+            game.tricks = tricks.clone();
         }
         let Action::Play(_, card) = ai.play(game) else {
             unreachable!()
         };
         game.shown_out = shown_out;
+        game.tricks = tricks;
         game.play(card);
     }
     Some(match declarer {
