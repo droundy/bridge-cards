@@ -253,9 +253,10 @@ play history, so today the player sees only what is left.
   sides from one trick to the next.  The two hidden hands of the family are
   the first and second hidden hands after the player, as the tables'
   `FirstLength` and `SecondLength` already have them: for declarer the
-  left-hand and right-hand opponents, for the defender after the dummy
-  partner and the right-hand opponent, and for the one before it the
-  left-hand opponent and partner.
+  left-hand and right-hand opponents, for the defender with the dummy on
+  their left partner and then the right-hand opponent (the declarer), and
+  for the one with the dummy on their right the left-hand opponent (the
+  declarer) and then partner.
 - **Joined to the player later.**  A finesse depends on the chance that the
   king is in the right place, and a linear player cannot multiply a belief
   by "this card finesses against the king" unless that product is a
