@@ -2720,7 +2720,8 @@ mod tests {
     /// play model file (see `model_file`) to `PLAY_SELF_CHECKPOINT`, and
     /// reports the tricks a play each learner's choices lose by the
     /// ensemble's values on the data in `PLAY_TEST` if that is set.  It uses
-    /// `PLAY_THREADS` threads, or else every core.
+    /// `PLAY_THREADS` threads, or else every core, and its random numbers
+    /// are seeded by `PLAY_SELF_SEED` (10 more than its first round).
     ///
     /// With `PLAY_SELF_PLAYOUT_SHARE` above 0, that share of the learners'
     /// choices of more than one card with up to `PLAY_SELF_PLAYOUT_TRICKS`
@@ -3070,7 +3071,8 @@ mod tests {
         let mut best = 0;
         let mut watched: Vec<serde_json::Value> = Vec::new();
         let samples = number("PLAY_SELF_SAMPLES", 2);
-        let mut rng = StdRng::seed_from_u64(10 + first_round as u64);
+        // `PLAY_SELF_SEED` gives a run other random numbers, for a replicate.
+        let mut rng = StdRng::seed_from_u64(number("PLAY_SELF_SEED", 10 + first_round) as u64);
         let threads = number(
             "PLAY_THREADS",
             std::thread::available_parallelism().map_or(4, |n| n.get()),
