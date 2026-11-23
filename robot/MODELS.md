@@ -332,6 +332,23 @@ play history, so today the player sees only what is left.
 
 Desktop suggested the second baseline, the system, the stages and the enumeration.
 
+## Ideas to simmer
+
+- **A temperature that means something in tricks (the user's, 2026-11-23).**
+  To say in bridge terms what a temperature is, as in "T costs a notrump
+  defender X tricks a deal", a player at T would be measured against
+  perfect play.  Double dummy alone does not do it: its worths are whole
+  tricks, so a soft double-dummy player loses about
+  n<sub>1</sub>e<sup>−1/T</sup> a choice for n<sub>1</sub> cards a trick
+  worse, nothing at T = 0.03, and it resolves T only from about 0.15 to
+  0.5, while our T measures differences of averaged worth, often under
+  half a trick (Pure's point).  To work, each choice would be valued as
+  the player values it: the hidden cards dealt again and again to fit the
+  auction, each deal solved double dummy, against a player at T.  That is
+  slow and hard.  The cheaper way round is a player's equivalent
+  temperature on one fixed scale, the T at which a reference player loses
+  as much as they do, by role.
+
 ## Order of work
 
 1. The player: its objective, and the systematic study of tables and shapes.
