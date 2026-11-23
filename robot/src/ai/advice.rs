@@ -346,6 +346,28 @@ impl Convention {
         (shown.min, shown.max)
     }
 
+    /// How many cards of each suit the calls of the player `offset` seats
+    /// before the next bidder show or suggest: the most that the meaning of
+    /// any one of their calls asks for.  Unlike [`Convention::shown_bounds`],
+    /// this includes the meanings that a table gives to natural bids, which
+    /// say what the partnership needs and so are not bounds on the hand, but
+    /// which still suggest the suit that they are about, as a natural new suit
+    /// or a competitive raise does.  It is what the table says of the calls
+    /// and never the calls themselves.
+    pub(super) fn suggested_lengths(&self, history: &[Bid], offset: usize) -> [u8; 4] {
+        let n = history.len();
+        let mut lengths = [0; 4];
+        for i in (0..n).filter(|i| (n - i) % 4 == offset) {
+            if let Some(meaning) = self.refine(&history[..=i]) {
+                let (min, _) = meaning.bounds();
+                for suit in Suit::ALL {
+                    lengths[suit as usize] = lengths[suit as usize].max(min.length[suit]);
+                }
+            }
+        }
+        lengths
+    }
+
     /// A sentence on what `who` has shown with their bids, if they have bid
     /// anything but pass, or are partner.
     fn what_was_shown(&self, history: &[Bid], who: &str, offset: usize) -> Option<Text> {
