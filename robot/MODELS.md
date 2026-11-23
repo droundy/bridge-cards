@@ -112,6 +112,41 @@ tolerance in tricks, which means something, rather than a temperature or an
 entropy target.  For reading real opponents the temperature would instead be
 fitted, by maximum likelihood, to the plays of the players being read.
 
+This is the logit quantal response of game theory, and the policy of
+entropy-regularized ("soft") reinforcement learning.  It makes "close"
+exact: a card g tricks worse than the best is played e<sup>−g/T</sup> times
+as often.  At T = 0.1 tricks a card half a trick worse is played about 0.7%
+as often as the best, and one 0.05 worse about 60% as often.
+
+- **One bound on the mean loss, so one T.**  A choice with many cards near
+  the best then gives up a little more than one with a clear best, which is
+  the natural reading; a bound for each choice, with a T for each, would be
+  a different model, and the two should not be mixed.
+- **Entropy over distinct plays.**  The cards of a run of touching cards win
+  the same tricks, so the entropy is counted over runs, and each run's
+  chance is shared equally among its cards.  Counted over cards, a run of k
+  would get k times the chance of a single card against the other plays,
+  and the old entropy target of self-play was met mostly that way, by
+  equivalent cards, while cards close to the best but different stayed
+  below 1e-4.  Shared equally within a run, the chances are the principle
+  of restricted choice, so a model of a player who chooses at random among
+  equal cards reads them as a bridge player does.  Signals break that
+  equality on purpose, and a policy whose values include partner's later
+  inference can learn them; the definition still holds.
+- **The slope.**  Card i's score rises by p<sub>i</sub>(v<sub>i</sub> −
+  Σ<sub>j</sub> p<sub>j</sub>v<sub>j</sub> − T(log p<sub>i</sub> −
+  Σ<sub>j</sub> p<sub>j</sub> log p<sub>j</sub>))/T, which is unbiased when
+  v is a noisy playout result and is zero at p ∝ e<sup>v/T</sup>.  The
+  scores then become v/T up to a constant: the player also gives card values
+  near the best, and chances, if T is fitted to the players being read.
+- **Soft values.**  Exactly, v is a soft value: the tricks plus T times the
+  entropy of the choices after, played by the same policy.  Playouts that
+  play on greedily give the policy for one choice at a time, which is close
+  to the exact one when T is small, and is the place to start.
+- **The tolerance.**  It is the one thing chosen, in tricks a play.  A
+  natural choice is how accurate the players actually are: the mean loss a
+  play of the learners on the playout yardstick (about 0.08 tricks now).
+
 ## Order of work
 
 1. The player: its objective, and the systematic study of tables and shapes.
