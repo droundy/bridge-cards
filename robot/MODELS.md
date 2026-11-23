@@ -221,9 +221,8 @@ play history, so today the player sees only what is left.
   converges to the projected likelihood ratio, so the recursion is
   consistent.  Projecting each play's evidence onto the family is
   assumed-density filtering, and the error of each projection carries into
-  the later beliefs; the enumerated endings below measure it.  The auction's
-  parameters, before the first play, are its
-  prior.
+  the later beliefs; the enumerated endings below measure it.  The parameters
+  before the first play are the prior, from the auction (below).
 - **Separate at first.**  It is trained on the games that the player's
   training plays anyway, with weights of its own, so it cannot change the
   player's play or its training.  It is about 130 outputs (up to 39 fields, 56
@@ -280,10 +279,21 @@ play history, so today the player sees only what is left.
   bounds that the auction showed, would instead take the expected weight
   over the belief's length and points distributions.  It is measured like
   any change to the player: matches at equal games.
-- **The bidding system.**  The auction's prior depends on the system played
-  (Sheets, SAYC, 2/1), so the model must know it: either its inputs are the
-  bounds that the system's table gives each call (`shown_bounds`), which
-  carry the system with them, or its features are crossed with the system.
+- **The auction enters only through what it shows (the user's rule).**
+  Nothing in the model depends on the bidding system, and no actual bid is
+  ever an input.  The auction reaches the beliefs only through what the
+  system says the calls showed, and only as the prior at the start of the
+  play: the parameters h, φ and ψ before the first card are fitted, by the
+  same moment matching, to an ensemble dealt to agree with the auction (the
+  PR 72 dealer's posterior), which makes them the maximum-entropy beliefs
+  with that ensemble's card chances, lengths and points; or they hold the
+  ranges that `shown_bounds` gives each call as constraints.  Either way the
+  system does its work outside the model, and what the model learns, the
+  update Δ from each play, is the same whatever system was bid.  This holds
+  for the player as well: its `FirstLength`, `FirstPoints` and the like
+  already read what the auction showed (`Shown`) and not the calls, while
+  the shape `v2-bids` reads who bid each suit (`Table::Bids`), which this
+  rule rules out (none of the four shapes being trained uses it).
 - **How it is judged.**  By log loss against two baselines: vacant places,
   and the auction alone (deals dealt uniformly within the bounds that the
   tables give each call), which says how much the learned corrections add to
