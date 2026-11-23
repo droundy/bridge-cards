@@ -140,9 +140,11 @@ as often as the best, and one 0.05 worse about 60% as often.
   scores then become v/T up to a constant: the player also gives card values
   near the best, and chances, if T is fitted to the players being read.
 - **Soft values.**  Exactly, v is a soft value: the tricks plus T times the
-  entropy of the choices after, played by the same policy.  Playouts that
-  play on greedily give the policy for one choice at a time, which is close
-  to the exact one when T is small, and is the place to start.
+  entropy of the choices after, played by the same policy.  The plan
+  ([PLAYER_TRAINING.md](PLAYER_TRAINING.md)) plays everything after the
+  trained choice at T<sub>opp</sub> by both sides, and counts only the tricks.
+  That gives the policy for one choice at a time, which is close to the
+  exact one when T is small, and is the place to start.
 - **The tolerance.**  It is the one thing chosen, in tricks a play.  A
   natural choice is how accurate the players actually are: the mean loss a
   play of the learners on the playout yardstick (about 0.08 tricks now).

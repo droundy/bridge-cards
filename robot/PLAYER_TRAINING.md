@@ -21,13 +21,24 @@ to play takes from then on, when
 
 - the hands that the player cannot see are dealt by an ensemble that fits
   what the player knows (the auction and the play so far), and
-- every later card, by either side, is played as a player at temperature
-  T<sub>opp</sub> would play it, choosing card j with the chance
+- every later card, by either side, is played by the model of the player
+  who sits there in the game (a learner or a past model) at temperature
+  T<sub>opp</sub>, choosing card j with the chance
   e<sup>s<sub>j</sub>/T<sub>opp</sub></sup> / Σ<sub>k</sub>
   e<sup>s<sub>k</sub>/T<sub>opp</sub></sup>.
 
 Both sides play on the same way, our own later play included: v is the
 worth of a card in a game played by that kind of player, and nothing else.
+
+So v depends on the models themselves.  A better partner or opponent changes
+what every card is worth, and the training chases a target that moves as the
+learners learn.  The answer it seeks is a self-consistent one: scores that
+are the worth of the cards when the game is played by players with those
+scores.  In game theory this is the quantal response equilibrium.
+
+With the true deal, the hidden hands are an exact draw from what the players'
+own bidding and play make likely, so v needs no model of the hidden hands at
+all.  With the dealer's ensemble, v is only as right as the dealer.
 
 The chances of the plays are the softmax of the scores at a temperature that
 is not part of the model: p<sub>i</sub> ∝ e<sup>s<sub>i</sub>/T</sup>.  The
@@ -57,6 +68,14 @@ mistake that says something about the hand.
 The entropy is counted over distinct plays.  The cards of a run of touching
 cards win the same tricks, so a run is one play, and its chance is shared
 equally among its cards.  That is the principle of restricted choice.
+
+So the model scores one card of each run, the lowest, as the playouts
+already do (`playout::one_of_each_run`).  The run's chance is the softmax of
+those scores over the runs, and each card of the run gets an equal share of
+it.  The sums in the objective and the slope below are over runs, not
+cards.  Counted over cards instead, a run of k cards would gain T log k of
+entropy against a single card, and the training would favour long runs for
+no reason in tricks.
 
 ## The objective
 
@@ -94,21 +113,60 @@ definition of v.  If the model can represent v, the free energy has this one
 maximum, and gradient ascent with noisy but unbiased slopes and a small
 enough rate (stochastic approximation) arrives at it.
 
+That argument holds v fixed, and v moves with the models (see above).
+Learning against players who also learn is a fixed-point iteration, not the
+ascent of one fixed objective, and in games such iterations can circle
+rather than settle.  Nothing proves that this one settles; the matches below
+are how we find out.  Two things help:
+- the past models in the games, which change slowly;
+- a rate that is small next to how fast the worth of the cards changes.
+
+**The rate.**  Adam at a constant rate does not settle on a point.  It
+wanders around the answer by an amount that grows with the rate and the
+noise of the slopes.  The true-deal runs of 2026-11-21 and 22 showed it:
+- at rate 0.002 the learners levelled off about 0.25 tricks a deal below the
+  reference;
+- at 0.0005, or with the rate halved every 1500 rounds down to 0.00025, they
+  levelled off at about 0.19 to 0.21 below it.
+So start at 0.0005, and lower the rate at the end for the final answer.
+
 **A small model cannot represent v.**  Its tables describe cards, not every
 detail of a deal, so it can only approximate the worth of each card, and the
-objective then says where its errors go.  In J<sub>T</sub> an error in card
-i's score costs in proportion to p<sub>i</sub>, the chance that the card is
-played: an error on a card that no one would play costs no tricks, and an
-error on the card that will be played, or on one close to it, costs most.
+objective then says where its errors go.  This can be made exact.  Let the
+scores miss the answer by δ<sub>i</sub>, so s<sub>i</sub> = v<sub>i</sub> + c
++ δ<sub>i</sub>.  Expanding the free energy about its maximum J<sub>T</sub>*
+to second order gives
+
+J<sub>T</sub> = J<sub>T</sub>* − (1/2T) Σ<sub>i</sub> p<sub>i</sub>
+(δ<sub>i</sub> − δ̄)<sup>2</sup>,  δ̄ = Σ<sub>i</sub> p<sub>i</sub>
+δ<sub>i</sub>,
+
+with p the chances at the answer.  So an error costs in proportion to the
+chance that its card is played:
+- an error on a card that no one would play costs nothing;
+- an error on the card that will be played, or on one close to it, costs
+  most;
+- an error shared by every card of a choice costs nothing either, which is
+  why there is no level to fit.
+Among cards worth the same, an error costs no tricks, only entropy, so the
+model is still pushed to give equal cards equal chances, as reading the
+opponents needs.
+
 So the free energy at the temperature of use puts the model's limited
 accuracy where play happens.  This is the reason for the weighting, and the
-evidence for it is what happened without it: fitting every card's worth
+evidence for it is what happened without it.  Fitting every card's worth
 alike by least squares, the level of each position included, made the
-learners worse at choosing.  They spent their capacity on cards that are
-never played and on the level, which a choice does not depend on, and the
-likeliest card's loss to the best played out rose from 0.086 to 0.11 tricks
-a play while the fit of the level improved.  The scores here have no level
-to fit.
+learners worse at choosing:
+- with the dealer's ensemble, the likeliest card's loss to the best played
+  out rose from 0.086 to 0.11 tricks a play while the fit of the level
+  improved;
+- with the true deal, every such fit (at any rate, batch, or weight on the
+  differences) played 0.15 to 0.3 tricks a deal worse than the reference it
+  started from.
+They spent their capacity on cards that are never played and on the level,
+which a choice does not depend on.  By contrast, the playout slope inside
+ordinary self-play (commit c57618b), a form of the slope here, held level
+with the reference over 3000 rounds.
 
 **Local maxima, and annealing.**  With an inadequate model the free energy
 has local maxima, and fitting well only the cards that it plays is
@@ -166,23 +224,69 @@ not the design.
   the same u is the same degree of error on every playout, even where their
   positions differ.  Ties are broken by the card.
 - **Units.**  The learners of round 88000 were trained at temperature 1 in
-  their own units.  Multiplying all of their scores by T<sub>opp</sub> puts
-  them in tricks with no change to their play at T<sub>opp</sub>
-  (`Network::scale_scores`), and no other calibration is needed.
+  their own units, and their units are not tricks.  The first-round
+  calibration of 2026-11-20 fitted the differences of their scores to those
+  of playout tricks, and found about 0.01 tricks per unit (0.009 to 0.015 for
+  the four learners).  So they play like players at about 0.01 trick: cold,
+  more than 99.9% sure on most real choices.
+
+  There are two ways to start, and they differ:
+  - **Keep their play.**  Multiply the scores by T<sub>opp</sub>
+    (`Network::scale_scores`).  Their play at T<sub>opp</sub> is then
+    unchanged, but the scores claim differences 10 to 100 times larger than
+    the tricks, and the training must first shrink them.
+  - **Put the scores in tricks.**  Multiply by the fitted factor, which is
+    what the calibration in `learn_from_playouts` already does, without its
+    shift (there is no level).  The scores then mean tricks from the start,
+    but at T<sub>opp</sub> of 0.1 to 1 trick the learners play far hotter
+    than they ever trained, and the first games are weaker.
+
+  Since the answer is s = v whichever way we start, and annealing begins hot
+  anyway, putting the scores in tricks is the honest start.  Keeping their
+  play is the cautious one.  This is the one choice the plan leaves to the
+  first runs; the two sessions can take one each.
 - **The schedule.**  T from 1 trick down to T<sub>opp</sub> geometrically,
-  over a number of rounds to be found; the rate of Adam constant, or lowered
-  at the end.
+  over a number of rounds to be found; Adam at rate 0.0005, lowered at the
+  end (see "The rate").
+- **The temperatures, in one place:**
+
+  | Where | Temperature |
+  |---|---|
+  | the games, every card | T<sub>opp</sub> |
+  | the playouts after the trained choice, both sides | T<sub>opp</sub> |
+  | the weights and the entropy of the trained choice's slope | T, annealed from 1 trick to T<sub>opp</sub> |
+  | the robot's own play, and the matches | 0: the best card |
+  | reading an opponent | that opponent's fitted T |
+
+  Only the trained choice is annealed; everything after it is the game as
+  it is played at T<sub>opp</sub>.  So v stays the worth in that game
+  throughout the schedule.
+- **T<sub>opp</sub> for the first runs.**  The plan leaves T<sub>opp</sub> to
+  be chosen, and the first runs need a number: 0.3 trick, the middle of the
+  range on a log scale, with both sessions using the same value so that
+  their runs can be compared.
 
 ## Measuring it
 
 - **The zero line.**  The untrained learners of round 88000 against the
   reference (`round-88000.bin#4`), before anything else, so that every run is
-  judged by how far it moves from where it began.
+  judged by how far it moves from where it began.  The matches play the best
+  card, so this does not depend on T, or on how the scores are scaled.
+- **The noise of a match.**  One reference match is uncertain by about 0.045
+  tricks a deal for the mean of the four learners, and two runs with the same
+  settings on different machines agreed within 0.01 to 0.02 at the same
+  round.  So compare runs by the mean of ten or more matches, at equal games
+  played.
 - **Matches.**  Against the reference and the robot, at equal games played,
   as before.  These say whether the play is better.
 - **The free energy.**  The mean of J at T<sub>opp</sub> over the positions
   played out, as it is trained, and the loss of the likeliest card to the
   best played out.  These say whether the training does what it is meant to.
+  On the true deal the best of the cards played out is partly luck, so that
+  loss has a floor (about 0.23 tricks a play), and only its changes mean
+  anything.  The playout yardstick (`score_on_the_playout_yardstick`, 100
+  deals a position) measures the same thing without that floor, for any
+  checkpoint, and is the common measure for both sessions' runs.
 - **The temperature.**  The T that makes the learners' own plays most likely
   against 100-deal values, by stage (leads, following, discards) and by
   side, to see whether one T describes them.
