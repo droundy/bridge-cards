@@ -314,8 +314,24 @@ first runs taught (`free-energy` branch, 2026-11-23):
   where the chances at T are, and the robot plays greedily, so the player's
   T<sub>opp</sub> should be cold; a hot T belongs to the model of chances.
 - Annealing from T = 1 costs the first 1000 rounds: it melts order that a
-  trained, cold start already has.  Whether to anneal at all is being
-  measured.
+  trained, cold start already has.  With no anneal at T<sub>opp</sub> = 0.03
+  or 0.01, the learners were 0.02–0.06 above their start from the first
+  1000-round window, in three runs.  Those runs shared their deals (see
+  below), so this is less evidence than three seeds would be.
+- The slope is right: on fixed choices it matches a finite difference of
+  the free energy to four figures, and a step from one playout a run raises
+  the free energy of held-out choices as a step from 32 playouts does.  At
+  a hot T that rise is in the entropy, and the expected tricks fall: matches
+  played at T<sub>opp</sub> count only the tricks, so they show the learners
+  losing by design.  Judge the player by greedy matches.
+- Steps along one fixed slope help greedy play for about 30–100 of Adam's
+  first steps, then overshoot, sooner when the later cards are played
+  greedily.  A part of the slope that keeps its sign from round to round
+  adds up in the same way, which fits the drift's timing.
+- Replicates must differ in their deals.  The fresh deals are seeded by the
+  first round only, not by `PLAY_SELF_SEED`, and the starting pool is fixed,
+  so runs that start at the same round play the same deals whatever their
+  seed.  Their seeds change only the draws of the play and of the playouts.
 
 ## Then
 
