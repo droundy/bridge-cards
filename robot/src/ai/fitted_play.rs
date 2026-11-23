@@ -2043,7 +2043,9 @@ mod tests {
     /// which one was played, the side that chose it (0 for north and south)
     /// and the tricks that side had already won, and, if it was played out
     /// (see [`playout`]), the tricks that side took after each card, with
-    /// the weight of 1 over the chance that it was.
+    /// the weight of 1 over the chance that it was.  Chosen by runs (see
+    /// [`Playouts::by_runs`]), it also has the run of each card, by its
+    /// number, and the number of each run's lowest card among the cards.
     struct Decision {
         learner: usize,
         cards: Vec<(Vec<usize>, f64)>,
@@ -2053,6 +2055,171 @@ mod tests {
         won_before: usize,
         played_out: Option<Vec<f64>>,
         weight: f64,
+        run: Vec<usize>,
+        lowest: Vec<usize>,
+    }
+
+    /// The runs of touching cards among `legal`, the cards that the player
+    /// to play in `game` could play: the number of each card's run, and the
+    /// number in `legal` of each run's lowest card, which is the card that
+    /// stands for the run (see [`crate::ai::playout::one_of_each_run`]).
+    fn runs_of(game: &GameState<()>, legal: &[Card]) -> (Vec<usize>, Vec<usize>) {
+        let runs: Vec<Card> = crate::ai::playout::one_of_each_run(game).collect();
+        let run = legal.iter().map(|&card| crate::ai::playout::run_of(&runs, card)).collect();
+        let lowest = runs.iter().map(|r| legal.iter().position(|c| c == r).unwrap()).collect();
+        (run, lowest)
+    }
+
+    /// The chance of each run, from the scores of the cards that stand for
+    /// them: their softmax at `temperature`, in tricks.  Each card of a run
+    /// has an equal share of its chance, as the principle of restricted
+    /// choice has it, so the entropy is counted over the runs.
+    fn run_chances(scores: &[f64], temperature: f64) -> Vec<f64> {
+        let most = scores.iter().copied().fold(f64::MIN, f64::max);
+        let odds: Vec<f64> = scores.iter().map(|s| ((s - most) / temperature).exp()).collect();
+        let sum: f64 = odds.iter().sum();
+        odds.into_iter().map(|o| o / sum).collect()
+    }
+
+    /// The slope of the free energy Σ p v + T H(p) of a choice with the
+    /// `scores` of its runs, whose worth is `worth`, at the temperature `t`,
+    /// with p the chances of [`run_chances`]: p<sub>i</sub>(v<sub>i</sub> −
+    /// Σ p v − t(log p<sub>i</sub> − Σ p log p))/t for run i.  It is zero
+    /// when the scores are the worth, up to one constant.
+    fn free_energy_slope(scores: &[f64], worth: &[f64], t: f64) -> Vec<f64> {
+        let p = run_chances(scores, t);
+        let most = scores.iter().copied().fold(f64::MIN, f64::max);
+        let sum: f64 = scores.iter().map(|s| ((s - most) / t).exp()).sum();
+        let log_p: Vec<f64> = scores.iter().map(|s| (s - most) / t - sum.ln()).collect();
+        let mean_worth: f64 = p.iter().zip(worth).map(|(p, v)| p * v).sum();
+        let mean_log: f64 = p.iter().zip(&log_p).map(|(p, l)| p * l).sum();
+        (0..scores.len())
+            .map(|r| p[r] * (worth[r] - mean_worth - t * (log_p[r] - mean_log)) / t)
+            .collect()
+    }
+
+    /// The slope of the free energy is zero where the scores are the worth
+    /// of the runs plus a constant, at any temperature, and it pushes the
+    /// better run up elsewhere; a little way along it the free energy rises.
+    #[test]
+    fn the_free_energy_is_flat_where_the_scores_are_the_worth() {
+        let worth = [7.0, 6.5, 6.9, 4.0];
+        for t in [0.1, 0.3, 1.0] {
+            let at: Vec<f64> = worth.iter().map(|v| v + 3.0).collect();
+            for g in free_energy_slope(&at, &worth, t) {
+                assert!(g.abs() < 1e-12, "{g} at {t}");
+            }
+            let flat = [0.0; 4];
+            let slope = free_energy_slope(&flat, &worth, t);
+            assert!(slope[0] > 0.0 && slope[3] < 0.0, "{slope:?}");
+            let free = |scores: &[f64]| {
+                let p = run_chances(scores, t);
+                let entropy: f64 = p.iter().map(|p| -p * p.ln()).sum();
+                p.iter().zip(&worth).map(|(p, v)| p * v).sum::<f64>() + t * entropy
+            };
+            let stepped: Vec<f64> = flat.iter().zip(&slope).map(|(s, g)| s + 1e-3 * g).collect();
+            assert!(free(&stepped) > free(&flat));
+        }
+    }
+
+    /// A draw of 0 plays the likeliest run, the runs come in order of their
+    /// chances, and each card of a run takes an equal share of it.
+    #[test]
+    fn a_draw_of_quality_picks_the_runs_in_order_of_their_chances() {
+        let model = random_model(5);
+        for game in some_games().iter().take(20) {
+            let Some(view) = View::new(game, &game.system.convention()) else {
+                continue;
+            };
+            let legal: Vec<Card> = view.legal().collect();
+            let (run, lowest) = runs_of(game, &legal);
+            let scores: Vec<f64> = lowest.iter().map(|&i| model.score(&view, legal[i])).collect();
+            let chances = run_chances(&scores, 0.3);
+            assert!((chances.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+            let likeliest = (0..chances.len()).max_by(|&a, &b| chances[a].total_cmp(&chances[b])).unwrap();
+            let first = card_at_quality(game, &view, &model, 0.3, 0.0);
+            assert_eq!(run[legal.iter().position(|&c| c == first).unwrap()], likeliest);
+            // Many draws play each card about as often as its share.
+            let n = 4000;
+            let mut played = vec![0usize; legal.len()];
+            for k in 0..n {
+                let card = card_at_quality(game, &view, &model, 0.3, (k as f64 + 0.5) / n as f64);
+                played[legal.iter().position(|&c| c == card).unwrap()] += 1;
+            }
+            for (j, &count) in played.iter().enumerate() {
+                let size = run.iter().filter(|&&r| r == run[j]).count() as f64;
+                let expected = chances[run[j]] / size;
+                assert!((count as f64 / n as f64 - expected).abs() < 2.0 / n as f64 + 1e-9, "{count} of {n} for {expected}");
+            }
+        }
+    }
+
+    /// The card that `model` plays in `view`, the view of the player to play
+    /// in `game`, at `temperature`, when the draw is `quality`, from 0 to 1:
+    /// the runs are put in order of their chances, the likeliest first (and
+    /// by their cards when the chances are equal), and the card is that of
+    /// the run at `quality` in the sum of their chances, and within the run
+    /// at the rest of `quality`, so that a draw of 0 is the likeliest play
+    /// and the same draw is the same degree of error wherever it is used.
+    fn card_at_quality(game: &GameState<()>, view: &View, model: &Model, temperature: f64, quality: f64) -> Card {
+        let legal: Vec<Card> = view.legal().collect();
+        let (run, lowest) = runs_of(game, &legal);
+        let scores: Vec<f64> = lowest.iter().map(|&i| model.score(view, legal[i])).collect();
+        let chances = run_chances(&scores, temperature);
+        let mut order: Vec<usize> = (0..lowest.len()).collect();
+        order.sort_by(|&a, &b| chances[b].total_cmp(&chances[a]).then(legal[lowest[a]].cmp(&legal[lowest[b]])));
+        let mut before = 0.0;
+        let mut pick = order[order.len() - 1];
+        for &r in &order {
+            if quality < before + chances[r] || r == pick {
+                pick = r;
+                break;
+            }
+            before += chances[r];
+        }
+        let members: Vec<Card> = legal.iter().zip(&run).filter(|(_, &r)| r == pick).map(|(&c, _)| c).collect();
+        let share = ((quality - before) / chances[pick]).clamp(0.0, 1.0);
+        members[((share * members.len() as f64) as usize).min(members.len() - 1)]
+    }
+
+    /// Plays `card` in `game` and the rest of the game after it, as
+    /// [`playout`] does, but with every later card, by either side, played by
+    /// the model of its seat at `temperature` (see [`card_at_quality`]), the
+    /// draw for each trick and seat taken from `qualities`, so that the
+    /// playouts after the different cards of one choice, on one deal, meet
+    /// the same luck.  The players of any card draw from `seed`.
+    #[expect(clippy::too_many_arguments, reason = "a playout's settings, all at hand where it is called")]
+    fn playout_at(
+        game: &GameState<()>,
+        card: Card,
+        convention: &Convention,
+        learners: &[Model],
+        players: [Player; 4],
+        temperature: f64,
+        qualities: &[[f64; 4]; 13],
+        seed: u64,
+    ) -> [usize; 2] {
+        let mut game = crate::ai::playout::copy_of(game);
+        let mut rng = StdRng::seed_from_u64(seed);
+        game.play(card);
+        while !game.hand_done {
+            let seat = game.lead.unwrap() + current_trick(&game).len();
+            let model = match players[chooser(&game, seat) as usize] {
+                Player::Learning(learner) => &learners[learner],
+                Player::Past(model, _) => model,
+                Player::Random => {
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                    continue;
+                }
+            };
+            let Some(view) = View::new(&game, convention) else {
+                break;
+            };
+            let quality = qualities[game.tricks.len().min(12)][seat as usize];
+            game.play(card_at_quality(&game, &view, model, temperature, quality));
+        }
+        [game.ns_tricks, game.ew_tricks]
     }
 
     /// Plays `card` in `game`, a game of self-play, and the rest of the game
@@ -2101,7 +2268,10 @@ mod tests {
     /// the temperature `reading` if that is set, and fitted to the
     /// `level` and the `apart` accuracies, in tricks (see
     /// [`learn_from_playouts`]): an infinite `level` leaves the level of the
-    /// scores out, and the tricks are not put at a level.
+    /// scores out, and the tricks are not put at a level.  With `by_runs`,
+    /// the models choose by the runs of touching cards (see [`run_chances`]),
+    /// in the games and in the playouts, where every later card is drawn at
+    /// the temperature of the games (see [`playout_at`]).
     #[derive(Clone, Copy)]
     struct Playouts {
         share: f64,
@@ -2111,6 +2281,7 @@ mod tests {
         reading: Option<f64>,
         level: f64,
         apart: f64,
+        by_runs: bool,
     }
 
     /// About `count` deals of the hands that the player to play in `game`
@@ -2171,9 +2342,13 @@ mod tests {
     /// differences of its scores nearest those of the tricks, and the sums
     /// of the weights, scores and tricks, to find the shift that then makes
     /// its scores nearest the tricks.
+    /// Learning the free energy, `short` is the sum of how far each choice's
+    /// free energy at the temperature of the games falls short of the best
+    /// card's tricks.
     #[derive(Clone, Copy, Default)]
     struct Tally {
         lost: f64,
+        short: f64,
         choices: usize,
         off: f64,
         off_apart: f64,
@@ -2188,6 +2363,7 @@ mod tests {
     impl Tally {
         fn add(&mut self, other: &Tally) {
             self.lost += other.lost;
+            self.short += other.short;
             self.choices += other.choices;
             self.off += other.off;
             self.off_apart += other.off_apart;
@@ -2219,6 +2395,9 @@ mod tests {
         /// By fitting the scores of the cards of each choice played out to
         /// the tricks after them.
         Playouts,
+        /// Up the slope of the free energy of each choice played out, at a
+        /// temperature that is lowered as it learns.
+        FreeEnergy,
     }
 
     /// How a seat chooses its cards in self-play.
@@ -2281,10 +2460,21 @@ mod tests {
             };
             let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
-                let cards: Vec<(Vec<usize>, f64)> = chances(&view, weights, temperature)
-                    .into_iter()
-                    .map(|(card, chance)| (weights.entries(&view, card), chance))
-                    .collect();
+                let (run, lowest) = if playouts.by_runs { runs_of(&game, &legal) } else { (Vec::new(), Vec::new()) };
+                let cards: Vec<(Vec<usize>, f64)> = if playouts.by_runs {
+                    // Each run's chance, shared among its cards.
+                    let entries: Vec<Vec<usize>> = legal.iter().map(|&card| weights.entries(&view, card)).collect();
+                    let scores: Vec<f64> = lowest.iter().map(|&i| weights.network.score(&entries[i])).collect();
+                    let chances = run_chances(&scores, temperature);
+                    let mut sizes = vec![0; lowest.len()];
+                    run.iter().for_each(|&r| sizes[r] += 1);
+                    entries.into_iter().zip(&run).map(|(e, &r)| (e, chances[r] / sizes[r] as f64)).collect()
+                } else {
+                    chances(&view, weights, temperature)
+                        .into_iter()
+                        .map(|(card, chance)| (weights.entries(&view, card), chance))
+                        .collect()
+                };
                 let mut pick = rng.gen_range(0.0..1.0);
                 let mut chosen = cards.len() - 1;
                 for (i, (_, chance)) in cards.iter().enumerate() {
@@ -2333,6 +2523,8 @@ mod tests {
                         won_before: if side == 0 { game.ns_tricks } else { game.ew_tricks },
                         played_out,
                         weight: if share > 0.0 { 1.0 / share } else { 0.0 },
+                        run,
+                        lowest,
                     });
                 }
                 legal[chosen]
@@ -2358,9 +2550,22 @@ mod tests {
                 // Each deal is played out after each card, so that the cards
                 // are compared on the same deals.
                 let reading = playouts.reading.map(|t| (&learners[decisions[*number].learner], t));
-                let deals: Vec<(GameState<()>, f64, u64)> = deals_of(game, convention, playouts.deals, reading, rng)
+                // With each deal, the draws of the later plays of each trick
+                // and seat, shared by the playouts after every card.
+                type Dealt = (GameState<()>, f64, u64, [[f64; 4]; 13]);
+                let deals: Vec<Dealt> = deals_of(game, convention, playouts.deals, reading, rng)
                     .into_iter()
-                    .map(|(deal, weight)| (deal, weight, rng.gen::<u64>()))
+                    .map(|(deal, weight)| {
+                        let seed = rng.gen::<u64>();
+                        // Drawn only when used, so that the other ways of
+                        // learning draw as they did.
+                        let qualities = if playouts.by_runs {
+                            [(); 13].map(|()| [(); 4].map(|()| rng.gen_range(0.0..1.0)))
+                        } else {
+                            [[0.0; 4]; 13]
+                        };
+                        (deal, weight, seed, qualities)
+                    })
                     .collect();
                 let counted: f64 = deals.iter().map(|d| d.1).sum();
                 if deals.is_empty() || counted <= 0.0 {
@@ -2369,7 +2574,14 @@ mod tests {
                 let mean = |card: Card, players: [Player; 4]| -> f64 {
                     deals
                         .iter()
-                        .map(|(deal, w, seed)| w * playout(deal, card, convention, learners, players, *seed)[*side] as f64)
+                        .map(|(deal, w, seed, qualities)| {
+                            let won = if playouts.by_runs {
+                                playout_at(deal, card, convention, learners, players, temperature, qualities, *seed)
+                            } else {
+                                playout(deal, card, convention, learners, players, *seed)
+                            };
+                            w * won[*side] as f64
+                        })
                         .sum::<f64>()
                         / counted
                 };
@@ -2624,6 +2836,54 @@ mod tests {
         run_self_play(Learning::Playouts);
     }
 
+    /// Self-play (see [`self_play`], and its settings) in which the learners
+    /// climb the free energy of their choices, as `robot/PLAYER_TRAINING.md`
+    /// plans.  A model's scores are tricks, and it chooses among the runs of
+    /// touching cards with chances e<sup>s/T</sup> over their sum, each card
+    /// of a run with an equal share (see [`run_chances`]).  Every card of the
+    /// games, by every player, is chosen at `PLAY_SELF_TEMPERATURE` (0.3
+    /// tricks), T<sub>opp</sub>.  In each game with no player of any card,
+    /// `PLAY_SELF_PLAYOUTS` (1) of the learners' choices of more than one
+    /// run, with up to `PLAY_SELF_PLAYOUT_TRICKS` (13) tricks left, are
+    /// chosen at random once the game is over, each weighted by the number
+    /// of such choices over the number chosen, and played out after each run
+    /// on the same `PLAY_SELF_PLAYOUT_DEALS` (0: the deal as it was dealt)
+    /// deals of the hands that the player cannot see, dealt by
+    /// `PLAY_SELF_DEALER` as [`learn_from_playouts`] says, the play read at
+    /// `PLAY_SELF_DEALER_TEMPERATURE` (T<sub>opp</sub>).  Every later card of
+    /// a playout, by either side, is chosen at T<sub>opp</sub> with draws
+    /// shared by the playouts after every run (see [`playout_at`]), and the
+    /// worth v of each run is the mean of its side's tricks.
+    ///
+    /// Each learner's step is up the slope of the free energy Σ p v + T H(p)
+    /// of each choice played out, over its runs, with p the chances at T:
+    /// the score of run i rises by p<sub>i</sub>(v<sub>i</sub> − Σ p v −
+    /// T(log p<sub>i</sub> − Σ p log p))/T.  That is linear in v, so the luck
+    /// of the playouts averages out, and it is zero when the scores are the
+    /// worth of the runs, up to a constant for the choice, at every T.  T is
+    /// annealed from `PLAY_SELF_ANNEAL_FROM` (1 trick) down to
+    /// T<sub>opp</sub>, geometrically over `PLAY_SELF_ANNEAL_ROUNDS` (1000)
+    /// rounds counted from round `PLAY_SELF_ANNEAL_START` (the first of this
+    /// run; give it again to a run that resumes), and is T<sub>opp</sub>
+    /// after.  Neither `PLAY_SELF_PLAYOUT_SHARE` nor the tricks after each
+    /// choice are used, and there is no level and no entropy target.
+    ///
+    /// A learner that starts from a model of self-play, whose scores are not
+    /// tricks, first has them put in tricks as `PLAY_SELF_UNITS` says: with
+    /// `cautious` (the default), multiplied by T<sub>opp</sub>, which keeps
+    /// its play in the games as it was at temperature 1; with `honest`,
+    /// multiplied by the factor that brings the differences of its scores
+    /// nearest those of the tricks of the first round's playouts, in place
+    /// of that round's step, so that they mean tricks from the start.  The
+    /// report gives the temperature, how many tricks a play the likeliest
+    /// cards lose to the best played out, and how far the free energy at
+    /// T<sub>opp</sub> falls short of the best card's tricks.
+    #[test]
+    #[ignore]
+    fn learn_the_free_energy() {
+        run_self_play(Learning::FreeEnergy);
+    }
+
     /// Self-play, as [`self_play`] and [`learn_from_playouts`] say, the
     /// learners learning as `learning` says.
     fn run_self_play(learning: Learning) {
@@ -2632,7 +2892,14 @@ mod tests {
         let batch = number("PLAY_SELF_DEALS", 256);
         let group = number("PLAY_SELF_GROUP", 8);
         let report = number("PLAY_SELF_REPORT", 10);
-        let temperature = float("PLAY_SELF_TEMPERATURE", if learning == Learning::Playouts { 0.1 } else { 1.0 });
+        let temperature = float(
+            "PLAY_SELF_TEMPERATURE",
+            match learning {
+                Learning::Outcomes => 1.0,
+                Learning::Playouts => 0.1,
+                Learning::FreeEnergy => 0.3,
+            },
+        );
         let rate = float("PLAY_SELF_RATE", 0.01);
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
@@ -2647,6 +2914,21 @@ mod tests {
                 reading: None,
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
+                by_runs: false,
+            },
+            Learning::FreeEnergy => Playouts {
+                share: 0.0,
+                most: number("PLAY_SELF_PLAYOUT_TRICKS", 13),
+                per_game: number("PLAY_SELF_PLAYOUTS", 1),
+                deals: number("PLAY_SELF_PLAYOUT_DEALS", 0),
+                reading: match var("PLAY_SELF_DEALER", "play").as_str() {
+                    "play" => Some(float("PLAY_SELF_DEALER_TEMPERATURE", temperature)),
+                    "ensemble" => None,
+                    other => panic!("PLAY_SELF_DEALER is play or ensemble, not {other}"),
+                },
+                level: f64::INFINITY,
+                apart: f64::INFINITY,
+                by_runs: true,
             },
             Learning::Playouts => Playouts {
                 share: 0.0,
@@ -2660,7 +2942,15 @@ mod tests {
                 },
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
+                by_runs: false,
             },
+        };
+        let anneal_from = float("PLAY_SELF_ANNEAL_FROM", 1.0);
+        let anneal_rounds = number("PLAY_SELF_ANNEAL_ROUNDS", 1000);
+        let honest = match var("PLAY_SELF_UNITS", "cautious").as_str() {
+            "cautious" => false,
+            "honest" => true,
+            other => panic!("PLAY_SELF_UNITS is cautious or honest, not {other}"),
         };
         let softened = float("PLAY_SELF_PLAYOUT_TEMPERATURE", 1.0);
         let playout_weights: Vec<f64> = var("PLAY_SELF_PLAYOUT_WEIGHTS", "1")
@@ -2762,6 +3052,16 @@ mod tests {
             "learners of the shapes {}",
             learners.iter().map(|l| l.shape.name).collect::<Vec<_>>().join(", ")
         );
+        // Learning the free energy, the cautious start puts the scores in
+        // tricks so that the learners play at the temperature of the games
+        // as they did at 1.
+        if learning == Learning::FreeEnergy && !resumed && !honest {
+            for learner in &mut learners {
+                learner.network.scale_scores(temperature);
+            }
+            println!("the learners' scores are multiplied by {temperature}, to play as they did at temperature 1");
+        }
+        let anneal_start = number("PLAY_SELF_ANNEAL_START", first_round);
         let mut playout_losses = vec![Tally::default(); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
@@ -2788,6 +3088,14 @@ mod tests {
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         for round in first_round..=last_round {
+            // The temperature of the slope, annealed geometrically down to
+            // that of the games.
+            let annealed = if learning == Learning::FreeEnergy {
+                let done = (round.saturating_sub(anneal_start) as f64 / anneal_rounds.max(1) as f64).min(1.0);
+                anneal_from * (temperature / anneal_from).powf(done)
+            } else {
+                temperature
+            };
             let deals: Vec<usize> = if pool.len() == batch {
                 (0..batch).collect()
             } else {
@@ -2915,7 +3223,36 @@ mod tests {
                                             .sum();
                                         entropy += spread;
                                         let model = &learners_now[d.learner];
-                                        if learning == Learning::Playouts {
+                                        if learning == Learning::FreeEnergy {
+                                            if let Some(values) = &d.played_out {
+                                                // The slope of the free energy
+                                                // at the annealed temperature,
+                                                // over the runs, each scored by
+                                                // its lowest card.
+                                                let scores: Vec<f64> =
+                                                    d.lowest.iter().map(|&i| model.network.score(&d.cards[i].0)).collect();
+                                                let worth: Vec<f64> = d.lowest.iter().map(|&i| values[i]).collect();
+                                                let slope = free_energy_slope(&scores, &worth, annealed);
+                                                for (&g, &i) in slope.iter().zip(&d.lowest) {
+                                                    model.network.add_gradient(&d.cards[i].0, d.weight * g, &mut gradients[d.learner]);
+                                                }
+                                                // How far the free energy at
+                                                // the games' temperature falls
+                                                // short of the best run.
+                                                let q = run_chances(&scores, temperature);
+                                                let entropy: f64 = q.iter().filter(|&&q| q > 0.0).map(|q| -q * q.ln()).sum();
+                                                let free: f64 = q.iter().zip(&worth).map(|(q, v)| q * v).sum::<f64>() + temperature * entropy;
+                                                let best = worth.iter().copied().fold(f64::MIN, f64::max);
+                                                let n = scores.len() as f64;
+                                                let (score_mean, worth_mean) = (scores.iter().sum::<f64>() / n, worth.iter().sum::<f64>() / n);
+                                                let tally = &mut lost[d.learner];
+                                                tally.short += best - free;
+                                                for (s, v) in scores.iter().zip(&worth) {
+                                                    tally.across += d.weight * (s - score_mean) * (v - worth_mean);
+                                                    tally.squares += d.weight * (s - score_mean) * (s - score_mean);
+                                                }
+                                            }
+                                        } else if learning == Learning::Playouts {
                                             if let Some(values) = &d.played_out {
                                                 // Fits the scores to the
                                                 // tricks, and their
@@ -2974,8 +3311,17 @@ mod tests {
                                             }
                                         }
                                         if let Some(values) = &d.played_out {
+                                            // Chosen by runs, the likeliest
+                                            // run's lowest card.
+                                            let chance = |a: usize| -> f64 {
+                                                if d.run.is_empty() {
+                                                    d.cards[a].1
+                                                } else {
+                                                    d.run.iter().zip(&d.cards).filter(|(&r, _)| r == d.run[a]).map(|(_, c)| c.1).sum()
+                                                }
+                                            };
                                             let likeliest =
-                                                (0..values.len()).max_by(|&a, &b| d.cards[a].1.total_cmp(&d.cards[b].1)).unwrap();
+                                                (0..values.len()).max_by(|&a, &b| chance(a).total_cmp(&chance(b))).unwrap();
                                             lost[d.learner].lost += values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
                                             lost[d.learner].choices += 1;
                                         }
@@ -3004,7 +3350,9 @@ mod tests {
             // near to the tricks as one factor makes them, which keeps the
             // order of its cards: the step of that round is skipped.  A run
             // that resumes one of these has its scores in tricks already.
-            let calibrating = learning == Learning::Playouts && round == first_round && !resumed;
+            let calibrating = (learning == Learning::Playouts || (learning == Learning::FreeEnergy && honest))
+                && round == first_round
+                && !resumed;
             if calibrating {
                 for (i, learner) in learners.iter_mut().enumerate() {
                     let mut tally = Tally::default();
@@ -3144,6 +3492,16 @@ mod tests {
                         ", the likeliest cards lose {} tricks a play to the best played out",
                         lost.join(", ")
                     );
+                    if learning == Learning::FreeEnergy {
+                        let short: Vec<String> = playout_losses
+                            .iter()
+                            .map(|t| format!("{:.4}", t.short / t.choices.max(1) as f64))
+                            .collect();
+                        print!(
+                            ", the free energy at {temperature} falls short of the best by {} tricks a play, at the temperature {annealed:.4}",
+                            short.join(", ")
+                        );
+                    }
                     if learning == Learning::Playouts {
                         let mean = |t: &Tally, sum: f64| sum / t.choices.max(1) as f64;
                         let off: Vec<String> =
