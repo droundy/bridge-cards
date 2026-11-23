@@ -156,13 +156,36 @@ cards are, as chances that it carries from one play to the next, so that it
 has a memory, with the Bayesian reasoning wired in.  `GameState` keeps no
 play history, so today the player sees only what is left.
 
-- **What it predicts.**  From one player's view, for each unseen honor (A, K,
-  Q, J, perhaps the 10), the chance that the left-hand hidden hand holds it
-  (the right-hand one holds it otherwise), and for each suit the chances of
-  each length in the left-hand hand (the right-hand length follows from the
-  cards left).  Each seat has its own beliefs, about the two hands that it
+- **What it predicts.**  From one player's view, the beliefs are a
+  distribution over the ways that the unseen cards can be split between the
+  two hidden hands.  Each seat has its own, about the two hands that it
   cannot see: declarer about the defenders, a defender about partner and
-  declarer.
+  declarer.  With x<sub>c</sub> = 1 when card c is in the left-hand hand and
+  L<sub>s</sub> that hand's length in suit s,
+
+  P(x) ∝ exp(Σ<sub>c</sub> h<sub>c</sub>x<sub>c</sub> +
+  Σ<sub>s</sub> φ<sub>s</sub>(L<sub>s</sub>)),
+
+  over the splits that give each hand the number of cards that it has left.
+  The outputs are a field h<sub>c</sub> for each unseen card (the spots too,
+  by features shared across ranks, since the 9 and the 8 decide some
+  finesses) and a potential φ<sub>s</sub> for each suit and length.  The
+  chance of each honor and the chances of each suit's length are both read
+  from it exactly: each suit's sum over its own splits is a polynomial of
+  degree at most 13 in one variable that counts the left hand's cards, and
+  the coefficient of the left hand's count in the product of the four gives
+  the normalization, with the chances from the same sums, in microseconds.
+- **One model for lengths and honors.**  These statistics make the family the
+  maximum-entropy distribution with the given honor chances and length
+  distributions, so the two kinds of belief cannot contradict each other (as
+  separate outputs could, when a suit's expected length is not the sum of
+  its cards' chances), and a deal can be dealt from them.  The correlation
+  between length and honors is there twice: a suit's length counts its
+  honors, and a potential that favours length raises every card of the suit
+  together.  A potential on the left hand's points, ψ(HCP), fits the same
+  way (a second variable in the polynomials, 0 to 37), and carries what the
+  auction showed, such as 15–17: the bounds of `shown_bounds` become
+  potentials that are learned rather than walls.
 - **Why it converges to the posterior.**  Every game's deal is known, so each
   play gives exact labels, and it is trained by log loss.  Log loss is a
   proper scoring rule: its minimum is the conditional chance given what the
@@ -171,24 +194,47 @@ play history, so today the player sees only what is left.
   entropy.  The posterior is that of the players in the training games
   (their bidding and their play), as with the dealer's chance that a player
   differs from the robot's call, but measured rather than assumed.
-- **Bayes in the wiring.**  In log-odds, Bayes's rule is a sum.  The base is
-  vacant places: logit p = log(the unknown cards left of one hidden hand /
-  those of the other), which is exact for a random deal, so the model learns
-  only the corrections.  Showing out and the cards played are exact zeros,
-  wired in rather than learned.  Each play then adds a learned log-likelihood
-  ratio: logit p<sub>t</sub> = logit p<sub>t−1</sub> + Δ(the play just seen,
-  the public position).  This is a Bayes filter, and the previous beliefs
-  are the memory.  To begin with, the previous beliefs are an input computed
+- **Convex, by moment matching.**  The log loss is minus the log likelihood
+  of the true split, and for a family of this kind it is convex in h, φ and
+  ψ, with a slope that is the observed statistics less
+  their expectations (is each card on the left, is each suit this long):
+  moment matching.  With h, φ and ψ linear in features, the whole fit is
+  convex, with one optimum and no annealing.  At that optimum the honor
+  chances and length distributions match the posterior's, as far as the
+  features can tell situations apart, and the rest of the joint is the
+  maximum-entropy one with them.
+- **Bayes in the wiring.**  In the natural parameters h, φ and ψ, Bayes's
+  rule is a sum: each play adds the log-likelihood ratio of the play, as a
+  function of the split, projected onto the family: h<sub>t</sub> =
+  h<sub>t−1</sub> + Δh(the play just seen, the public position), and so for
+  φ and ψ.  This is a Bayes filter, and the previous parameters are the
+  memory.  Vacant places needs no base term: with every field and potential
+  zero, the fixed counts make every split equally likely, which is vacant
+  places, and the counts follow the cards as they are played.  A played card
+  leaves the sums and showing out fixes a suit's length, both exactly.
+  (The chances themselves are not additive in log-odds across plays,
+  because the counts couple the cards: a card played by the left hand lowers
+  every other card's chance to be there.  A Δ added to marginal log-odds
+  would need that base recomputed after every play and would count it twice
+  otherwise.)  To begin with, the previous parameters are an input computed
   by the current model, with no slope through time; if they are right, Δ
-  converges to the true likelihood ratio, so the recursion is consistent.
-  The auction's beliefs, before the first play, are its prior.
+  converges to the projected likelihood ratio, so the recursion is
+  consistent.  Projecting each play's evidence onto the family is
+  assumed-density filtering, and the error of each projection carries into
+  the later beliefs; the enumerated endings below measure it.  The auction's
+  parameters, before the first play, are its
+  prior.
 - **Separate at first.**  It is trained on the games that the player's
   training plays anyway, with weights of its own, so it cannot change the
-  player's play or its training.  It is a few dozen outputs.  Before it is
+  player's play or its training.  It is about 130 outputs (up to 39 fields, 56
+  length potentials and 38 for points).  Before it is
   connected it already serves twice: as a check on the PR 72 dealer, whose
   `read_the_play` estimates the same posterior by weighting deals by the play
-  model, by comparing the two calibrations; and as a proposal for the dealer,
-  which deals from the beliefs and reweights, for fewer rejections.
+  model, by comparing the two calibrations; and as a proposal for the dealer.
+  The family can be dealt from exactly, suit by suit (each suit's length
+  from the polynomials, then its cards given the length), with the exact
+  chance of each deal dealt, so the dealer's reweighting is exact and has
+  fewer rejections.
 - **Joined to the player later.**  A finesse depends on the chance that the
   king is in the right place, and a linear player cannot multiply a belief
   by "this card finesses against the king" unless that product is a
