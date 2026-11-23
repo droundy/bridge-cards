@@ -212,7 +212,7 @@ play history, so today the player sees only what is left.
   random player follows with depends on its length), so the check is
   against the enumeration and not against vacant places.
 
-Comments from Desktop and Pure shaped these checks.
+Desktop suggested the second baseline, the system, the stages and the enumeration.
 
 ## Order of work
 
