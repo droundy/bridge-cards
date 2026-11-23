@@ -293,7 +293,25 @@ play history, so today the player sees only what is left.
   for the player as well: its `FirstLength`, `FirstPoints` and the like
   already read what the auction showed (`Shown`) and not the calls, while
   the shape `v2-bids` reads who bid each suit (`Table::Bids`), which this
-  rule rules out (none of the four shapes being trained uses it).
+  rule rules out (none of the four shapes being trained uses it).  So
+  does the fitted opening lead (`likely_opening_leads`, with its
+  `NOTRUMP_WEIGHTS` and `SUIT_WEIGHTS`), whose features are built from the
+  calls: partner or the dummy bid the suit, a double, partner's double of an
+  opponent's bid, trumps with an opponent bidding another suit.  `EnsemblePlay`
+  uses it to choose which leads to solve.  Its features should come from
+  `Shown` or the dealt ensemble instead.
+
+  Two things are not calls in this sense.  The final contract and who
+  declares are rules of the game, and the player must read them (the
+  `Contract` and `Trumps` tables).  The contract is also evidence about the
+  hands (who reaches 3NT tends to hold stoppers), and how much depends on how
+  the training players bid; the rule cannot remove that.  Training mixes the
+  systems, so the learned weights average that evidence over them, and the
+  prior from the ensemble is what carries each system's part.  A belief
+  model trained on the mixture is calibrated for the mixture, so its
+  calibration is checked for each system as well as at each stage.
+  Reading the calls to deal the ensemble (`Hidden`, `replaying_the_auction`)
+  is the use the rule allows.
 - **How it is judged.**  By log loss against two baselines: vacant places,
   and the auction alone (deals dealt uniformly within the bounds that the
   tables give each call), which says how much the learned corrections add to
