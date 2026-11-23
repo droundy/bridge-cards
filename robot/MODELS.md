@@ -27,7 +27,7 @@ What the output must mean decides what the model is trained on.
 | Chances | how likely a player is to play each card | reading the opponents: `play_likelihood` in the dealer | plays, with chances defined as below |
 | Card values | each card's tricks relative to the best | ordering and pruning a search: every play within ½ a trick of the best | ensemble or playout values, differences only |
 | Position value | the tricks from here, ideally their spread | search leaves; bidding (the chance of game or slam) | double-dummy results or playouts, level included |
-| Card locations | for each unseen card, the chance that each hidden hand holds it | dealing ensembles directly, or narrowing the dealer | deals, given the auction and the play |
+| Card locations | for each unseen honor, the chance that each hidden hand holds it, and the chances of each suit's length | the player, as beliefs it remembers; dealing ensembles, or narrowing the dealer | the true deal of each game, by log loss (see [Card locations](#card-locations)) |
 
 Chances and card locations are two sides of reading the opponents: one
 scores sampled deals by the plays that they explain, the other deals them.
@@ -149,11 +149,64 @@ as often as the best, and one 0.05 worse about 60% as often.
   natural choice is how accurate the players actually are: the mean loss a
   play of the learners on the playout yardstick (about 0.08 tricks now).
 
+## Card locations
+
+The user's idea (2026-11-23): give the player beliefs about where the hidden
+cards are, as chances that it carries from one play to the next, so that it
+has a memory, with the Bayesian reasoning wired in.  `GameState` keeps no
+play history, so today the player sees only what is left.
+
+- **What it predicts.**  From one player's view, for each unseen honor (A, K,
+  Q, J, perhaps the 10), the chance that the left-hand hidden hand holds it
+  (the right-hand one holds it otherwise), and for each suit the chances of
+  each length in the left-hand hand (the right-hand length follows from the
+  cards left).  Each seat has its own beliefs, about the two hands that it
+  cannot see: declarer about the defenders, a defender about partner and
+  declarer.
+- **Why it converges to the posterior.**  Every game's deal is known, so each
+  play gives exact labels, and it is trained by log loss.  Log loss is a
+  proper scoring rule: its minimum is the conditional chance given what the
+  model sees, so the training finds the Bayesian answer without our writing
+  it down, and a model too small for that finds the closest in relative
+  entropy.  The posterior is that of the players in the training games
+  (their bidding and their play), as with the dealer's chance that a player
+  differs from the robot's call, but measured rather than assumed.
+- **Bayes in the wiring.**  In log-odds, Bayes's rule is a sum.  The base is
+  vacant places: logit p = log(the unknown cards left of one hidden hand /
+  those of the other), which is exact for a random deal, so the model learns
+  only the corrections.  Showing out and the cards played are exact zeros,
+  wired in rather than learned.  Each play then adds a learned log-likelihood
+  ratio: logit p<sub>t</sub> = logit p<sub>t−1</sub> + Δ(the play just seen,
+  the public position).  This is a Bayes filter, and the previous beliefs
+  are the memory.  To begin with, the previous beliefs are an input computed
+  by the current model, with no slope through time; if they are right, Δ
+  converges to the true likelihood ratio, so the recursion is consistent.
+  The auction's beliefs, before the first play, are its prior.
+- **Separate at first.**  It is trained on the games that the player's
+  training plays anyway, with weights of its own, so it cannot change the
+  player's play or its training.  It is a few dozen outputs.  Before it is
+  connected it already serves twice: as a check on the PR 72 dealer, whose
+  `read_the_play` estimates the same posterior by weighting deals by the play
+  model, by comparing the two calibrations; and as a proposal for the dealer,
+  which deals from the beliefs and reweights, for fewer rejections.
+- **Joined to the player later.**  A finesse depends on the chance that the
+  king is in the right place, and a linear player cannot multiply a belief
+  by "this card finesses against the king" unless that product is a
+  feature.  So the beliefs join the player as features crossing a belief
+  with the card's role, not as beliefs added in.  It is measured like any
+  change to the player: matches at equal games.
+- **How it is judged.**  The log loss against vacant places, and the
+  calibration (of the cards given a chance near p, a fraction p in the left
+  hand).
+
 ## Order of work
 
 1. The player: its objective, and the systematic study of tables and shapes.
-2. Chances, defined as above, so that the player can read the opponents.
-3. A whole-deal position value from double-dummy labels: it serves bidding,
+2. Card locations, trained alongside the player from the same games but kept
+   apart from it, once the player's training has been checked; then joined
+   to it.
+3. Chances, defined as above, so that the player can read the opponents.
+4. A whole-deal position value from double-dummy labels: it serves bidding,
    search leaves and, as a baseline, training.
-4. Card values and a guided search for declarer.
-5. Card locations, and shapes for each role, starting with the opening lead.
+5. Card values and a guided search for declarer.
+6. Shapes for each role, starting with the opening lead.
