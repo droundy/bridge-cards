@@ -874,21 +874,94 @@ fn suit_ranges(min: &HandValuation, max: &HandValuation) -> FormattedString<HTML
 /// [`Meanings::MOST`], since a table that lives long, such as the one a robot
 /// tab or self-play bids every deal with, would otherwise remember every
 /// auction it has seen.
-#[derive(Default)]
-pub struct Meanings(std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>);
+pub struct Meanings {
+    found: std::sync::Mutex<std::collections::HashMap<String, Option<Convention>>>,
+    /// Which table's meanings these are, and since when: it changes whenever
+    /// the meanings are forgotten, so that a thread's [`ShownMemo`] never
+    /// outlives what it was worked out from.
+    id: std::sync::atomic::AtomicU64,
+}
+
+impl Default for Meanings {
+    fn default() -> Self {
+        Meanings {
+            found: Default::default(),
+            id: std::sync::atomic::AtomicU64::new(Meanings::fresh_id()),
+        }
+    }
+}
+
+/// What a thread last worked out about who has shown what in one auction:
+/// the bounds that the bids of each player show, by how many seats before the
+/// next bidder they sat.  Once the auction is over, the play asks again and
+/// again, from every position of every playout, and finding the bounds takes a
+/// lookup of each earlier bid, so the last answers are kept here, where no
+/// thread waits for another.
+struct ShownMemo {
+    /// The [`Meanings::id`] they were found with.
+    table: u64,
+    bids: Vec<Bid>,
+    bounds: [Option<(HandValuation, HandValuation)>; 4],
+}
+
+thread_local! {
+    static SHOWN_MEMO: std::cell::RefCell<ShownMemo> = const {
+        std::cell::RefCell::new(ShownMemo { table: 0, bids: Vec::new(), bounds: [None; 4] })
+    };
+}
 
 impl Meanings {
     /// The most auctions remembered at once.
     const MOST: usize = 1000;
+    /// An id that no other table has or has had.  It is never 0, which a
+    /// thread's memo starts with.
+    fn fresh_id() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+    /// The bounds that the bids `offset` seats before the next bidder in
+    /// `bids` show, from `find` when this thread has not just been asked.
+    fn shown_bounds(
+        &self,
+        bids: &[Bid],
+        offset: usize,
+        find: impl FnOnce() -> (HandValuation, HandValuation),
+    ) -> (HandValuation, HandValuation) {
+        let id = self.id.load(std::sync::atomic::Ordering::Relaxed);
+        let remembered = SHOWN_MEMO.with(|memo| {
+            let memo = memo.borrow();
+            if memo.table == id && memo.bids == bids {
+                memo.bounds[offset % 4]
+            } else {
+                None
+            }
+        });
+        if let Some(bounds) = remembered {
+            return bounds;
+        }
+        // Not holding the memo, since finding the bounds asks about meanings.
+        let bounds = find();
+        SHOWN_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.table != id || memo.bids != bids {
+                memo.table = id;
+                memo.bids.clear();
+                memo.bids.extend_from_slice(bids);
+                memo.bounds = [None; 4];
+            }
+            memo.bounds[offset % 4] = Some(bounds);
+        });
+        bounds
+    }
     /// What `bids` mean, from `find` the first time.
     fn get(&self, bids: &[Bid], find: impl FnOnce() -> Option<Convention>) -> Option<Convention> {
         let key = bids_string(bids);
-        if let Some(meaning) = self.0.lock().unwrap().get(&key) {
+        if let Some(meaning) = self.found.lock().unwrap().get(&key) {
             return meaning.clone();
         }
         // Not holding the lock, since finding a meaning asks about others.
         let meaning = find();
-        let mut remembered = self.0.lock().unwrap();
+        let mut remembered = self.found.lock().unwrap();
         if remembered.len() >= Self::MOST {
             remembered.clear();
         }
@@ -896,17 +969,20 @@ impl Meanings {
         meaning
     }
     fn clear(&mut self) {
-        self.0.get_mut().unwrap().clear();
+        self.found.get_mut().unwrap().clear();
+        *self.id.get_mut() = Meanings::fresh_id();
     }
     /// How many auctions are remembered.
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.0.lock().unwrap().len()
+        self.found.lock().unwrap().len()
     }
     /// Forget what has been found, so that a benchmark can find it again.
     #[cfg(feature = "benchmarks")]
     fn forget(&self) {
-        self.0.lock().unwrap().clear();
+        self.found.lock().unwrap().clear();
+        self.id
+            .store(Meanings::fresh_id(), std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -3188,6 +3264,79 @@ fn dump_matches() {
         }
     }
     std::fs::write(std::env::var("MATCH_DUMP").unwrap(), out).unwrap();
+}
+
+/// The memo of what bids show, kept by each thread, must answer as a table
+/// that has never been asked would, however the questions are interleaved with
+/// those of another table.
+#[test]
+fn shown_bounds_are_the_same_remembered_or_not() {
+    let sayc = Arc::new(Convention::sayc());
+    let other = Convention::two_over_one();
+    for (seed, _, bids) in seeded_deals(sayc.clone(), 12) {
+        for n in 0..=bids.len() {
+            for offset in 0..4 {
+                // A copy of a table starts with nothing remembered, here or in
+                // the thread's memo.
+                let expected = Convention::clone(&sayc).shown_bounds(&bids[..n], offset);
+                // Ask twice, so that the second answer comes from the memo, with
+                // another table asking in between.
+                let first = sayc.shown_bounds(&bids[..n], offset);
+                other.shown_bounds(&bids[..n], offset);
+                let second = sayc.shown_bounds(&bids[..n], offset);
+                assert_eq!(first, expected, "seed {seed}, {n} bids, offset {offset}");
+                assert_eq!(second, expected, "seed {seed}, {n} bids, offset {offset}");
+            }
+        }
+    }
+}
+
+/// How long the play's questions about what the auction showed take, with the
+/// thread's memo and without it: `cargo test -p robot --release
+/// shown_bounds_timing -- --ignored --nocapture`.
+#[test]
+#[ignore = "a timing"]
+fn shown_bounds_timing() {
+    let convention = Arc::new(Convention::sayc());
+    let deals = seeded_deals(convention.clone(), 20);
+    // A playout asks about the same auction again and again, from every
+    // position of every game, on every thread of the trainer.
+    let run = |threads: usize, memo: bool| {
+        let start = std::time::Instant::now();
+        let sums: Vec<usize> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut sum = 0usize;
+                        for (_, _, bids) in &deals {
+                            for _ in 0..2000 {
+                                for offset in 0..4 {
+                                    let (min, _) = if memo {
+                                        convention.shown_bounds(bids, offset)
+                                    } else {
+                                        convention.shown_bounds_unmemoised(bids, offset)
+                                    };
+                                    sum += min.hcp as usize;
+                                }
+                            }
+                        }
+                        sum
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        (start.elapsed(), sums[0])
+    };
+    for threads in [1, 8] {
+        let (before, a) = run(threads, false);
+        let (after, b) = run(threads, true);
+        assert_eq!(a, b);
+        println!(
+            "{threads} threads: without the memo {before:?}, with it {after:?}, {:.1} times as fast",
+            before.as_secs_f64() / after.as_secs_f64()
+        );
+    }
 }
 
 #[test]

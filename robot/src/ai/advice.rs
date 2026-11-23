@@ -342,6 +342,21 @@ impl Convention {
         history: &[Bid],
         offset: usize,
     ) -> (HandValuation, HandValuation) {
+        match self {
+            Convention::Ordered { meanings, .. } => meanings.shown_bounds(history, offset, || {
+                self.shown_bounds_unmemoised(history, offset)
+            }),
+            _ => self.shown_bounds_unmemoised(history, offset),
+        }
+    }
+
+    /// [`Convention::shown_bounds`], found afresh from the meaning of each
+    /// earlier bid.
+    pub(super) fn shown_bounds_unmemoised(
+        &self,
+        history: &[Bid],
+        offset: usize,
+    ) -> (HandValuation, HandValuation) {
         let shown = self.shown(history, offset);
         (shown.min, shown.max)
     }
