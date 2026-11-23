@@ -2970,8 +2970,11 @@ mod tests {
     /// A learner that starts from a model of self-play, whose scores are not
     /// tricks, first has them put in tricks as `PLAY_SELF_UNITS` says: with
     /// `fitted` (the default), multiplied by the factor that makes the free
-    /// energy at T<sub>opp</sub> of the first round's choices played out
-    /// highest, by this objective itself, in place of that round's step;
+    /// energy of the first round's choices played out highest, by this
+    /// objective itself, at the temperature of the first step (the start of
+    /// the anneal; at a cold T<sub>opp</sub> the free energy is nearly flat
+    /// in the scale, so a fit there lands anywhere), in place of that
+    /// round's step;
     /// with `cautious`, by T<sub>opp</sub>, which keeps its play in the games
     /// as it was at temperature 1; with `honest`, by the factor that brings
     /// the differences of its scores nearest those of the tricks of the
@@ -3501,11 +3504,14 @@ mod tests {
                 // played out highest, found by golden section on its log.
                 for (i, learner) in learners.iter_mut().enumerate() {
                     let choices: Vec<&Gathered> = results.iter().flat_map(|r| &r.5[i]).collect();
-                    let scale = best_scale(&choices, temperature);
+                    // At the temperature of the first step, where the free
+                    // energy is curved in the scale: at a cold T_opp any
+                    // scale that makes the play nearly greedy does as well.
+                    let scale = best_scale(&choices, annealed);
                     learner.network.scale_scores(scale);
                     scales[i] *= scale;
                     println!(
-                        "learner {}'s scores are multiplied by {scale:.4}, which makes the free energy at {temperature} of {} choices highest",
+                        "learner {}'s scores are multiplied by {scale:.4}, which makes the free energy at {annealed} of {} choices highest",
                         i + 1,
                         choices.len()
                     );
