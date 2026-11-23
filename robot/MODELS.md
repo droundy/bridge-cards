@@ -195,9 +195,24 @@ play history, so today the player sees only what is left.
   feature.  So the beliefs join the player as features crossing a belief
   with the card's role, not as beliefs added in.  It is measured like any
   change to the player: matches at equal games.
-- **How it is judged.**  The log loss against vacant places, and the
-  calibration (of the cards given a chance near p, a fraction p in the left
-  hand).
+- **The bidding system.**  The auction's prior depends on the system played
+  (Sheets, SAYC, 2/1), so the model must know it: either its inputs are the
+  bounds that the system's table gives each call (`shown_bounds`), which
+  carry the system with them, or its features are crossed with the system.
+- **How it is judged.**  By log loss against two baselines: vacant places,
+  and the auction alone (deals dealt uniformly within the bounds that the
+  tables give each call), which says how much the learned corrections add to
+  what the tables already know.  By calibration (of the cards given a chance
+  near p, a fraction p in the left hand), overall and at each stage of the
+  play (after 1, 5 and 9 tricks), since with no slope through time an early
+  error carries into the later beliefs.  And the recursion alone, on games
+  whose exact posterior can be counted: deals dealt uniformly with no
+  auction, played by a known random policy, with few enough cards left to
+  enumerate.  The play is informative even then (which card of a suit a
+  random player follows with depends on its length), so the check is
+  against the enumeration and not against vacant places.
+
+Comments from Desktop and Pure shaped these checks.
 
 ## Order of work
 
