@@ -2132,6 +2132,50 @@ mod tests {
         p.iter().zip(worth).map(|(p, v)| p * v).sum::<f64>() + t * entropy
     }
 
+    /// A choice played out, for fitting a learner's scale: its cards'
+    /// scores, their runs, how many, the runs' worth and its weight.
+    type Gathered = (Vec<f64>, Vec<usize>, usize, Vec<f64>, f64);
+
+    /// The factor for the scores of `choices` (each its cards' scores, their
+    /// runs, how many, the runs' worth and its weight) that makes the sum of
+    /// their free energies at `t` highest, by golden section on its log
+    /// between 10⁻⁴ and 10.
+    fn best_scale(choices: &[&Gathered], t: f64) -> f64 {
+        let free = |log_scale: f64| -> f64 {
+            let scale = log_scale.exp();
+            choices
+                .iter()
+                .map(|(scores, run, count, worth, weight)| {
+                    let scaled: Vec<f64> = scores.iter().map(|s| s * scale).collect();
+                    weight * free_energy_of(run, &scaled, *count, worth, t)
+                })
+                .sum()
+        };
+        let golden = (5f64.sqrt() - 1.0) / 2.0;
+        let (mut low, mut high) = (1e-4f64.ln(), 10f64.ln());
+        for _ in 0..60 {
+            let (a, b) = (high - golden * (high - low), low + golden * (high - low));
+            if free(a) < free(b) {
+                low = a;
+            } else {
+                high = b;
+            }
+        }
+        ((low + high) / 2.0).exp()
+    }
+
+    /// Scores that are the worth of their runs have their free energy
+    /// highest as they are, at any temperature.
+    #[test]
+    fn the_best_scale_of_scores_that_are_the_worth_is_one() {
+        let choice = (vec![7.0, 6.5, 6.9, 4.0, 6.0], vec![0, 1, 2, 3, 4], 5, vec![7.0, 6.5, 6.9, 4.0, 6.0], 1.0);
+        let twice = (choice.0.iter().map(|s| s * 2.0).collect(), choice.1.clone(), 5, choice.3.clone(), 1.0);
+        for t in [1.0, 0.3, 0.1] {
+            assert!((best_scale(&[&choice], t) - 1.0).abs() < 1e-6);
+            assert!((best_scale(&[&twice], t) - 0.5).abs() < 1e-6);
+        }
+    }
+
     /// The slope of the free energy is zero where the scores are the worth
     /// of the runs plus a constant, at any temperature, and it pushes the
     /// better run up elsewhere; a little way along it the free energy rises.
@@ -3195,11 +3239,9 @@ mod tests {
             let chunk = batch.div_ceil(threads);
             let (learners_now, pool_now, past, bonus_now) = (&learners, &pool, &snapshots, bonus);
             let watching = round % report == 0 || round == last_round;
-            // A choice played out, for fitting a learner's scale: its cards'
-            // scores, their runs, how many, the runs' worth and its weight.
-            type Gathered = (Vec<f64>, Vec<usize>, usize, Vec<f64>, f64);
             type Results = (Vec<Vec<f64>>, Vec<usize>, f64, Vec<serde_json::Value>, Vec<Tally>, Vec<Vec<Gathered>>);
-            let gathering = learning == Learning::FreeEnergy && units == Units::Fitted && round == first_round && !resumed;
+            let gathering = learning == Learning::FreeEnergy
+                && ((units == Units::Fitted && round == first_round && !resumed) || watching);
             let results: Vec<Results> = workers.install(|| {
                 deals
                     .par_chunks(chunk)
@@ -3459,27 +3501,7 @@ mod tests {
                 // played out highest, found by golden section on its log.
                 for (i, learner) in learners.iter_mut().enumerate() {
                     let choices: Vec<&Gathered> = results.iter().flat_map(|r| &r.5[i]).collect();
-                    let free = |log_scale: f64| -> f64 {
-                        let scale = log_scale.exp();
-                        choices
-                            .iter()
-                            .map(|(scores, run, count, worth, weight)| {
-                                let scaled: Vec<f64> = scores.iter().map(|s| s * scale).collect();
-                                weight * free_energy_of(run, &scaled, *count, worth, temperature)
-                            })
-                            .sum()
-                    };
-                    let golden = (5f64.sqrt() - 1.0) / 2.0;
-                    let (mut low, mut high) = (1e-4f64.ln(), 10f64.ln());
-                    for _ in 0..60 {
-                        let (a, b) = (high - golden * (high - low), low + golden * (high - low));
-                        if free(a) < free(b) {
-                            low = a;
-                        } else {
-                            high = b;
-                        }
-                    }
-                    let scale = ((low + high) / 2.0).exp();
+                    let scale = best_scale(&choices, temperature);
                     learner.network.scale_scores(scale);
                     scales[i] *= scale;
                     println!(
@@ -3488,7 +3510,19 @@ mod tests {
                         choices.len()
                     );
                 }
-            } else if calibrating {
+            }
+            // As a reading of how well the scores are calibrated in tricks,
+            // the scale that would make the free energy highest at three
+            // temperatures, which is 1 at each for scores that are the worth.
+            let calibration: Option<Vec<[f64; 3]>> = (learning == Learning::FreeEnergy && watching && !calibrating).then(|| {
+                (0..learners.len())
+                    .map(|i| {
+                        let choices: Vec<&Gathered> = results.iter().flat_map(|r| &r.5[i]).collect();
+                        [1.0, 0.3, 0.1].map(|t| best_scale(&choices, t))
+                    })
+                    .collect()
+            });
+            if calibrating && !(units == Units::Fitted && learning == Learning::FreeEnergy) {
                 for (i, learner) in learners.iter_mut().enumerate() {
                     let mut tally = Tally::default();
                     for result in &results {
@@ -3647,6 +3681,13 @@ mod tests {
                             ", the free energy at {temperature} falls short of the best by {} tricks a play, at the temperature {annealed:.4}",
                             short.join(", ")
                         );
+                        if let Some(calibration) = &calibration {
+                            let scales: Vec<String> = calibration
+                                .iter()
+                                .map(|c| format!("{:.2}/{:.2}/{:.2}", c[0], c[1], c[2]))
+                                .collect();
+                            print!(", and this round's free energy is highest with the scores times {} at 1/0.3/0.1", scales.join(", "));
+                        }
                     }
                     if learning == Learning::Playouts {
                         let mean = |t: &Tally, sum: f64| sum / t.choices.max(1) as f64;
