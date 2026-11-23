@@ -245,14 +245,40 @@ play history, so today the player sees only what is left.
   unseen card's chances replace the 0 or 1.  The family's fields are indexed
   the same way, by all the cards, with those in sight or played held fixed
   rather than fitted.
+- **Places by seat, shown by the player.**  The beliefs belong to what a
+  side can see, so they are kept by seat and turned into places relative to
+  the player only when the player reads them.  Declarer sees the same cards
+  whichever hand it plays from, but its left-hand opponent changes when it
+  plays from the dummy, so beliefs kept as "left" and "right" would swap
+  sides from one trick to the next.  The two hidden hands of the family are
+  the first and second hidden hands after the player, as the tables'
+  `FirstLength` and `SecondLength` already have them: for declarer the
+  left-hand and right-hand opponents, for the defender after the dummy
+  partner and the right-hand opponent, and for the one before it the
+  left-hand opponent and partner.
 - **Joined to the player later.**  A finesse depends on the chance that the
   king is in the right place, and a linear player cannot multiply a belief
   by "this card finesses against the king" unless that product is a
   feature.  So the beliefs join the player through the tables' existing
   features about who holds which card (such as who holds the cards above
   this one), with chances where today there are certainties, rather than as
-  beliefs added in beside them.  It is measured like any change to the
-  player: matches at equal games.
+  beliefs added in beside them.  The principled form of "chances in place of
+  certainties" is the expected score: each table entry weighted by the
+  chance of the situation it stands for, which is exact for a linear player.
+  `Above` and `Below` are entries for the holders of three cards together,
+  so they need the joint chances of those three, which the family gives
+  exactly, and not the product of each card's chance: in a suit where the
+  first hidden hand holds exactly one of two unseen cards, each card has
+  chance ½ there, but both are never there together.  Splitting "hidden"
+  into the two hidden hands gives each of the three cards five states rather
+  than four, 125 entries a place, which is the size that `Above1` and
+  `Below1` already have (their fourth hand is never used today).  If both
+  hidden hands start with today's weight for "hidden", the expected score is
+  today's score until training moves them apart, so the join starts from the
+  player as it is.  The length and points tables, which today take the
+  bounds that the auction showed, would instead take the expected weight
+  over the belief's length and points distributions.  It is measured like
+  any change to the player: matches at equal games.
 - **The bidding system.**  The auction's prior depends on the system played
   (Sheets, SAYC, 2/1), so the model must know it: either its inputs are the
   bounds that the system's table gives each call (`shown_bounds`), which
