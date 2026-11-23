@@ -235,12 +235,24 @@ play history, so today the player sees only what is left.
   from the polynomials, then its cards given the length), with the exact
   chance of each deal dealt, so the dealer's reweighting is exact and has
   fewer rejections.
+- **One shape all through the play (the user's requirement).**  The beliefs
+  cover every card, seen or unseen, played or not, so that their shape never
+  changes during the play.  Each card's belief is its chances of being in
+  each place relative to the player: their own hand, partner's, the
+  left-hand opponent's, the right-hand one's, or already played.  A card in
+  sight has chance 1 in its place, which is what the player's tables know of
+  it today, so the beliefs have the shape of those "known" inputs, and an
+  unseen card's chances replace the 0 or 1.  The family's fields are indexed
+  the same way, by all the cards, with those in sight or played held fixed
+  rather than fitted.
 - **Joined to the player later.**  A finesse depends on the chance that the
   king is in the right place, and a linear player cannot multiply a belief
   by "this card finesses against the king" unless that product is a
-  feature.  So the beliefs join the player as features crossing a belief
-  with the card's role, not as beliefs added in.  It is measured like any
-  change to the player: matches at equal games.
+  feature.  So the beliefs join the player through the tables' existing
+  features about who holds which card (such as who holds the cards above
+  this one), with chances where today there are certainties, rather than as
+  beliefs added in beside them.  It is measured like any change to the
+  player: matches at equal games.
 - **The bidding system.**  The auction's prior depends on the system played
   (Sheets, SAYC, 2/1), so the model must know it: either its inputs are the
   bounds that the system's table gives each call (`shown_bounds`), which
