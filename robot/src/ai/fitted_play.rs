@@ -3681,6 +3681,27 @@ mod tests {
                             ", the free energy at {temperature} falls short of the best by {} tricks a play, at the temperature {annealed:.4}",
                             short.join(", ")
                         );
+                        // How consistent each learner's steps are: the mean
+                        // over its weights that have moved of Adam's |m|/√v,
+                        // near 1 when each step goes the same way and far
+                        // below it when the steps are mostly noise.
+                        let consistency: Vec<String> = adams
+                            .iter()
+                            .map(|adam| {
+                                let (first, second, steps) = adam.parts();
+                                // With Adam's corrections for its start.
+                                let t = steps.max(1) as f64;
+                                let corrected = (1.0 - 0.999f64.powf(t)).sqrt() / (1.0 - 0.9f64.powf(t));
+                                let moved: Vec<f64> = first
+                                    .iter()
+                                    .zip(second)
+                                    .filter(|(_, &v)| v > 0.0)
+                                    .map(|(m, v)| corrected * m.abs() / v.sqrt())
+                                    .collect();
+                                format!("{:.3}", moved.iter().sum::<f64>() / moved.len().max(1) as f64)
+                            })
+                            .collect();
+                        print!(", the steps' |m|/√v is {}", consistency.join(", "));
                         if let Some(calibration) = &calibration {
                             let scales: Vec<String> = calibration
                                 .iter()
