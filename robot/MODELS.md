@@ -289,7 +289,12 @@ play history, so today the player sees only what is left.
   with that ensemble's card chances, lengths and points; or they hold the
   ranges that `shown_bounds` gives each call as constraints.  Either way the
   system does its work outside the model, and what the model learns, the
-  update Δ from each play, is the same whatever system was bid.  This holds
+  update Δ from each play, is the same whatever system was bid.  The system
+  may be asked for more than ranges, as long as its tables say it and not
+  the call's text: what a call shows or suggests (partner suggested this
+  suit), or what follows from the bounds (partner showed five of them).
+  That matters to the lead, where many players lead their highest card of
+  partner's suit.  This holds
   for the player as well: its `FirstLength`, `FirstPoints` and the like
   already read what the auction showed (`Shown`) and not the calls, while
   the shape `v2-bids` reads who bid each suit (`Table::Bids`), which this
