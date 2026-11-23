@@ -2815,8 +2815,9 @@ mod tests {
     /// play model file (see `model_file`) to `PLAY_SELF_CHECKPOINT`, and
     /// reports the tricks a play each learner's choices lose by the
     /// ensemble's values on the data in `PLAY_TEST` if that is set.  It uses
-    /// `PLAY_THREADS` threads, or else every core, and its random numbers
-    /// are seeded by `PLAY_SELF_SEED` (10 more than its first round).
+    /// `PLAY_THREADS` threads, or else every core, and its random numbers,
+    /// and with it the fresh deals, are seeded by `PLAY_SELF_SEED` (10 more
+    /// than its first round, and the deals by the first round alone).
     ///
     /// With `PLAY_SELF_PLAYOUT_SHARE` above 0, that share of the learners'
     /// choices of more than one card with up to `PLAY_SELF_PLAYOUT_TRICKS`
@@ -3220,7 +3221,12 @@ mod tests {
         // that play, and the deals are the same whatever their number.
         let (dealt, fresh_deals) = std::sync::mpsc::sync_channel::<String>(2 * fresh);
         if fresh > 0 {
-            let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + first_round as u64), 10);
+            // The deals too follow `PLAY_SELF_SEED`, so that a replicate meets
+            // other deals; without it, as they always were.
+            let dealing = std::env::var("PLAY_SELF_SEED").ok().map_or(0, |seed| {
+                seed.parse::<u64>().expect("PLAY_SELF_SEED").wrapping_mul(1_000_003)
+            });
+            let mut dealer = (Generator::new(), StdRng::seed_from_u64(1000 + dealing + first_round as u64), 10);
             std::thread::spawn(move || while dealt.send(fresh_deal(&mut dealer)).is_ok() {});
         }
         // The same threads play every round.
