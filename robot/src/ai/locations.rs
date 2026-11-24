@@ -89,13 +89,15 @@ pub(crate) struct Chances {
     pub(crate) log_normalization: f64,
 }
 
-/// A suit's free cards with their weights and points, and the forward and
-/// backward weights of each.
-type SuitWeights = (Vec<(Card, f64, usize)>, Vec<Poly>, Vec<Poly>);
+/// A suit's free cards with their weights and points, the forward weights
+/// of each, the suit's context, and the backward weights of each once they
+/// are wanted.
+type SuitWeights = (Vec<(Card, f64, usize)>, Vec<Poly>, Poly, std::sync::OnceLock<Vec<Poly>>);
 
 /// The joint chances of where some cards of a suit lie (see
 /// [`Beliefs::joint`]).
 pub(crate) struct Joint {
+    beliefs: Beliefs,
     suits: [SuitWeights; 4],
     log_z: f64,
 }
@@ -109,7 +111,8 @@ impl Joint {
         let Some(first) = cards.first() else {
             return vec![1.0];
         };
-        let (free, forward, backward) = &self.suits[first.suit() as usize];
+        let (free, forward, context, backward) = &self.suits[first.suit() as usize];
+        let backward = backward.get_or_init(|| self.beliefs.backward(first.suit(), forward, context));
         let start = free.iter().position(|f| f.0 == *first).expect("a free card");
         let n = cards.len();
         assert!(
@@ -480,14 +483,18 @@ impl Beliefs {
         let contexts: [Poly; 4] = std::array::from_fn(|s| self.context(&others[s], &exp_psi, &suits[s]));
         let log_z = suits[0].log_dot(&contexts[0]);
         let [a, b, c, d] = both;
-        let each = |s: usize, (forward, _): (Vec<Poly>, Poly)| {
+        let [ca, cb, cc, cd] = contexts;
+        let each = |s: usize, (forward, _): (Vec<Poly>, Poly), context: Poly| {
             let suit = Suit::ALL[s];
-            let backward = self.backward(suit, &forward, &contexts[s]);
             let cards: Vec<(Card, f64, usize)> =
                 self.free().in_suit(suit).map(|card| (card, self.h(card).exp(), self.points_of(card))).collect();
-            (cards, forward, backward)
+            (cards, forward, context, std::sync::OnceLock::new())
         };
-        Joint { suits: [each(0, a), each(1, b), each(2, c), each(3, d)], log_z }
+        Joint {
+            beliefs: self.clone(),
+            suits: [each(0, a, ca), each(1, b, cb), each(2, c, cc), each(3, d, cd)],
+            log_z,
+        }
     }
 
     /// The log of the weight of the split that gives the first hand the
@@ -778,6 +785,72 @@ impl Opening {
     pub(crate) fn outside(&self, first: Cards, second: Cards) -> bool {
         self.showed[0].outside(first) || self.showed[1].outside(second)
     }
+}
+
+/// The beliefs of `viewer` in `game` after `plays`, the cards played from
+/// the opening lead on, from the `prior` and with the `evidence`: played
+/// again from the deal, so that they depend only on what `viewer` has seen.
+/// Each thread keeps, for each deal and viewer, the beliefs after each play
+/// of the plays it was last asked about, and goes on from the longest start
+/// that those share with `plays`, as the views of one game and of the
+/// playouts from it do.
+pub(crate) fn replayed<C>(
+    game: &crate::GameState<C>,
+    convention: &super::Convention,
+    viewer: crate::Seat,
+    plays: impl Iterator<Item = Card>,
+    prior: &Prior,
+    evidence: &Evidence,
+) -> Option<Tracker> {
+    use std::hash::{Hash, Hasher};
+    /// The plays, and the beliefs before the first and after each.
+    type Path = (Vec<Card>, Vec<Tracker>);
+    thread_local! {
+        static PATHS: std::cell::RefCell<std::collections::HashMap<u64, Path>> = Default::default();
+    }
+    let plays: Vec<Card> = plays.collect();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    game.original_hands.iter().for_each(|hand| hand.to_string().hash(&mut hasher));
+    (viewer as usize, game.dealer as usize, game.bids.len()).hash(&mut hasher);
+    (std::ptr::from_ref(prior) as usize, std::ptr::from_ref(evidence) as usize).hash(&mut hasher);
+    let key = hasher.finish();
+    let mut replay = super::playout::copy_of(game);
+    replay.hands = game.original_hands;
+    replay.tricks.clear();
+    replay.played.clear();
+    replay.ns_tricks = 0;
+    replay.ew_tricks = 0;
+    replay.shown_out = crate::Seated::new([Cards::EMPTY; 4]);
+    replay.hand_done = false;
+    replay.lead = Some(game.dummy()? + 3);
+    PATHS.with(|paths| {
+        let mut paths = paths.borrow_mut();
+        if paths.len() > 256 {
+            paths.clear();
+        }
+        let path = match paths.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut tracker = Tracker::new(&replay, viewer)?;
+                tracker.start(&replay, convention, prior);
+                entry.insert((Vec::new(), vec![tracker]))
+            }
+        };
+        let shared = path.0.iter().zip(&plays).take_while(|(a, b)| a == b).count();
+        path.0.truncate(shared);
+        path.1.truncate(shared + 1);
+        for &card in &plays[..shared] {
+            replay.play(card);
+        }
+        for &card in &plays[shared..] {
+            let mut tracker = path.1[path.1.len() - 1].clone();
+            tracker.observe(&replay, card, evidence);
+            replay.play(card);
+            path.0.push(card);
+            path.1.push(tracker);
+        }
+        Some(path.1[path.1.len() - 1].clone())
+    })
 }
 
 /// The entries of the evidence that one play added to a [`Tracker`]'s
@@ -1246,6 +1319,46 @@ mod tests {
             }
         }
         assert!(checked > 500, "only {checked}");
+    }
+
+    #[test]
+    fn replayed_beliefs_are_the_same_kept_or_afresh() {
+        let mut rng = StdRng::seed_from_u64(13);
+        let mut prior = Prior::walls(5.0);
+        prior.weights.iter_mut().for_each(|w| *w += rng.gen_range(-0.3..0.3));
+        let mut evidence = Evidence::none();
+        evidence.weights.iter_mut().for_each(|w| *w = rng.gen_range(-0.5..0.5));
+        let mut compared = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(43, 8) {
+            let convention = game.system.convention();
+            let declarer = game.dummy().unwrap() + 2;
+            // Several plays of the same deal, which share their starts.
+            for _ in 0..4 {
+                let mut played = crate::ai::playout::copy_of(&game);
+                let mut plays = Vec::new();
+                while !played.hand_done {
+                    for viewer in [declarer, declarer + 1, declarer + 3] {
+                        let kept = replayed(&game, &convention, viewer, plays.iter().copied(), &prior, &evidence).unwrap();
+                        let mut afresh = Tracker::new(&game, viewer).unwrap();
+                        afresh.start(&game, &convention, &prior);
+                        let mut replay = crate::ai::playout::copy_of(&game);
+                        for &card in &plays {
+                            afresh.observe(&replay, card, &evidence);
+                            replay.play(card);
+                        }
+                        assert_eq!(kept.beliefs.unseen, afresh.beliefs.unseen);
+                        assert_eq!((kept.beliefs.in_first, kept.beliefs.in_second), (afresh.beliefs.in_first, afresh.beliefs.in_second));
+                        assert_eq!(kept.beliefs.parameters, afresh.beliefs.parameters);
+                        compared += 1;
+                    }
+                    let legal: Vec<Card> = played.could_be_played().collect();
+                    let card = legal[rng.gen_range(0..legal.len())];
+                    plays.push(card);
+                    played.play(card);
+                }
+            }
+        }
+        assert!(compared > 1000, "only {compared}");
     }
 
     #[test]

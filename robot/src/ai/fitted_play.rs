@@ -78,6 +78,15 @@ pub(crate) enum Table {
     Later,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
+    /// The place, and whether each of the three cards just above is the
+    /// player's, in the other hand in sight, in the first hidden hand after
+    /// the player, in the second, or not left at all: with the chance of
+    /// each way that the hidden ones could lie, by the player's beliefs
+    /// about where the cards are (see [`crate::ai::locations`]), each
+    /// entry looked up with its chance.
+    AboveSplit,
+    /// The same of the three cards just below.
+    BelowSplit,
     Trick1,
     Above1,
     Below1,
@@ -125,6 +134,7 @@ impl Table {
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
             Table::Bids => 4 * PLAYS * 16,
+            Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
             Table::Above1 | Table::Below1 => 4 * 125,
             Table::Rank1 => 4 * 4 * 6 * 2,
@@ -388,8 +398,32 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 /// in the second screen.
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
 
+/// [`V2_TRUMPS`] reading the player's beliefs about where the hidden cards
+/// lie: [`Table::AboveSplit`] and [`Table::BelowSplit`] in place of
+/// [`Table::Above`] and [`Table::Below`], which a model of [`V2_TRUMPS`]
+/// grows into by giving both hidden hands the weights of "hidden", so that
+/// it scores every card as it did.
+pub(crate) const V2_TRUMPS_BELIEFS: Shape = v2_and(
+    "v2-trumps-beliefs",
+    &[
+        Table::Trick,
+        Table::AboveSplit,
+        Table::BelowSplit,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::FirstPoints,
+        Table::SecondPoints,
+        Table::Trumps,
+    ],
+);
+
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY, &V2_LATER_TRUMPS];
+pub(crate) const SHAPES: &[&Shape] =
+    &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY, &V2_LATER_TRUMPS, &V2_TRUMPS_BELIEFS];
 
 impl Shape {
     /// The shape called `name`, if there is one.
@@ -491,12 +525,39 @@ impl Model {
                 Some(*start - table.size())
             })
             .collect();
+        // A table of where the cards near the card lie may become the same
+        // with the hidden hands told apart: "hidden" becomes the first
+        // hidden hand, and then the second is given its weights too.
+        let split = |table: Table| match table {
+            Table::Above => Table::AboveSplit,
+            Table::Below => Table::BelowSplit,
+            table => table,
+        };
         let mut moved = Vec::with_capacity(self.shape.entries());
-        for table in self.shape.tables {
-            let at = shape.tables.iter().position(|t| t == table)?;
-            moved.extend((0..table.size()).map(|index| starts[at] + index));
+        let mut copies = Vec::new();
+        for &table in self.shape.tables {
+            if let Some(at) = shape.tables.iter().position(|&t| t == table) {
+                moved.extend((0..table.size()).map(|index| starts[at] + index));
+                continue;
+            }
+            let at = shape.tables.iter().position(|&t| t == split(table) && t != table)?;
+            moved.extend((0..table.size()).map(|index| {
+                let (place, h) = (index / 64, index % 64);
+                starts[at] + place * 125 + h % 4 + 5 * (h / 4 % 4) + 25 * (h / 16)
+            }));
+            for index in 0..shape.tables[at].size() {
+                let (place, mut digits) = (index / 125, [index % 5, index / 5 % 5, index / 25]);
+                if digits.contains(&4) {
+                    digits.iter_mut().filter(|d| **d == 4).for_each(|d| *d = 3);
+                    let from = place * 125 + digits[0] + 5 * digits[1] + 25 * digits[2];
+                    copies.push((starts[at] + from, starts[at] + index));
+                }
+            }
         }
-        let network = self.network.grown(&moved, shape.entries(), shape.hidden, shape.second, 11);
+        let mut network = self.network.grown(&moved, shape.entries(), shape.hidden, shape.second, 11);
+        for (from, to) in copies {
+            network.copy_entry(from, to);
+        }
         Some(Model { shape, network })
     }
 
@@ -626,6 +687,34 @@ pub(crate) struct View {
     /// The suits that a hidden hand that plays to this trick after the
     /// player is known to be void in.
     hidden_later_void: Cards,
+    /// What the player believes of where the hidden cards lie, when
+    /// [`LOCATIONS`] is set.
+    #[cfg(test)]
+    beliefs: Option<std::sync::Arc<Seen>>,
+}
+
+/// The prior and the evidence by which the views of self-play keep the
+/// players' beliefs about where the hidden cards lie, for the tables that
+/// read them ([`Table::AboveSplit`]), set once by self-play when its file
+/// is given.
+#[cfg(test)]
+pub(crate) static LOCATIONS: std::sync::OnceLock<(crate::ai::locations::Prior, crate::ai::locations::Evidence)> =
+    std::sync::OnceLock::new();
+
+/// A player's beliefs about where the hidden cards lie, as a [`View`] reads
+/// them.
+#[cfg(test)]
+pub(crate) struct Seen {
+    beliefs: crate::ai::locations::Beliefs,
+    /// Its joint chances, worked out when a table first reads them.
+    joint: std::sync::OnceLock<crate::ai::locations::Joint>,
+    /// The hidden cards whose place is not known.
+    free: Cards,
+    /// Those known to be in the player's first hidden hand.
+    first: Cards,
+    /// Whether the player's first hidden hand is the beliefs' second, as it
+    /// is for the declarer playing from the dummy.
+    swapped: bool,
 }
 
 impl View {
@@ -746,6 +835,18 @@ impl View {
         };
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
+        #[cfg(test)]
+        let beliefs = LOCATIONS.get().and_then(|(prior, evidence)| {
+            let viewer = if seat == dummy { declarer } else { seat };
+            let plays = game.tricks.get(..done)?.iter().flat_map(|(_, cards)| cards.iter().copied()).chain(trick.iter().copied());
+            let tracker = crate::ai::locations::replayed(game, convention, viewer, plays, prior, evidence)?;
+            let player_first = (1..4).map(|n| seat + n).find(|&s| s != in_sight)?;
+            let swapped = player_first != tracker.first;
+            let b = &tracker.beliefs;
+            let first = if swapped { b.in_second } else { b.in_first };
+            let free = b.unseen - b.in_first - b.in_second;
+            Some(std::sync::Arc::new(Seen { beliefs: tracker.beliefs, joint: std::sync::OnceLock::new(), free, first, swapped }))
+        });
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let mut shown = || {
             let hidden_seat = hidden_seats.next().unwrap();
@@ -793,6 +894,8 @@ impl View {
             other_later: later.contains(&in_sight),
             hidden_later: !hidden_later.is_empty(),
             hidden_later_void: hidden_later.iter().fold(Cards::EMPTY, |void, &s| void + shown_out[s]),
+            #[cfg(test)]
+            beliefs,
         })
     }
 
@@ -915,19 +1018,59 @@ impl View {
             Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
+            Table::AboveSplit | Table::BelowSplit => panic!("{table:?} reads the player's beliefs, which only self-play keeps"),
+        };
+        // The entries of where the three cards just above or below lie, with
+        // the hidden ones told apart, each with its chance.
+        #[cfg(test)]
+        let split = |above: bool| -> Vec<(usize, f64)> {
+            let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS");
+            let in_suit = self.left.in_suit(suit);
+            let near: Vec<Card> = if above {
+                in_suit.filter(|c| c.rank() > card.rank()).take(3).collect()
+            } else {
+                in_suit.filter(|c| c.rank() < card.rank()).rev().take(3).collect()
+            };
+            let mut window: Vec<Card> = near.into_iter().filter(|&c| seen.free.contains(c)).collect();
+            window.sort_by_key(|c| c.rank());
+            let mut out = Vec::new();
+            let joint = seen.joint.get_or_init(|| seen.beliefs.joint());
+            for (bits, &chance) in joint.of(&window).iter().enumerate() {
+                if chance == 0.0 {
+                    continue;
+                }
+                let mut first = seen.first;
+                for (t, &c) in window.iter().enumerate() {
+                    if (bits & (1 << t) != 0) != seen.swapped {
+                        first += Cards::singleton(c);
+                    }
+                }
+                let hands = [renumbered(self.mine), renumbered(self.other), renumbered(first), renumbered(self.hidden - first)];
+                let number =
+                    if above { Cards::holders_above(&hands, card_now, 3) } else { Cards::holders_below(&hands, card_now, 3) };
+                out.push((place * 125 + number, chance));
+            }
+            out
         };
         let mut offset = 0;
-        let one = shape
-            .tables
-            .iter()
-            .map(|&table| {
-                let index = index(table);
-                debug_assert!(index < table.size(), "{table:?}");
-                offset += table.size();
-                offset - table.size() + index
-            })
-            .collect();
-        Entries { one, weighted: Vec::new() }
+        let mut one = Vec::with_capacity(shape.tables.len());
+        #[cfg_attr(not(test), expect(unused_mut, reason = "only self-play's tables are weighted"))]
+        let mut weighted = Vec::new();
+        for &table in shape.tables {
+            match table {
+                #[cfg(test)]
+                Table::AboveSplit | Table::BelowSplit => {
+                    weighted.extend(split(table == Table::AboveSplit).into_iter().map(|(e, p)| (offset + e, p)));
+                }
+                _ => {
+                    let index = index(table);
+                    debug_assert!(index < table.size(), "{table:?}");
+                    one.push(offset + index);
+                }
+            }
+            offset += table.size();
+        }
+        Entries { one, weighted }
     }
 }
 
@@ -3199,6 +3342,20 @@ mod tests {
             },
         );
         let rate = float("PLAY_SELF_RATE", 0.01);
+        // The players' beliefs about where the hidden cards lie, for shapes
+        // that read them: the prior's weights and then the evidence's, one a
+        // line, as `learn_card_locations` writes them.  They do not learn.
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let weights: Vec<f64> =
+                std::fs::read_to_string(&path).unwrap().lines().map(|l| l.parse().expect("a weight")).collect();
+            let (mut prior, mut evidence) = (crate::ai::locations::Prior::none(), crate::ai::locations::Evidence::none());
+            assert_eq!(weights.len(), prior.weights.len() + evidence.weights.len(), "{path}");
+            let (a, b) = weights.split_at(prior.weights.len());
+            prior.weights.copy_from_slice(a);
+            evidence.weights.copy_from_slice(b);
+            let _ = LOCATIONS.set((prior, evidence));
+            println!("the players' beliefs come from {path}");
+        }
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
@@ -5077,6 +5234,79 @@ mod tests {
             .with_model(model.clone())
             .with_deals(100);
         time("playout (100 deals)", Box::new(move |g| player.play(g)));
+    }
+
+    /// How long views and entries take with the players' beliefs and
+    /// without.
+    #[test]
+    #[ignore]
+    fn time_views_with_beliefs() {
+        let old = Model::new(&V2_TRUMPS, 3);
+        let new = old.grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let mut rng = StdRng::seed_from_u64(14);
+        let games: Vec<(GameState<()>, std::sync::Arc<Convention>)> = crate::ai::opening_lead::candidates::opening_leads(45, 30)
+            .iter()
+            .map(|game| {
+                let convention = game.system.convention();
+                let mut game = crate::ai::playout::copy_of(game);
+                let leader = game.turn().unwrap();
+                let legal: Vec<Card> = game.hands[leader].collect();
+                game.play(legal[0]);
+                for _ in 0..rng.gen_range(0..40) {
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                }
+                (game, convention)
+            })
+            .collect();
+        let time = |what: &str, f: &dyn Fn(&GameState<()>, &Convention) -> f64| {
+            let started = std::time::Instant::now();
+            let mut sum = 0.0;
+            let n = 50;
+            for _ in 0..n {
+                for (game, convention) in &games {
+                    sum += f(game, convention);
+                }
+            }
+            println!("{what}: {:?} a view ({sum})", started.elapsed() / (n * games.len()) as u32);
+        };
+        let scores = |model: &Model, game: &GameState<()>, convention: &Convention| -> f64 {
+            View::new(game, convention).map_or(0.0, |view| view.legal().map(|card| model.score(&view, card)).sum())
+        };
+        time("a view without beliefs", &|game, convention| View::new(game, convention).map_or(0.0, |v| v.mine.len() as f64));
+        time("scores without beliefs", &|game, convention| scores(&old, game, convention));
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        time("a view with beliefs", &|game, convention| View::new(game, convention).map_or(0.0, |v| v.mine.len() as f64));
+        time("scores of the old shape with beliefs", &|game, convention| scores(&old, game, convention));
+        time("scores of the new shape with beliefs", &|game, convention| scores(&new, game, convention));
+    }
+
+    #[test]
+    fn a_model_grown_to_read_beliefs_scores_as_it_did() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let old = Model::new(&V2_TRUMPS, 3);
+        let new = old.grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let mut rng = StdRng::seed_from_u64(12);
+        let mut weighted = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(41, 20) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        let entries = new.entries(&view, card);
+                        let total: f64 = entries.weighted.iter().map(|w| w.1).sum();
+                        assert!((total - 2.0).abs() < 1e-9, "the chances of each table sum to {total}");
+                        weighted += entries.weighted.len();
+                        let (a, b) = (old.score(&view, card), new.score(&view, card));
+                        assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(weighted > 2000, "only {weighted} weighted entries");
     }
 
     /// A tracker's beliefs after a play, what the play added to them, the
