@@ -2793,7 +2793,14 @@ mod tests {
     /// the plays of a deal nearly all the same, and its learning stopped.
     /// Each step also shrinks the weights by `PLAY_SELF_DECAY` (0) times its
     /// size, as AdamW's weight decay does, so that they stay small unless the
-    /// games keep calling for them.
+    /// games keep calling for them.  With `PLAY_SELF_COOLING` (0) set to a
+    /// number of rounds t0, the rate cools as rate·√(t0/(t0 + n)), n rounds
+    /// after round `PLAY_SELF_COOLING_START` (the first of the run), so that a
+    /// run started again there warms up again.  That is Adagrad's cooling:
+    /// Adagrad divides by the root of the sum of the squared slopes, which
+    /// grows as n times their mean square, where Adam divides by the root of
+    /// their mean square.  Adam's momentum does not change the drift or the
+    /// noise over more than ten rounds or so, as its weights sum to one.
     ///
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
@@ -3201,6 +3208,22 @@ mod tests {
             println!("the learners' scores are multiplied by {temperature}, to play as they did at temperature 1");
         }
         let anneal_start = number("PLAY_SELF_ANNEAL_START", first_round);
+        let cooling = number("PLAY_SELF_COOLING", 0) as f64;
+        let cooling_start = number("PLAY_SELF_COOLING_START", first_round);
+        let cooled = |round: usize| {
+            if cooling > 0.0 {
+                (cooling / (cooling + round.saturating_sub(cooling_start) as f64)).sqrt()
+            } else {
+                1.0
+            }
+        };
+        if cooling > 0.0 {
+            println!(
+                "the rate cools from {} at round {cooling_start} as the root of {cooling}/({cooling} + rounds since), {} at round {first_round}",
+                rate,
+                rate * cooled(first_round)
+            );
+        }
         let mut playout_losses = vec![Tally::default(); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
@@ -3580,6 +3603,7 @@ mod tests {
                 if scale != 1.0 {
                     learner.network.scale_scores(1.0 / scale);
                 }
+                let rate = rate * cooled(round);
                 for p in &mut learner.network.params {
                     *p *= 1.0 - rate * ramp * decay;
                 }
