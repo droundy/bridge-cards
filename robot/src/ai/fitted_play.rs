@@ -387,9 +387,30 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 /// [`V2`] and both [`Table::Later`] and [`Table::Trumps`], the two that paid
 /// in the second screen.
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
+/// [`V2_TRUMPS`] with hidden layers twice as wide, to see whether its width
+/// is what stops training from going further.
+pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, hidden: 32, second: 16 };
+/// [`V2_TRUMPS`] and [`Table::History`].
+pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_tables_and!(Table::Trumps, Table::History));
+/// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
+pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
+    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, hidden: 32, second: 16 };
 
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] = &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY, &V2_LATER_TRUMPS];
+pub(crate) const SHAPES: &[&Shape] = &[
+    &V1,
+    &V2,
+    &V2_WIDE,
+    &V2_HISTORY,
+    &V2_TRUMPS,
+    &V2_LATER,
+    &V2_BIDS,
+    &V2_LATER_HISTORY,
+    &V2_LATER_TRUMPS,
+    &V2_TRUMPS_WIDE,
+    &V2_TRUMPS_HISTORY,
+    &V2_TRUMPS_HISTORY_WIDE,
+];
 
 impl Shape {
     /// The shape called `name`, if there is one.
