@@ -9,9 +9,15 @@
 //! Solving every lead on each of those deals takes seconds a deal, so
 //! [`likely_opening_leads`] guesses the order of the leads from the hand and
 //! the auction alone.  It scores each card by a few things about it and its
-//! suit (its length and honours, who bid it, whether it is trumps), with
-//! weights fitted to double-dummy results on deals that fit the auctions that
-//! the robot bids, by the ignored test `fit_opening_lead_weights`.
+//! suit (its length and honours, which suits partner and the opponents
+//! showed, whether it is trumps), with weights fitted to double-dummy
+//! results on deals that fit the auctions that the robot bids, by the ignored
+//! test `fit_opening_lead_weights`.
+//!
+//! No feature reads the calls.  The auction enters through the contract,
+//! which the rules of the game give, and through what the bidding system's
+//! tables say that the calls showed (`Convention::shown_bounds`), which
+//! includes what a natural bid says of the bidder's suit.
 
 use super::ensemble::{calls_missed, closest, OVERSAMPLE};
 use super::Convention;
@@ -46,13 +52,9 @@ impl Unseen {
         }
         // The dummy, partner and the declarer, in the order of play.
         let seats = [leader + 1, leader + 2, leader + 3];
-        let bid_offset = |seat: Seat| {
-            let first = (seat as usize + 4 - game.dealer as usize) % 4;
-            (game.bids.len() + 4 - first) % 4
-        };
         Some(Unseen {
             pool: Cards::ALL - game.hands[leader],
-            bounds: seats.map(|seat| convention.shown_bounds(&game.bids, bid_offset(seat))),
+            bounds: Unseen::shown(game, convention, leader),
             bids: game.bids.clone(),
             calls: seats.map(|seat| {
                 (0..game.bids.len())
@@ -60,6 +62,22 @@ impl Unseen {
                     .collect()
             }),
         })
+    }
+
+    /// What the auction of `game` showed of the dummy, partner and the
+    /// declarer, in the order of play from `leader`, as a minimum and a
+    /// maximum, by the tables of `convention`.
+    pub(crate) fn shown<C>(
+        game: &GameState<C>,
+        convention: &Convention,
+        leader: Seat,
+    ) -> [(HandValuation, HandValuation); 3] {
+        let bid_offset = |seat: Seat| {
+            let first = (seat as usize + 4 - game.dealer as usize) % 4;
+            (game.bids.len() + 4 - first) % 4
+        };
+        [leader + 1, leader + 2, leader + 3]
+            .map(|seat| convention.shown_bounds(&game.bids, bid_offset(seat)))
     }
 
     /// One deal of the three hands, at random.
@@ -130,61 +148,117 @@ impl Unseen {
     }
 }
 
-/// What the opening leader knows from the auction that a lead depends on.
+/// What the auction showed of one suit of one hand: the fewest and most cards
+/// in it, and the fewest and most high card points in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SuitShown {
+    pub(crate) length: (u8, u8),
+    pub(crate) points: (u8, u8),
+}
+
+/// What the auction showed of one of the other three hands, as the bids of
+/// that hand's table entries state it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HandShown {
+    pub(crate) suits: [SuitShown; 4],
+    /// The fewest and most high card points.
+    pub(crate) points: (u8, u8),
+}
+
+impl HandShown {
+    /// What the bounds `min` and `max` on a hand show.
+    pub(crate) fn from_bounds(min: &HandValuation, max: &HandValuation) -> HandShown {
+        HandShown {
+            suits: Suit::ALL.map(|suit| SuitShown {
+                length: (min.length[suit], max.length[suit]),
+                points: (min.hcp_in_suit[suit], max.hcp_in_suit[suit]),
+            }),
+            points: (min.hcp, max.hcp),
+        }
+    }
+}
+
+/// What the opening leader knows from the auction that a lead depends on:
+/// the contract (its strain, level and whether it is doubled, which the rules
+/// of the game give), and what the auction showed of the other three hands,
+/// as the bounds that the bidding system's tables state for the calls
+/// (`Convention::shown_bounds`).  It does not hold the calls themselves, so
+/// that what a lead depends on is only what the system says they showed.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Auction {
     trump: Option<Suit>,
     level: usize,
-    /// Which suits each player bid, counting from the leader: 0 is the
-    /// leader, 1 the dummy, 2 partner and 3 the declarer.
-    bid: [[bool; 4]; 4],
-    /// Who doubled or redoubled the contract last, counting from the leader.
-    doubled_by: Option<usize>,
+    doubled: bool,
+    /// What was shown of the dummy, partner and the declarer, in the order
+    /// of play from the leader.
+    shown: [HandShown; 3],
 }
 
+/// The seats that `Auction::shown` holds, counting from the leader.
+const DUMMY: usize = 0;
+const PARTNER: usize = 1;
+const DECLARER: usize = 2;
+
 impl Auction {
-    /// The auction of `game`, as the player whose turn it is sees it.
+    /// The auction of `game`, as the player whose turn it is sees it, read by
+    /// the tables of the game's bidding system.
     pub(crate) fn new<C>(game: &GameState<C>) -> Option<Auction> {
         let leader = game.turn()?;
-        Some(Auction::from_bids(game.bids.iter().enumerate().map(
-            |(i, &bid)| {
-                let seat = game.dealer + i;
-                ((seat as usize + 4 - leader as usize) % 4, bid)
-            },
-        )))
+        let convention = game.system.table();
+        let bounds = Unseen::shown(game, convention, leader);
+        let (trump, level, doubled) = contract(&game.bids);
+        Some(Auction {
+            trump,
+            level,
+            doubled,
+            shown: bounds.map(|(min, max)| HandShown::from_bounds(&min, &max)),
+        })
     }
 
-    /// The auction of `bids`, each with its bidder counting from the leader.
-    fn from_bids(bids: impl Iterator<Item = (usize, Bid)>) -> Auction {
-        let mut auction = Auction {
-            trump: None,
-            level: 0,
-            bid: [[false; 4]; 4],
-            doubled_by: None,
-        };
-        for (seat, bid) in bids {
-            match bid {
-                Bid::Suit(level, suit) => {
-                    auction.bid[seat][suit as usize] = true;
-                    auction.trump = Some(suit);
-                    auction.level = level;
-                    auction.doubled_by = None;
-                }
-                Bid::NT(level) => {
-                    auction.trump = None;
-                    auction.level = level;
-                    auction.doubled_by = None;
-                }
-                Bid::Double | Bid::Redouble => auction.doubled_by = Some(seat),
-                Bid::Pass => {}
-            }
+    /// The auction of a contract, and what was shown of each of the hands.
+    #[cfg(test)]
+    pub(crate) fn from_shown(
+        trump: Option<Suit>,
+        level: usize,
+        doubled: bool,
+        shown: [HandShown; 3],
+    ) -> Auction {
+        Auction {
+            trump,
+            level,
+            doubled,
+            shown,
         }
-        auction
     }
+
+    /// Whether the calls of `seat` showed at least `least` cards in `suit`.
+    fn showed(&self, seat: usize, suit: Suit, least: u8) -> bool {
+        self.shown[seat].suits[suit as usize].length.0 >= least
+    }
+
+    /// Whether either opponent showed at least `least` cards in `suit`.
+    fn opponent_showed(&self, suit: Suit, least: u8) -> bool {
+        self.showed(DUMMY, suit, least) || self.showed(DECLARER, suit, least)
+    }
+}
+
+/// The trumps, level, and whether it is doubled, of the contract that `bids`
+/// end in.
+fn contract(bids: &[Bid]) -> (Option<Suit>, usize, bool) {
+    let mut contract = (None, 0, false);
+    for &bid in bids {
+        match bid {
+            Bid::Suit(level, suit) => contract = (Some(suit), level, false),
+            Bid::NT(level) => contract = (None, level, false),
+            Bid::Double | Bid::Redouble => contract.2 = true,
+            Bid::Pass => {}
+        }
+    }
+    contract
 }
 
 /// The things about a lead that [`likely_opening_leads`] weighs.
-const FEATURES: [&str; 35] = [
+const FEATURES: [&str; 39] = [
     "length of the suit / 4",
     "singleton",
     "doubleton",
@@ -196,11 +270,11 @@ const FEATURES: [&str; 35] = [
     "queen and jack",
     "jack and ten",
     "trumps",
-    "partner bid the suit",
-    "the dummy bid the suit",
-    "the declarer bid the suit",
-    "the leader bid the suit",
-    "nobody bid the suit",
+    "partner showed four cards in the suit",
+    "the dummy showed four cards in the suit",
+    "the declarer showed four cards in the suit",
+    "partner showed five cards in the suit",
+    "none of the three showed four cards in the suit",
     "the top card of the suit",
     "the lowest card of the suit",
     "fourth from the top",
@@ -212,14 +286,18 @@ const FEATURES: [&str; 35] = [
     "a singleton, holding trumps",
     "an ace against a slam",
     "the contract is doubled",
-    "partner doubled, leading a suit an opponent bid",
+    "the top card, in a suit partner showed four cards in",
     "doubled, leading trumps",
     "the lower of two touching cards",
     "the middle of three touching cards",
-    "trumps, with dummy having bid a side suit",
+    "trumps, with dummy having shown four cards in a side suit",
     "a long suit against a high contract",
-    "a long suit an opponent bid",
-    "an ace in a suit an opponent bid",
+    "a long suit an opponent showed four cards in",
+    "an ace in a suit an opponent showed four cards in",
+    "the top card, in a suit partner showed five cards in",
+    "partner showed at most two cards in the suit",
+    "partner showed high cards in the suit",
+    "an opponent showed at most two cards in the suit",
 ];
 
 /// The things about leading `card` from `hand` after `auction`, as
@@ -233,9 +311,13 @@ fn features(auction: &Auction, hand: Cards, card: Card) -> [f64; FEATURES.len()]
     let higher = (holding & Cards::higher_than(card)).len();
     let trumps = |t: Suit| hand.in_suit(t).len();
     let is_trump = auction.trump == Some(suit);
-    let bid = |seat: usize| auction.bid[seat][suit as usize];
+    let top = higher == 0;
+    let partner = auction.shown[PARTNER].suits[suit as usize];
     let honours = ace || king || queen || jack;
-    let opponent_bid = bid(1) || bid(3);
+    let opponent_four = auction.opponent_showed(suit, 4);
+    let opponent_short = [DUMMY, DECLARER]
+        .iter()
+        .any(|&seat| auction.shown[seat].suits[suit as usize].length.1 <= 2);
     let f = |b: bool| b as u8 as f64;
     [
         length as f64 / 4.0,
@@ -249,45 +331,56 @@ fn features(auction: &Auction, hand: Cards, card: Card) -> [f64; FEATURES.len()]
         f(queen && jack),
         f(jack && ten),
         f(is_trump),
-        f(bid(2)),
-        f(bid(1)),
-        f(bid(3)),
-        f(bid(0)),
-        f(!(0..4).any(bid)),
-        f(higher == 0),
+        f(auction.showed(PARTNER, suit, 4)),
+        f(auction.showed(DUMMY, suit, 4)),
+        f(auction.showed(DECLARER, suit, 4)),
+        f(auction.showed(PARTNER, suit, 5)),
+        f(![DUMMY, PARTNER, DECLARER]
+            .iter()
+            .any(|&seat| auction.showed(seat, suit, 4))),
+        f(top),
         f(higher + 1 == length),
         f(higher == 3),
         f(card.rank() > 2 && holding.contains(Card::new(suit, card.rank() - 1))),
         f(card.rank() >= 10),
         f(card.rank() == 14),
-        f(length == 2 && higher == 0),
-        f(length >= 3 && higher == 0 && !honours),
+        f(length == 2 && top),
+        f(length >= 3 && top && !honours),
         f(length == 1 && !is_trump && auction.trump.is_some_and(|t| trumps(t) > 0)),
         f(card.rank() == 14 && auction.level >= 6),
-        f(auction.doubled_by.is_some()),
-        f(auction.doubled_by == Some(2) && opponent_bid),
-        f(auction.doubled_by.is_some() && is_trump),
+        f(auction.doubled),
+        f(top && auction.showed(PARTNER, suit, 4)),
+        f(auction.doubled && is_trump),
         f(card.rank() < 14 && has(card.rank() + 1)),
         f(card.rank() > 2 && card.rank() < 14 && has(card.rank() + 1) && has(card.rank() - 1)),
-        f(is_trump && (0..4).any(|s| s != suit as usize && auction.bid[1][s])),
+        f(is_trump
+            && Suit::ALL
+                .iter()
+                .any(|&s| s != suit && auction.showed(DUMMY, s, 4))),
         f(length >= 4 && auction.level >= 5),
-        f(length >= 4 && opponent_bid),
-        f(card.rank() == 14 && opponent_bid),
+        f(length >= 4 && opponent_four),
+        f(card.rank() == 14 && opponent_four),
+        f(top && auction.showed(PARTNER, suit, 5)),
+        f(partner.length.1 <= 2),
+        f(partner.points.0 >= 3),
+        f(opponent_short),
     ]
 }
 
-/// The weights of [`FEATURES`] against a notrump contract.
+/// The weights of [`FEATURES`] against a notrump contract, fitted to 1,501
+/// notrump leads of the 5,000 situations of seed 1.
 const NOTRUMP_WEIGHTS: [f64; FEATURES.len()] = [
-    2.693, 0.005, -0.082, 0.807, -1.341, -0.972, 1.384, 1.145, -0.444, -0.186, 0.000, 1.197,
-    -1.150, -1.500, 0.110, 1.437, -1.925, -0.958, -0.526, -0.319, 1.188, 0.201, -0.121, -0.115,
-    0.000, 0.002, 0.000, 0.000, 0.000, 4.110, -0.369, 0.000, -0.214, -1.098, 0.009,
+    2.766, -0.064, -0.437, 1.541, -2.635, -1.428, 2.199, 1.598, 1.272, -0.317, 0.000, 2.710, -1.624,
+    -2.589, 2.499, 1.484, -1.498, -1.330, -0.571, 0.302, 2.631, 3.948, 0.072, 0.018, 0.000, 0.039,
+    0.000, 0.181, 0.000, 7.299, -1.306, 0.000, 0.026, -3.275, 0.058, 0.184, 0.000, -0.008, -0.317,
 ];
 
-/// The weights of [`FEATURES`] against a suit contract.
+/// The weights of [`FEATURES`] against a suit contract, fitted to 3,499
+/// suit leads of the same 5,000 situations.
 const SUIT_WEIGHTS: [f64; FEATURES.len()] = [
-    -0.492, 2.708, 1.398, -0.608, -2.871, -3.044, 2.321, 1.879, 1.007, 1.226, -2.189, 2.375,
-    -1.021, -2.851, 0.544, 0.271, 2.680, 1.399, -0.976, 3.927, -0.352, 4.138, 1.570, -0.510, 2.573,
-    0.101, -0.000, 0.000, -0.010, 0.595, 0.475, -0.324, 0.147, -0.198, 0.358,
+    -1.024, 2.894, 1.309, -0.933, -2.646, -2.885, 2.659, 1.687, 1.010, 0.576, -2.259, 1.494, -0.476,
+    -2.686, 1.343, 1.124, 2.946, 1.687, -0.877, 4.357, -0.097, 3.812, 1.459, -0.232, 2.602, -0.018,
+    -0.000, 1.262, -0.134, 0.270, 0.223, -0.612, 0.109, -0.791, 0.101, 1.092, 0.005, 0.000, -0.024,
 ];
 
 /// How likely a lead of `card` is to be best, the higher the better.
@@ -385,7 +478,7 @@ pub(crate) mod candidates {
         (13 * 64, "the rank, and which of the three ranks above and below it are held"),
         (32 * 7, "which of the ace to the ten of the suit are held, and its length"),
         (13 * 7, "the rank and the length of the suit"),
-        (64, "who bid the suit, whether it is trumps, whether the contract is doubled"),
+        (64, "who showed four cards in the suit, whether it is trumps, whether the contract is doubled"),
         (8 * 7, "the level and the length of the suit"),
         (7 * 7, "the length of the trumps and of the suit"),
     ];
@@ -397,13 +490,16 @@ pub(crate) mod candidates {
         let rank = card.rank() as u32;
         let (above, below) = (hand.above(card, 3) as u32, hand.below(card, 3) as u32);
         let length = hand.in_suit(suit).len().min(7) as u32 - 1;
-        let bid = (0..4).fold(0, |bits, seat| bits | (auction.bid[seat][suit as usize] as u32) << seat);
+        // Who showed four cards in the suit: bit 0 is the leader, who shows nothing.
+        let bid = [DUMMY, PARTNER, DECLARER]
+            .iter()
+            .fold(0, |bits, &seat| bits | (auction.showed(seat, suit, 4) as u32) << (seat + 1));
         let trump_length = auction.trump.map_or(0, |t| hand.in_suit(t).len().min(6)) as u32;
         let indices = [
             (rank - 2) * 64 + above * 8 + below,
             hand.top_ranks(suit, 5) as u32 * 7 + length,
             (rank - 2) * 7 + length,
-            bid | ((auction.trump == Some(suit)) as u32) << 4 | (auction.doubled_by.is_some() as u32) << 5,
+            bid | ((auction.trump == Some(suit)) as u32) << 4 | (auction.doubled as u32) << 5,
             auction.level as u32 * 7 + length,
             trump_length * 7 + length,
         ];
@@ -431,7 +527,10 @@ pub(crate) mod candidates {
         let suit = card.suit();
         let holding = hand.in_suit(suit);
         let has = |rank: u8| holding.contains(Card::new(suit, rank)) as u8 as f64;
-        let bid = |seat: usize| auction.bid[seat][suit as usize] as u8 as f64;
+        // Who showed four cards in the suit, counting the leader as 0.
+        let bid = |seat: usize| {
+            (seat > 0 && auction.showed(seat - 1, suit, 4)) as u8 as f64
+        };
         let rank = card.rank();
         let length = holding.len() as f64 / 4.0;
         let higher = (holding & Cards::higher_than(card)).len() as f64 / 4.0;
@@ -441,9 +540,9 @@ pub(crate) mod candidates {
         let touching_below = if rank > 2 { has(rank - 1) } else { 0.0 };
         let trumps = (auction.trump == Some(suit)) as u8 as f64;
         let level = auction.level as f64 / 7.0;
-        let doubled = auction.doubled_by.is_some() as u8 as f64;
+        let doubled = auction.doubled as u8 as f64;
         let dummy_bid_a_side_suit =
-            (0..4).any(|s| s != suit as usize && auction.bid[1][s]) as u8 as f64;
+            Suit::ALL.iter().any(|&s| s != suit && auction.showed(DUMMY, s, 4)) as u8 as f64;
         let trump_length = auction.trump.map_or(0.0, |t| hand.in_suit(t).len() as f64 / 4.0);
         let relu = |x: f64| x.max(0.0);
         -0.15 * ace - 0.08 * bid(3) - 0.52 * relu(0.12 * ace) - 0.57 * relu(0.14 * ace)
@@ -502,6 +601,29 @@ mod tests {
             let lead = EnsemblePlay::seeded(4).replaying_the_auction().play(&game);
             assert!(likeliest[..2].contains(&lead), "{lead} of {likeliest:?}");
         }
+    }
+
+    /// How many of the deals of the three unseen hands fit what the auction
+    /// showed, which is how much the ensemble has to throw away.
+    #[test]
+    #[ignore]
+    fn report_the_acceptance_of_shown_bounds() {
+        let (mut fraction, mut count, mut hopeless) = (0.0, 0, 0);
+        for game in opening_leads(7, 150) {
+            let convention = game.system.table();
+            let unseen = Unseen::new(&game, convention).unwrap();
+            let mut rng = StdRng::seed_from_u64(3);
+            let fitting = (0..2000)
+                .filter(|_| unseen.fits(&unseen.deal(&mut rng)))
+                .count();
+            fraction += fitting as f64 / 2000.0;
+            hopeless += (fitting == 0) as usize;
+            count += 1;
+        }
+        println!(
+            "{count} situations: {:.4} of random deals fit the auction; {hopeless} with none of 2000 fitting",
+            fraction / count as f64
+        );
     }
 
     #[test]
@@ -588,6 +710,53 @@ mod tests {
         }
     }
 
+    /// The contract and what was shown of the three hands, as the data holds
+    /// them: for each of the dummy, partner and the declarer, each suit's
+    /// fewest and most cards and fewest and most points in it, and the fewest
+    /// and most points.
+    fn contract_json(auction: &Auction) -> serde_json::Value {
+        let shown: Vec<_> = auction
+            .shown
+            .iter()
+            .map(|hand| {
+                serde_json::json!({
+                    "length": hand.suits.map(|s| [s.length.0, s.length.1]),
+                    "points": hand.suits.map(|s| [s.points.0, s.points.1]),
+                    "hcp": [hand.points.0, hand.points.1],
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "trump": auction.trump.map(|suit| suit as usize),
+            "level": auction.level,
+            "doubled": auction.doubled,
+            "shown": shown,
+        })
+    }
+
+    /// The auction that `contract_json` wrote.
+    fn read_auction(json: &serde_json::Value) -> Auction {
+        let pair = |v: &serde_json::Value| {
+            (v[0].as_u64().unwrap() as u8, v[1].as_u64().unwrap() as u8)
+        };
+        let shown = std::array::from_fn(|seat| {
+            let hand = &json["shown"][seat];
+            HandShown {
+                suits: std::array::from_fn(|suit| SuitShown {
+                    length: pair(&hand["length"][suit]),
+                    points: pair(&hand["points"][suit]),
+                }),
+                points: pair(&hand["hcp"]),
+            }
+        });
+        Auction::from_shown(
+            json["trump"].as_u64().map(|suit| Suit::ALL[suit as usize]),
+            json["level"].as_u64().unwrap() as usize,
+            json["doubled"].as_bool().unwrap(),
+            shown,
+        )
+    }
+
     fn card_pair(card: Card) -> (usize, u8) {
         (card.suit() as usize, card.rank())
     }
@@ -596,9 +765,11 @@ mod tests {
     /// tricks that the defenders take with each lead, on deals of the hidden
     /// hands that fit the auction, one JSON object per line, to the file
     /// `OPENING_LEAD_DATA`.  `OPENING_LEAD_SITUATIONS` (400), `OPENING_LEAD_DEALS`
-    /// (6) and `OPENING_LEAD_SEED` (1) say how many and which.  The auction
-    /// gives each call's seat counting from the leader: 1 is the dummy, 2
-    /// partner and 3 the declarer.  Suits are 0 for clubs to 3 for spades.
+    /// (6) and `OPENING_LEAD_SEED` (1) say how many and which, and
+    /// `OPENING_LEAD_THREADS` (all of them) how many threads to use.  The
+    /// `contract` says what a lead depends on of the auction (see
+    /// [`Auction`]): the dummy, partner and the declarer, in that order, are
+    /// the three hands that it shows.  Suits are 0 for clubs to 3 for spades.
     #[test]
     #[ignore]
     fn collect_opening_lead_data() {
@@ -613,7 +784,10 @@ mod tests {
         let deals = var("OPENING_LEAD_DEALS", 6) as usize;
         let seed = var("OPENING_LEAD_SEED", 1);
         let games = opening_leads(seed, count);
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let threads = var(
+            "OPENING_LEAD_THREADS",
+            std::thread::available_parallelism().map_or(4, |n| n.get()) as u64,
+        ) as usize;
         let next = std::sync::atomic::AtomicUsize::new(0);
         let lines = std::sync::Mutex::new(Vec::new());
         std::thread::scope(|scope| {
@@ -659,7 +833,10 @@ mod tests {
                         let line = serde_json::json!({
                             "situation": i,
                             "system": format!("{:?}", game.system),
+                            // The calls are kept only so that another version of
+                            // the fit that reads them can be compared on this data.
                             "bids": bids,
+                            "contract": contract_json(&Auction::new(game).unwrap()),
                             "hand": hand.map(card_pair).collect::<Vec<_>>(),
                             "trump": trump.map(|suit| suit as usize),
                             "deals": values,
@@ -688,22 +865,6 @@ mod tests {
         first_deals: Vec<Vec<(Card, f64)>>,
     }
 
-    fn parse_bid(name: &str) -> Bid {
-        let suit = |c: u8| Suit::ALL[b"CDHS".iter().position(|&s| s == c).unwrap()];
-        match name {
-            "P" => Bid::Pass,
-            "X" => Bid::Double,
-            "XX" => Bid::Redouble,
-            _ => {
-                let level = (name.as_bytes()[0] - b'0') as usize;
-                match name.as_bytes()[1] {
-                    b'N' => Bid::NT(level),
-                    c => Bid::Suit(level, suit(c)),
-                }
-            }
-        }
-    }
-
     /// The leads in the files `paths`, comma-separated.
     fn read_leads(paths: &str) -> Vec<Lead> {
         let card = |pair: &serde_json::Value| {
@@ -720,12 +881,6 @@ mod tests {
             .flat_map(|text| text.lines())
             .map(|line| {
                 let json: serde_json::Value = serde_json::from_str(line).unwrap();
-                let bids = json["bids"].as_array().unwrap().iter().map(|bid| {
-                    (
-                        bid[0].as_u64().unwrap() as usize,
-                        parse_bid(bid[1].as_str().unwrap()),
-                    )
-                });
                 let hand = json["hand"]
                     .as_array()
                     .unwrap()
@@ -749,7 +904,7 @@ mod tests {
                 };
                 let half = deals.len().div_ceil(2);
                 Lead {
-                    auction: Auction::from_bids(bids),
+                    auction: read_auction(&json["contract"]),
                     hand,
                     values: means(deals),
                     halves: [means(&deals[..half]), means(&deals[half..])],
@@ -1022,3 +1177,4 @@ mod tests {
         }
     }
 }
+
