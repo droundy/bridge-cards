@@ -1336,27 +1336,33 @@ fn advice_names_four_of_a_major_as_the_game() {
 }
 
 /// The hand that made a call lies within the bounds of what the table says
-/// the call means, for every kind of meaning but a pass (which the robot
-/// makes when nothing else fits), on the auctions that the robots bid.  The
+/// the call means, for every kind of meaning but a pass of a simple or rule
+/// meaning (which the robot makes when nothing else fits), on the auctions
+/// that the robots bid; passes are counted apart, by the kind of their
+/// meaning, since `shown` takes the bounds of passes too.  The
 /// bounds of natural, forced and contract bids are what `shown_bounds` trusts.
 #[test]
 fn hands_lie_within_the_bounds_of_their_calls() {
-    let mut counts = std::collections::BTreeMap::<&str, (usize, usize)>::new();
+    let mut counts = std::collections::BTreeMap::<String, (usize, usize)>::new();
     for game in crate::ai::opening_lead::candidates::opening_leads(9, 600) {
         let table = game.system.table();
         for (i, &bid) in game.bids.iter().enumerate() {
             let Some(meaning) = table.refine(&game.bids[..=i]) else {
                 continue;
             };
-            let kind = match (&meaning, bid) {
-                (_, Bid::Pass) => "pass",
-                (Convention::Simple { .. } | Convention::Rule { .. }, _) => "simple or rule",
-                (Convention::Either(_), _) => "either",
-                (Convention::Natural { .. }, _) => "natural",
-                (Convention::Forced { .. }, _) => "forced",
-                (Convention::Contracted { .. }, _) => "contracted",
-                (Convention::Explored { .. }, _) => "explored",
+            let kind = match &meaning {
+                Convention::Simple { .. } | Convention::Rule { .. } => "simple or rule",
+                Convention::Either(_) => "either",
+                Convention::Natural { .. } => "natural",
+                Convention::Forced { .. } => "forced",
+                Convention::Contracted { .. } => "contracted",
+                Convention::Explored { .. } => "explored",
                 _ => "other",
+            };
+            let kind = if bid == Bid::Pass {
+                format!("pass, {kind}")
+            } else {
+                kind.to_string()
             };
             let (min, max) = meaning.bounds();
             let values = game.hands[game.dealer + i].values();
@@ -1367,6 +1373,9 @@ fn hands_lie_within_the_bounds_of_their_calls() {
     }
     for (kind, (calls, outside)) in counts {
         println!("{kind}: {outside} of {calls} calls were made with a hand outside the bounds");
-        assert!(kind == "pass" || outside == 0, "{kind}");
+        // A robot passes when nothing fits, so a few passes of a simple
+        // or rule meaning lie outside it (a hole before `shown_bounds` read
+        // natural bounds); no other pass or call does.
+        assert!(kind == "pass, simple or rule" || outside == 0, "{kind}");
     }
 }
