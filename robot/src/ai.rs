@@ -525,6 +525,8 @@ pub(crate) mod ensemble;
 pub(crate) mod opening_lead;
 mod fitting;
 pub(crate) mod fitted_play;
+#[cfg(test)]
+mod locations;
 pub use ensemble::EnsemblePlay;
 mod playout;
 pub use playout::PlayoutPlay;
