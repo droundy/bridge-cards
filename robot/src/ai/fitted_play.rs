@@ -4816,6 +4816,87 @@ mod tests {
         time("playout (100 deals)", Box::new(move |g| player.play(g)));
     }
 
+    /// Averages the weights of learner `PLAY_LEARNER` (1) over its snapshots
+    /// in the directory `PLAY_SELF_SNAPSHOTS` from round `PLAY_FROM` to
+    /// `PLAY_TO`, and plays the average, and each of those snapshots, against
+    /// the model of `PLAY_SELF_REFERENCE` in two-table matches on the deals of
+    /// self-play's tournament (`PLAY_SELF_TOURNAMENT`, 200).  At a fixed rate
+    /// the weights hover about a center, and the average estimates it, as
+    /// Polyak and Ruppert's does.  It prints the tricks a deal more than the
+    /// reference of the average and of the snapshots on average, and the
+    /// difference of the two deal by deal, with its standard error.  It
+    /// writes the average to `PLAY_AVERAGE` if that is set.  It uses
+    /// `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn averaged_snapshots() {
+        let directory = std::env::var("PLAY_SELF_SNAPSHOTS").expect("PLAY_SELF_SNAPSHOTS");
+        let learner = number("PLAY_LEARNER", 1);
+        let (from, to) = (number("PLAY_FROM", 0), number("PLAY_TO", usize::MAX));
+        let mut paths: Vec<(usize, String)> = std::fs::read_dir(&directory)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path().to_str()?.to_string();
+                let name = path.rsplit('/').next()?;
+                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
+                let round: usize = digits.parse().ok()?;
+                let rest = name.strip_prefix(&format!("round-{digits}-learner-{learner}-"))?;
+                (rest.ends_with(".txt") && (from..=to).contains(&round)).then_some((round, path))
+            })
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no snapshots of learner {learner} from round {from} to {to}");
+        let snapshots: Vec<Model> = paths.iter().map(|(_, path)| read_model(path)).collect();
+        let mut average = snapshots[0].clone();
+        for (j, p) in average.network.params.iter_mut().enumerate() {
+            *p = snapshots.iter().map(|s| s.network.params[j]).sum::<f64>() / snapshots.len() as f64;
+        }
+        if let Ok(path) = std::env::var("PLAY_AVERAGE") {
+            average.network.write(&path);
+        }
+        let reference = read_model(&std::env::var("PLAY_SELF_REFERENCE").expect("PLAY_SELF_REFERENCE"));
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(17, number("PLAY_SELF_TOURNAMENT", 200))
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+            .collect();
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        let gains = |model: &Model| -> Vec<f64> {
+            workers.install(|| {
+                deals
+                    .par_iter()
+                    .map(|json| {
+                        let game: GameState<()> = serde_json::from_str(json).unwrap();
+                        let convention = game.system.convention();
+                        play_at_a_table(json, &convention, model, 0, Some(&reference)) as f64
+                            - play_at_a_table(json, &convention, model, 1, Some(&reference)) as f64
+                    })
+                    .collect()
+            })
+        };
+        let mean_and_error = |values: &[f64]| {
+            let n = values.len() as f64;
+            let mean = values.iter().sum::<f64>() / n;
+            (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
+        };
+        let of_average = gains(&average);
+        let mut of_snapshots = vec![0.0; deals.len()];
+        for snapshot in &snapshots {
+            for (total, gain) in of_snapshots.iter_mut().zip(gains(snapshot)) {
+                *total += gain / snapshots.len() as f64;
+            }
+        }
+        let differences: Vec<f64> = of_average.iter().zip(&of_snapshots).map(|(a, s)| a - s).collect();
+        let (average_mean, average_error) = mean_and_error(&of_average);
+        let (snapshots_mean, _) = mean_and_error(&of_snapshots);
+        let (difference, difference_error) = mean_and_error(&differences);
+        println!(
+            "learner {learner}, {} snapshots from round {} to {}: against the reference, the average takes {average_mean:+.3} ({average_error:.3}) tricks a deal more, the snapshots {snapshots_mean:+.3} on average, so the average gains {difference:+.3} ({difference_error:.3})",
+            snapshots.len(),
+            paths[0].0,
+            paths[paths.len() - 1].0,
+        );
+    }
+
     /// Plays the play model with the weights in the file
     /// `PLAY_MATCH_WEIGHTS` against the robot's card play as a team match at
     /// two tables: on each of `PLAY_MATCH_DEALS` (100) deals that the robot
