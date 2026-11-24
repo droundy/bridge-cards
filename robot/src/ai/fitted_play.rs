@@ -5108,9 +5108,12 @@ mod tests {
         let declarer = dummy + 2;
         let mut trackers: Vec<Tracker> =
             [declarer, declarer + 1, declarer + 3].iter().filter_map(|&viewer| Tracker::new(&game, viewer)).collect();
+        // `PLAY_LOC_POINTS` 0 leaves the hands' points out of the beliefs.
+        let points = std::env::var("PLAY_LOC_POINTS").map_or(true, |v| v != "0");
         let started: Vec<Started> = trackers
             .iter_mut()
             .map(|tracker| {
+                tracker.beliefs.points = points;
                 let opening = tracker.start(&game, convention, prior);
                 (tracker.beliefs.clone(), opening, game.hands[tracker.first], game.hands[tracker.second])
             })

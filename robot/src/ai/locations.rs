@@ -70,6 +70,9 @@ pub(crate) struct Beliefs {
     /// How many cards the first holds.
     pub(crate) first_size: usize,
     pub(crate) parameters: Parameters,
+    /// Whether the first hand's points are counted, for ψ; without them
+    /// every card counts as no points and the sums are far quicker.
+    pub(crate) points: bool,
 }
 
 /// The chances that a [`Beliefs`] gives.
@@ -156,7 +159,21 @@ impl Beliefs {
     /// Vacant places: every split of the `unseen` cards that gives the first
     /// hand `first_size` of them equally likely.
     pub(crate) fn vacant(unseen: Cards, first_size: usize) -> Beliefs {
-        Beliefs { unseen, in_first: Cards::EMPTY, in_second: Cards::EMPTY, first_size, parameters: Parameters::default() }
+        Beliefs { unseen, in_first: Cards::EMPTY, in_second: Cards::EMPTY, first_size, parameters: Parameters::default(), points: true }
+    }
+
+    /// The high card points of `card`, or 0 if the beliefs leave points out.
+    fn points_of(&self, card: Card) -> usize {
+        if self.points {
+            points(card)
+        } else {
+            0
+        }
+    }
+
+    /// The high card points of `cards`, or 0 if the beliefs leave points out.
+    fn points_in(&self, cards: Cards) -> usize {
+        cards.map(|card| self.points_of(card)).sum()
     }
 
     /// The unseen cards whose place is not known.
@@ -167,6 +184,12 @@ impl Beliefs {
     /// How many of the free cards the first hand holds.
     fn wanted(&self) -> usize {
         self.first_size - self.in_first.len()
+    }
+
+    /// One more than the most points the first hand could hold: the
+    /// columns of the sums that can have any weight.
+    fn width(&self) -> usize {
+        (self.points_in(self.unseen) + 1).min(POINTS)
     }
 
     fn h(&self, card: Card) -> f64 {
@@ -187,18 +210,19 @@ impl Beliefs {
     fn suit(&self, suit: Suit) -> Poly {
         let mut poly = Poly::one();
         let mut log_scale = 0.0;
+        let width = self.width();
         for card in self.free().in_suit(suit) {
             let w = self.h(card).exp();
             let mut c = [[0.0; POINTS]; COUNTS];
             for k in 0..COUNTS {
-                for p in 0..POINTS {
+                for p in 0..width {
                     let v = poly.c[k][p];
                     if v == 0.0 {
                         continue;
                     }
                     c[k][p] += v;
-                    if k + 1 < COUNTS && p + points(card) < POINTS {
-                        c[k + 1][p + points(card)] += v * w;
+                    if k + 1 < COUNTS && p + self.points_of(card) < POINTS {
+                        c[k + 1][p + self.points_of(card)] += v * w;
                     }
                 }
             }
@@ -207,11 +231,11 @@ impl Beliefs {
         }
         // The known cards' points and length, and the suit's potential.
         let known = self.in_first.in_suit(suit);
-        let (known_length, known_points) = (known.len(), known.high_card_points());
+        let (known_length, known_points) = (known.len(), self.points_in(known));
         let mut c = [[0.0; POINTS]; COUNTS];
         for k in 0..COUNTS - known_length {
             let potential = self.phi(suit, k + known_length).exp();
-            for p in 0..POINTS - known_points {
+            for p in 0..width.saturating_sub(known_points) {
                 c[k][p + known_points] = poly.c[k][p] * potential;
             }
         }
@@ -233,7 +257,7 @@ impl Beliefs {
         let mut c = [[0.0; POINTS]; COUNTS];
         for (k, row) in c.iter_mut().enumerate().take(wanted + 1) {
             let other_row = &others.c[wanted - k];
-            for (p, w) in row.iter_mut().enumerate() {
+            for (p, w) in row.iter_mut().enumerate().take(self.width()) {
                 *w = other_row[..points.min(POINTS - p)].iter().zip(&exp_psi[p..]).map(|(a, b)| a * b).sum();
             }
         }
@@ -266,24 +290,25 @@ impl Beliefs {
     fn card_chances(&self, suit: Suit, context: &Poly, log_z: f64) -> Vec<(Card, f64)> {
         let cards: Vec<Card> = self.free().in_suit(suit).collect();
         let m = cards.len();
+        let width = self.width();
         let weights: Vec<f64> = cards.iter().map(|&card| self.h(card).exp()).collect();
         let mut forward = vec![Poly::one()];
         for (&card, &w) in cards.iter().zip(&weights) {
             let before = &forward[forward.len() - 1];
             let mut c = before.c;
             for k in 0..COUNTS - 1 {
-                for p in 0..POINTS - points(card) {
-                    c[k + 1][p + points(card)] += before.c[k][p] * w;
+                for p in 0..width.saturating_sub(self.points_of(card)) {
+                    c[k + 1][p + self.points_of(card)] += before.c[k][p] * w;
                 }
             }
             forward.push(Poly { log_scale: before.log_scale, c }.normalized());
         }
         let known = self.in_first.in_suit(suit);
-        let (known_length, known_points) = (known.len(), known.high_card_points());
+        let (known_length, known_points) = (known.len(), self.points_in(known));
         let mut c = [[0.0; POINTS]; COUNTS];
         for (k, row) in c.iter_mut().enumerate().take(COUNTS - known_length) {
             let potential = self.phi(suit, k + known_length).exp();
-            for (p, w) in row.iter_mut().enumerate().take(POINTS - known_points) {
+            for (p, w) in row.iter_mut().enumerate().take(width.saturating_sub(known_points)) {
                 *w = potential * context.c[k][p + known_points];
             }
         }
@@ -292,8 +317,8 @@ impl Beliefs {
             let after = &backward[backward.len() - 1];
             let mut c = after.c;
             for k in 0..COUNTS - 1 {
-                for p in 0..POINTS - points(cards[i]) {
-                    c[k][p] += weights[i] * after.c[k + 1][p + points(cards[i])];
+                for p in 0..width.saturating_sub(self.points_of(cards[i])) {
+                    c[k][p] += weights[i] * after.c[k + 1][p + self.points_of(cards[i])];
                 }
             }
             backward.push(Poly { log_scale: after.log_scale, c }.normalized());
@@ -304,8 +329,8 @@ impl Beliefs {
                 let (before, after) = (&forward[i], &backward[i + 1]);
                 let mut sum = 0.0;
                 for k in 0..COUNTS - 1 {
-                    for p in 0..POINTS - points(cards[i]) {
-                        sum += before.c[k][p] * after.c[k + 1][p + points(cards[i])];
+                    for p in 0..width.saturating_sub(self.points_of(cards[i])) {
+                        sum += before.c[k][p] * after.c[k + 1][p + self.points_of(cards[i])];
                     }
                 }
                 let chance = if sum > 0.0 { (before.log_scale + after.log_scale + (weights[i] * sum).ln() - log_z).exp() } else { 0.0 };
@@ -378,7 +403,7 @@ impl Beliefs {
         );
         let fields: f64 = (first - self.in_first).map(|card| self.h(card)).sum();
         let potentials: f64 = Suit::ALL.map(|suit| self.phi(suit, first.in_suit(suit).len())).iter().sum();
-        fields + potentials + self.psi(first.high_card_points())
+        fields + potentials + self.psi(self.points_in(first))
     }
 
     /// The log of the chance of the split that gives the first hand the
@@ -406,7 +431,7 @@ impl Beliefs {
         for (p, chance) in chances.points.iter().enumerate() {
             slope.psi[p] = -chance;
         }
-        slope.psi[first.high_card_points()] += 1.0;
+        slope.psi[self.points_in(first)] += 1.0;
         slope
     }
 
@@ -451,7 +476,7 @@ impl Beliefs {
                 draw -= chance;
             }
             let (k, p) = pick;
-            first += self.deal_in_suit(suit, k, p - self.in_first.in_suit(suit).high_card_points(), rng);
+            first += self.deal_in_suit(suit, k, p - self.points_in(self.in_first.in_suit(suit)), rng);
             left -= k;
             so_far += p;
         }
@@ -471,8 +496,8 @@ impl Beliefs {
             for k in 0..COUNTS {
                 for p in 0..POINTS {
                     let without = rest[i + 1][k][p];
-                    let with = if k > 0 && p >= points(cards[i]) {
-                        rest[i + 1][k - 1][p - points(cards[i])] + self.h(cards[i])
+                    let with = if k > 0 && p >= self.points_of(cards[i]) {
+                        rest[i + 1][k - 1][p - self.points_of(cards[i])] + self.h(cards[i])
                     } else {
                         f64::NEG_INFINITY
                     };
@@ -486,15 +511,15 @@ impl Beliefs {
             if k == 0 {
                 break;
             }
-            let with = if p >= points(cards[i]) {
-                rest[i + 1][k - 1][p - points(cards[i])] + self.h(cards[i])
+            let with = if p >= self.points_of(cards[i]) {
+                rest[i + 1][k - 1][p - self.points_of(cards[i])] + self.h(cards[i])
             } else {
                 f64::NEG_INFINITY
             };
             if rng.gen_range(0.0..1.0) < (with - rest[i][k][p]).exp() {
                 dealt += Cards::singleton(cards[i]);
                 k -= 1;
-                p -= points(cards[i]);
+                p -= self.points_of(cards[i]);
             }
         }
         dealt
@@ -744,7 +769,7 @@ impl Tracker {
             }
         });
         let unseen = Suit::ALL.map(|suit| self.beliefs.unseen.in_suit(suit).len());
-        let points = self.beliefs.unseen.high_card_points();
+        let points = self.beliefs.points_in(self.beliefs.unseen);
         let opening = Opening { showed, unseen, points };
         let [one, two] = showed;
         let parameters = &mut self.beliefs.parameters;
@@ -825,7 +850,7 @@ impl Tracker {
             let phi = &mut parameters.phi[suit as usize];
             phi.rotate_left(1);
             phi[COUNTS - 1] = 0.0;
-            let p = points(card);
+            let p = if beliefs.points { points(card) } else { 0 };
             parameters.psi.rotate_left(p);
             parameters.psi[POINTS - p..].fill(0.0);
         }
@@ -1158,5 +1183,11 @@ mod timing {
             sum += beliefs.deal(&mut rng).len() as f64;
         }
         println!("deal: {:?} each ({sum})", started.elapsed() / n);
+        beliefs.points = false;
+        let started = std::time::Instant::now();
+        for _ in 0..n {
+            sum += beliefs.chances().card.iter().sum::<f64>();
+        }
+        println!("chances without points: {:?} each ({sum})", started.elapsed() / n);
     }
 }
