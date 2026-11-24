@@ -89,6 +89,58 @@ pub(crate) struct Chances {
     pub(crate) log_normalization: f64,
 }
 
+/// The joint chances of where some cards of a suit lie (see
+/// [`Beliefs::joint`]).
+pub(crate) struct Joint {
+    /// For each suit, its free cards with their weights and points, and the
+    /// forward and backward weights of each.
+    suits: [(Vec<(Card, f64, usize)>, Vec<Poly>, Vec<Poly>); 4],
+    log_z: f64,
+}
+
+impl Joint {
+    /// The chances of each way that `cards`, free cards of one suit with no
+    /// other free card of the suit between them, lie: for each number below
+    /// 2<sup>n</sup>, whose bit `t` says whether card `t` is in the first
+    /// hidden hand.
+    pub(crate) fn of(&self, cards: &[Card]) -> Vec<f64> {
+        let Some(first) = cards.first() else {
+            return vec![1.0];
+        };
+        let (free, forward, backward) = &self.suits[first.suit() as usize];
+        let start = free.iter().position(|f| f.0 == *first).expect("a free card");
+        let n = cards.len();
+        assert!(
+            cards.iter().enumerate().all(|(t, &c)| free.get(start + t).is_some_and(|f| f.0 == c)),
+            "cards that are free and next to each other"
+        );
+        let (before, after) = (&forward[start], &backward[start + n]);
+        (0..1usize << n)
+            .map(|bits| {
+                let (mut w, mut k_more, mut p_more) = (1.0, 0, 0);
+                for (t, &(_, weight, points)) in free[start..start + n].iter().enumerate() {
+                    if bits & (1 << t) != 0 {
+                        w *= weight;
+                        k_more += 1;
+                        p_more += points;
+                    }
+                }
+                let mut sum = 0.0;
+                for k in 0..before.counts {
+                    for p in 0..before.points {
+                        sum += before.get(k, p) * after.get(k + k_more, p + p_more);
+                    }
+                }
+                if sum > 0.0 {
+                    (before.log_scale + after.log_scale + (w * sum).ln() - self.log_z).exp()
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+}
+
 /// Weights by the first hand's cards and points, `counts` by `points` of
 /// them (any beyond have none), each times e<sup>`log_scale`</sup>.
 #[derive(Clone)]
@@ -314,7 +366,28 @@ impl Beliefs {
     /// card (forward) and of those after it with the context (backward), so
     /// that a card's chance is the sum over both of the splits that give it
     /// to the first.
-    fn card_chances(&self, suit: Suit, forward: &[Poly], context: &Poly, log_z: f64) -> Vec<(Card, f64)> {
+    fn card_chances(&self, suit: Suit, forward: &[Poly], backward: &[Poly], log_z: f64) -> Vec<(Card, f64)> {
+        let cards: Vec<Card> = self.free().in_suit(suit).collect();
+        (0..cards.len())
+            .map(|i| {
+                let (before, after) = (&forward[i], &backward[i + 1]);
+                let (w, pts) = (self.h(cards[i]).exp(), self.points_of(cards[i]));
+                let mut sum = 0.0;
+                for k in 0..before.counts {
+                    for p in 0..before.points {
+                        sum += before.get(k, p) * after.get(k + 1, p + pts);
+                    }
+                }
+                let chance = if sum > 0.0 { (before.log_scale + after.log_scale + (w * sum).ln() - log_z).exp() } else { 0.0 };
+                (cards[i], chance)
+            })
+            .collect()
+    }
+
+    /// The backward weights of the free cards of `suit`: for each, those of
+    /// the cards from it on with the suit's `context`, for the counts and
+    /// points that the `forward` weights before it reach.
+    fn backward(&self, suit: Suit, forward: &[Poly], context: &Poly) -> Vec<Poly> {
         let cards: Vec<Card> = self.free().in_suit(suit).collect();
         let m = cards.len();
         let known = self.in_first.in_suit(suit);
@@ -343,20 +416,7 @@ impl Beliefs {
             backward.push(next.normalized());
         }
         backward.reverse();
-        (0..m)
-            .map(|i| {
-                let (before, after) = (&forward[i], &backward[i + 1]);
-                let (w, pts) = (self.h(cards[i]).exp(), self.points_of(cards[i]));
-                let mut sum = 0.0;
-                for k in 0..before.counts {
-                    for p in 0..before.points {
-                        sum += before.get(k, p) * after.get(k + 1, p + pts);
-                    }
-                }
-                let chance = if sum > 0.0 { (before.log_scale + after.log_scale + (w * sum).ln() - log_z).exp() } else { 0.0 };
-                (cards[i], chance)
-            })
-            .collect()
+        backward
     }
 
     /// The log of the normalization: the sum of the weights of every split.
@@ -381,7 +441,8 @@ impl Beliefs {
         }
         for suit in Suit::ALL {
             let s = suit as usize;
-            for (c, chance) in self.card_chances(suit, &both[s].0, &contexts[s], log_z) {
+            let backward = self.backward(suit, &both[s].0, &contexts[s]);
+            for (c, chance) in self.card_chances(suit, &both[s].0, &backward, log_z) {
                 card[index(c)] = chance;
             }
         }
@@ -405,6 +466,26 @@ impl Beliefs {
             }
         }
         Chances { card, length, points, log_normalization: log_z }
+    }
+
+    /// What [`Joint::of`] needs: each suit's free cards with their forward
+    /// and backward weights.
+    pub(crate) fn joint(&self) -> Joint {
+        let both = self.suits();
+        let suits: [Poly; 4] = std::array::from_fn(|s| both[s].1.clone());
+        let exp_psi = self.exp_psi();
+        let others = Beliefs::others(&suits);
+        let contexts: [Poly; 4] = std::array::from_fn(|s| self.context(&others[s], &exp_psi, &suits[s]));
+        let log_z = suits[0].log_dot(&contexts[0]);
+        let [a, b, c, d] = both;
+        let each = |s: usize, (forward, _): (Vec<Poly>, Poly)| {
+            let suit = Suit::ALL[s];
+            let backward = self.backward(suit, &forward, &contexts[s]);
+            let cards: Vec<(Card, f64, usize)> =
+                self.free().in_suit(suit).map(|card| (card, self.h(card).exp(), self.points_of(card))).collect();
+            (cards, forward, backward)
+        };
+        Joint { suits: [each(0, a), each(1, b), each(2, c), each(3, d)], log_z }
     }
 
     /// The log of the weight of the split that gives the first hand the
@@ -989,6 +1070,39 @@ mod tests {
                 assert!(close(&chances.points, &points));
             }
         }
+    }
+
+    #[test]
+    fn joint_chances_are_those_of_every_split_counted() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut checked = 0;
+        for size in [8, 13, 17] {
+            for _ in 0..4 {
+                let beliefs = random_beliefs(&mut rng, size);
+                let splits = every_split(&beliefs);
+                let log_z = log_sum_exp(splits.iter().map(|s| s.1));
+                let joint = beliefs.joint();
+                for suit in Suit::ALL {
+                    let free: Vec<Card> = beliefs.free().in_suit(suit).collect();
+                    for n in 1..=3.min(free.len()) {
+                        for start in 0..=free.len() - n {
+                            let cards = &free[start..start + n];
+                            let chances = joint.of(cards);
+                            let mut counted = vec![0.0; 1 << n];
+                            for (first, log_w) in &splits {
+                                let bits = (0..n).filter(|&t| first.contains(cards[t])).map(|t| 1 << t).sum::<usize>();
+                                counted[bits] += (log_w - log_z).exp();
+                            }
+                            for (a, b) in chances.iter().zip(&counted) {
+                                assert!((a - b).abs() < 1e-9, "{chances:?} against {counted:?}");
+                            }
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 50, "only {checked}");
     }
 
     #[test]
