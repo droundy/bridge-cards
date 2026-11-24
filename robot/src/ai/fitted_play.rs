@@ -5575,6 +5575,17 @@ mod tests {
     #[ignore]
     fn averaged_snapshots() {
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").expect("PLAY_SELF_SNAPSHOTS");
+        // The players' beliefs, for learners of the shapes that read them.
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let weights: Vec<f64> =
+                std::fs::read_to_string(&path).unwrap().lines().map(|l| l.parse().expect("a weight")).collect();
+            let (mut prior, mut evidence) = (crate::ai::locations::Prior::none(), crate::ai::locations::Evidence::none());
+            assert_eq!(weights.len(), prior.weights.len() + evidence.weights.len(), "{path}");
+            let (a, b) = weights.split_at(prior.weights.len());
+            prior.weights.copy_from_slice(a);
+            evidence.weights.copy_from_slice(b);
+            let _ = LOCATIONS.set((prior, evidence));
+        }
         let learner = number("PLAY_LEARNER", 1);
         let (from, to) = (number("PLAY_FROM", 0), number("PLAY_TO", usize::MAX));
         let mut paths: Vec<(usize, String)> = std::fs::read_dir(&directory)
