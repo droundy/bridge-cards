@@ -473,7 +473,6 @@ impl Model {
         }
     }
 
-    #[cfg(test)]
     /// The entries of its tables that playing `card` looks up in `view`.
     pub(crate) fn entries(&self, view: &View, card: Card) -> Vec<usize> {
         view.entries(card, self.shape)
@@ -481,7 +480,7 @@ impl Model {
 
     /// Its score for playing `card` in `view`.
     pub(crate) fn score(&self, view: &View, card: Card) -> f64 {
-        self.network.score(view.entries_of(card, self.shape).as_slice())
+        self.network.score(&self.entries(view, card))
     }
 
     /// This model of [`V1`] as a model of [`V2`], which scores every card
@@ -842,15 +841,9 @@ impl View {
         }
     }
 
-    #[cfg(test)]
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
     pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {
-        self.entries_of(card, shape).as_slice().to_vec()
-    }
-
-    /// [`View::entries`] without allocating, for scoring a card.
-    pub(crate) fn entries_of(&self, card: Card, shape: &Shape) -> Entries {
         let suit = card.suit();
         let (role, place) = (self.role, self.place);
         let how = match self.lead {
@@ -950,33 +943,17 @@ impl View {
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
         };
-        let mut entries = Entries { values: [0; MOST_TABLES], len: shape.tables.len() };
-        assert!(entries.len <= MOST_TABLES, "{} tables", entries.len);
         let mut offset = 0;
-        for (value, &table) in entries.values.iter_mut().zip(shape.tables) {
-            let index = index(table);
-            debug_assert!(index < table.size(), "{table:?}");
-            *value = offset + index;
-            offset += table.size();
-        }
-        entries
-    }
-}
-
-/// The most tables that a shape can have, for [`Entries`].
-const MOST_TABLES: usize = 24;
-
-/// The entries that playing a card looks up (see [`View::entries`]), kept
-/// without a heap allocation.
-pub(crate) struct Entries {
-    values: [usize; MOST_TABLES],
-    len: usize,
-}
-
-impl Entries {
-    /// The entries, one in each table.
-    pub(crate) fn as_slice(&self) -> &[usize] {
-        &self.values[..self.len]
+        shape
+            .tables
+            .iter()
+            .map(|&table| {
+                let index = index(table);
+                debug_assert!(index < table.size(), "{table:?}");
+                offset += table.size();
+                offset - table.size() + index
+            })
+            .collect()
     }
 }
 

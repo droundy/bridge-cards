@@ -40,9 +40,9 @@ pub(crate) struct Network {
 }
 
 /// What a network works out on the way to a candidate's score.
-#[cfg(test)]
 struct Forward {
     /// Each layer's sums, and the larger of each and 0.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
     sums: Vec<Vec<f64>>,
     active: Vec<Vec<f64>>,
 }
@@ -198,7 +198,6 @@ impl Network {
     }
 
     /// The layers' sums and outputs for a candidate with `entries`.
-    #[cfg(test)]
     fn forward(&self, entries: &[usize]) -> Forward {
         let mut sums: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
         let mut active: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
@@ -222,48 +221,8 @@ impl Network {
         Forward { sums, active }
     }
 
-    /// The score of a candidate with `entries`: what [`Network::forward`]
-    /// works out, with the layers' sums kept on the stack, since this is
-    /// asked for every card of every position that a game plays.  The sums
-    /// are added in the same order, so that the score is the same to the last
-    /// bit (see `score_by_forward`).
+    /// The score of a candidate with `entries`.
     pub(crate) fn score(&self, entries: &[usize]) -> f64 {
-        /// The widest layer that fits.
-        const MOST: usize = 64;
-        let linear: f64 = entries.iter().map(|&e| self.params[e]).sum();
-        let mut before = [0.0; MOST];
-        let mut width_before = 0;
-        for (layer, &width) in self.layers.iter().enumerate() {
-            assert!(width <= MOST, "a layer of {width} units");
-            let biases = self.biases(layer);
-            let mut sum = [0.0; MOST];
-            sum[..width].copy_from_slice(&self.params[biases..biases + width]);
-            let weights = self.weights(layer);
-            let mut add = |input: usize, a: f64| {
-                let row = weights + input * width;
-                for (s, w) in sum[..width].iter_mut().zip(&self.params[row..row + width]) {
-                    *s += w * a;
-                }
-            };
-            if layer == 0 {
-                entries.iter().for_each(|&e| add(e, 1.0));
-            } else {
-                before[..width_before].iter().enumerate().filter(|&(_, &a)| a != 0.0).for_each(|(i, &a)| add(i, a));
-            }
-            for (b, s) in before[..width].iter_mut().zip(&sum[..width]) {
-                *b = s.max(0.0);
-            }
-            width_before = width;
-        }
-        let outputs = &self.params[self.outputs()..];
-        let units: f64 =
-            if width_before == 0 { 0.0 } else { before[..width_before].iter().zip(outputs).map(|(a, o)| a * o).sum() };
-        linear + units
-    }
-
-    /// [`Network::score`] as it was, by [`Network::forward`].
-    #[cfg(test)]
-    fn score_by_forward(&self, entries: &[usize]) -> f64 {
         let linear: f64 = entries.iter().map(|&e| self.params[e]).sum();
         let forward = self.forward(entries);
         let outputs = &self.params[self.outputs()..];
@@ -570,23 +529,4 @@ fn a_grown_network_scores_as_it_did() {
         assert!(outputs.iter().any(|&g| g != 0.0), "{old:?} to {new:?}: {outputs:?}");
     }
     assert!(!grows(&[3, 2], &[3, 1, 2]) && !grows(&[3, 2], &[3]) && !grows(&[3, 2], &[3, 2, 1]));
-}
-
-#[test]
-fn the_score_is_what_the_forward_pass_gives_to_the_last_bit() {
-    let mut rng = StdRng::seed_from_u64(7);
-    for layers in [&[][..], &[4][..], &[16, 8][..], &[32, 16][..], &[16, 8, 8][..]] {
-        let mut network = Network::new(40, layers, 5);
-        for p in &mut network.params {
-            *p += rng.gen_range(-0.5..0.5);
-        }
-        for _ in 0..200 {
-            let entries: Vec<usize> = (0..rng.gen_range(1..14)).map(|_| rng.gen_range(0..40)).collect();
-            assert_eq!(
-                network.score(&entries).to_bits(),
-                network.score_by_forward(&entries).to_bits(),
-                "{layers:?}, {entries:?}"
-            );
-        }
-    }
 }
