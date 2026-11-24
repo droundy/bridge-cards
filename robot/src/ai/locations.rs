@@ -89,59 +89,95 @@ pub(crate) struct Chances {
     pub(crate) log_normalization: f64,
 }
 
-/// Weights by the first hand's cards (from 0 to 13) and points (from 0 to
-/// 40), each times e<sup>`log_scale`</sup>.
+/// Weights by the first hand's cards and points, `counts` by `points` of
+/// them (any beyond have none), each times e<sup>`log_scale`</sup>.
 #[derive(Clone)]
 struct Poly {
     log_scale: f64,
-    c: [[f64; POINTS]; COUNTS],
+    counts: usize,
+    points: usize,
+    c: Vec<f64>,
 }
 
 impl Poly {
     fn one() -> Poly {
-        let mut c = [[0.0; POINTS]; COUNTS];
-        c[0][0] = 1.0;
-        Poly { log_scale: 0.0, c }
+        Poly { log_scale: 0.0, counts: 1, points: 1, c: vec![1.0] }
+    }
+
+    fn zero(counts: usize, points: usize, log_scale: f64) -> Poly {
+        let (counts, points) = (counts.min(COUNTS), points.min(POINTS));
+        Poly { log_scale, counts, points, c: vec![0.0; counts * points] }
+    }
+
+    /// The weight of `k` cards and `p` points.
+    fn get(&self, k: usize, p: usize) -> f64 {
+        if k < self.counts && p < self.points {
+            self.c[k * self.points + p]
+        } else {
+            0.0
+        }
+    }
+
+    fn at(&mut self, k: usize, p: usize) -> &mut f64 {
+        &mut self.c[k * self.points + p]
     }
 
     /// The same weights with the largest made 1.
     fn normalized(mut self) -> Poly {
-        let most = self.c.iter().flatten().copied().fold(0.0, f64::max);
+        let most = self.c.iter().copied().fold(0.0, f64::max);
         if most > 0.0 {
-            self.c.iter_mut().flatten().for_each(|w| *w /= most);
+            self.c.iter_mut().for_each(|w| *w /= most);
             self.log_scale += most.ln();
         }
         self
     }
 
-    /// One more than the most cards and the most points with any weight.
-    fn extent(&self) -> (usize, usize) {
-        let (mut counts, mut points) = (0, 0);
-        for (k, row) in self.c.iter().enumerate() {
-            if let Some(p) = row.iter().rposition(|&w| w > 0.0) {
-                counts = k + 1;
-                points = points.max(p + 1);
-            }
-        }
-        (counts, points)
-    }
-
     /// The weights of two sets of cards together.
     fn times(&self, other: &Poly) -> Poly {
-        let mut c = [[0.0; POINTS]; COUNTS];
-        let (counts, points) = self.extent();
-        let (other_counts, other_points) = other.extent();
-        for (k, row) in self.c.iter().enumerate().take(counts) {
-            for (p, &w) in row.iter().enumerate().take(points).filter(|(_, &w)| w > 0.0) {
-                for (l, other_row) in other.c.iter().enumerate().take(other_counts.min(COUNTS - k)) {
-                    let out = &mut c[k + l][p..];
-                    for (o, &v) in out.iter_mut().zip(&other_row[..other_points.min(POINTS - p)]) {
+        let mut product = Poly::zero(self.counts + other.counts - 1, self.points + other.points - 1, self.log_scale + other.log_scale);
+        for k in 0..self.counts {
+            for p in 0..self.points {
+                let w = self.get(k, p);
+                if w == 0.0 {
+                    continue;
+                }
+                for l in 0..other.counts.min(product.counts - k) {
+                    let row = &other.c[l * other.points..][..other.points.min(product.points - p)];
+                    let start = (k + l) * product.points + p;
+                    for (o, &v) in product.c[start..start + row.len()].iter_mut().zip(row) {
                         *o += w * v;
                     }
                 }
             }
         }
-        Poly { log_scale: self.log_scale + other.log_scale, c }.normalized()
+        product.normalized()
+    }
+
+    /// The weights with one more card that weighs `w` and has `points`, or
+    /// without it.
+    fn with_card(&self, w: f64, points: usize) -> Poly {
+        let mut next = Poly::zero(self.counts + 1, self.points + points, self.log_scale);
+        for k in 0..self.counts {
+            for p in 0..self.points {
+                let v = self.get(k, p);
+                *next.at(k, p) += v;
+                if k + 1 < next.counts && p + points < next.points {
+                    *next.at(k + 1, p + points) += v * w;
+                }
+            }
+        }
+        next.normalized()
+    }
+
+    /// The log of the sum of the weights times those of `other`.
+    fn log_dot(&self, other: &Poly) -> f64 {
+        let mut sum = 0.0;
+        for k in 0..self.counts {
+            for p in 0..self.points {
+                sum += self.get(k, p) * other.get(k, p);
+            }
+        }
+        self.log_scale + other.log_scale + sum.ln()
     }
 }
 
@@ -186,12 +222,6 @@ impl Beliefs {
         self.first_size - self.in_first.len()
     }
 
-    /// One more than the most points the first hand could hold: the
-    /// columns of the sums that can have any weight.
-    fn width(&self) -> usize {
-        (self.points_in(self.unseen) + 1).min(POINTS)
-    }
-
     fn h(&self, card: Card) -> f64 {
         self.parameters.h[index(card)].clamp(-MOST, MOST)
     }
@@ -204,64 +234,60 @@ impl Beliefs {
         self.parameters.psi[points].clamp(-MOST, MOST)
     }
 
-    /// The weights of the free cards of `suit` that the first hand could
-    /// hold, by how many of them and its points in the suit (with those of
-    /// the cards known to be there), with the suit's potential.
-    fn suit(&self, suit: Suit) -> Poly {
-        let mut poly = Poly::one();
-        let mut log_scale = 0.0;
-        let width = self.width();
+    /// The weights of the free cards of `suit`, one more card at a time:
+    /// after none, the first, and so on, by how many the first hand holds
+    /// and their points.
+    fn forward(&self, suit: Suit) -> Vec<Poly> {
+        let mut forward = vec![Poly::one()];
         for card in self.free().in_suit(suit) {
-            let w = self.h(card).exp();
-            let mut c = [[0.0; POINTS]; COUNTS];
-            for k in 0..COUNTS {
-                for p in 0..width {
-                    let v = poly.c[k][p];
-                    if v == 0.0 {
-                        continue;
-                    }
-                    c[k][p] += v;
-                    if k + 1 < COUNTS && p + self.points_of(card) < POINTS {
-                        c[k + 1][p + self.points_of(card)] += v * w;
-                    }
-                }
-            }
-            poly = Poly { log_scale: poly.log_scale, c }.normalized();
-            log_scale = poly.log_scale;
+            let next = forward[forward.len() - 1].with_card(self.h(card).exp(), self.points_of(card));
+            forward.push(next);
         }
-        // The known cards' points and length, and the suit's potential.
+        forward
+    }
+
+    /// The weights of all the free cards of `suit` that the first hand could
+    /// hold (the last of `forward`), with the length and points of those
+    /// known to be there, and the suit's potential.
+    fn suit(&self, suit: Suit, all: &Poly) -> Poly {
         let known = self.in_first.in_suit(suit);
         let (known_length, known_points) = (known.len(), self.points_in(known));
-        let mut c = [[0.0; POINTS]; COUNTS];
-        for k in 0..COUNTS - known_length {
+        let mut poly = Poly::zero(all.counts, all.points + known_points, all.log_scale);
+        for k in 0..all.counts.min(COUNTS - known_length) {
             let potential = self.phi(suit, k + known_length).exp();
-            for p in 0..width.saturating_sub(known_points) {
-                c[k][p + known_points] = poly.c[k][p] * potential;
+            for p in 0..all.points.min(POINTS - known_points) {
+                *poly.at(k, p + known_points) = all.get(k, p) * potential;
             }
         }
-        Poly { log_scale, c }.normalized()
+        poly.normalized()
     }
 
-    /// The four suits' weights.
-    fn suits(&self) -> [Poly; 4] {
-        Suit::ALL.map(|suit| self.suit(suit))
+    /// Each suit's forward weights and its weights.
+    fn suits(&self) -> [(Vec<Poly>, Poly); 4] {
+        Suit::ALL.map(|suit| {
+            let forward = self.forward(suit);
+            let poly = self.suit(suit, &forward[forward.len() - 1]);
+            (forward, poly)
+        })
     }
 
-    /// The weights of the other suits than `suit`, summed with the points
-    /// potential, by how many of the free cards and how many points `suit`
-    /// gives the first hand: so that any weights of `suit` alone times this,
-    /// summed, give the normalization of those splits.
-    fn context(&self, others: &Poly, exp_psi: &[f64; POINTS]) -> Poly {
+    /// The weights of the suits other than one, `others`, summed with the
+    /// points potential, by how many of the free cards and how many points
+    /// that suit gives the first hand, for those of `shape`: so that the
+    /// suit's weights times this, summed, give the normalization.
+    fn context(&self, others: &Poly, exp_psi: &[f64; POINTS], shape: &Poly) -> Poly {
         let wanted = self.wanted();
-        let (_, points) = others.extent();
-        let mut c = [[0.0; POINTS]; COUNTS];
-        for (k, row) in c.iter_mut().enumerate().take(wanted + 1) {
-            let other_row = &others.c[wanted - k];
-            for (p, w) in row.iter_mut().enumerate().take(self.width()) {
-                *w = other_row[..points.min(POINTS - p)].iter().zip(&exp_psi[p..]).map(|(a, b)| a * b).sum();
+        let mut context = Poly::zero(shape.counts, shape.points, others.log_scale);
+        for k in 0..context.counts.min(wanted + 1) {
+            if wanted - k >= others.counts {
+                continue;
+            }
+            let row = &others.c[(wanted - k) * others.points..][..others.points];
+            for p in 0..context.points {
+                *context.at(k, p) = row.iter().zip(&exp_psi[p..]).map(|(a, b)| a * b).sum();
             }
         }
-        Poly { log_scale: others.log_scale, c }
+        context
     }
 
     /// e<sup>ψ</sup> of each number of points.
@@ -282,90 +308,80 @@ impl Beliefs {
         std::array::from_fn(|s| before[s].times(&after[3 - s]))
     }
 
-    /// The chance of each free card of `suit` being in the first hand, given
-    /// the `context` of the suit and the log of the normalization: by the
-    /// weights of the subsets of the cards before each card (forward) and
-    /// of those after it with the context (backward), so that a card's
-    /// chance is the sum over both of the splits that give it to the first.
-    fn card_chances(&self, suit: Suit, context: &Poly, log_z: f64) -> Vec<(Card, f64)> {
+    /// The chance of each free card of `suit` being in the first hand, from
+    /// the suit's `forward` weights, its `context` and the log of the
+    /// normalization: by the weights of the subsets of the cards before each
+    /// card (forward) and of those after it with the context (backward), so
+    /// that a card's chance is the sum over both of the splits that give it
+    /// to the first.
+    fn card_chances(&self, suit: Suit, forward: &[Poly], context: &Poly, log_z: f64) -> Vec<(Card, f64)> {
         let cards: Vec<Card> = self.free().in_suit(suit).collect();
         let m = cards.len();
-        let width = self.width();
-        let weights: Vec<f64> = cards.iter().map(|&card| self.h(card).exp()).collect();
-        let mut forward = vec![Poly::one()];
-        for (&card, &w) in cards.iter().zip(&weights) {
-            let before = &forward[forward.len() - 1];
-            let mut c = before.c;
-            for k in 0..COUNTS - 1 {
-                for p in 0..width.saturating_sub(self.points_of(card)) {
-                    c[k + 1][p + self.points_of(card)] += before.c[k][p] * w;
-                }
-            }
-            forward.push(Poly { log_scale: before.log_scale, c }.normalized());
-        }
         let known = self.in_first.in_suit(suit);
         let (known_length, known_points) = (known.len(), self.points_in(known));
-        let mut c = [[0.0; POINTS]; COUNTS];
-        for (k, row) in c.iter_mut().enumerate().take(COUNTS - known_length) {
+        // The backward weights after the last card, for the counts and
+        // points that the forward weights reach.
+        let last = &forward[m];
+        let mut top = Poly::zero(last.counts, last.points, context.log_scale);
+        for k in 0..top.counts.min(COUNTS - known_length) {
             let potential = self.phi(suit, k + known_length).exp();
-            for (p, w) in row.iter_mut().enumerate().take(width.saturating_sub(known_points)) {
-                *w = potential * context.c[k][p + known_points];
+            for p in 0..top.points {
+                *top.at(k, p) = potential * context.get(k, p + known_points);
             }
         }
-        let mut backward = vec![Poly { log_scale: context.log_scale, c }.normalized()];
+        let mut backward = vec![top.normalized()];
         for i in (0..m).rev() {
             let after = &backward[backward.len() - 1];
-            let mut c = after.c;
-            for k in 0..COUNTS - 1 {
-                for p in 0..width.saturating_sub(self.points_of(cards[i])) {
-                    c[k][p] += weights[i] * after.c[k + 1][p + self.points_of(cards[i])];
+            let (w, pts) = (self.h(cards[i]).exp(), self.points_of(cards[i]));
+            let shape = &forward[i];
+            let mut next = Poly::zero(shape.counts, shape.points, after.log_scale);
+            for k in 0..next.counts {
+                for p in 0..next.points {
+                    *next.at(k, p) = after.get(k, p) + w * after.get(k + 1, p + pts);
                 }
             }
-            backward.push(Poly { log_scale: after.log_scale, c }.normalized());
+            backward.push(next.normalized());
         }
         backward.reverse();
         (0..m)
             .map(|i| {
                 let (before, after) = (&forward[i], &backward[i + 1]);
+                let (w, pts) = (self.h(cards[i]).exp(), self.points_of(cards[i]));
                 let mut sum = 0.0;
-                for k in 0..COUNTS - 1 {
-                    for p in 0..width.saturating_sub(self.points_of(cards[i])) {
-                        sum += before.c[k][p] * after.c[k + 1][p + self.points_of(cards[i])];
+                for k in 0..before.counts {
+                    for p in 0..before.points {
+                        sum += before.get(k, p) * after.get(k + 1, p + pts);
                     }
                 }
-                let chance = if sum > 0.0 { (before.log_scale + after.log_scale + (weights[i] * sum).ln() - log_z).exp() } else { 0.0 };
+                let chance = if sum > 0.0 { (before.log_scale + after.log_scale + (w * sum).ln() - log_z).exp() } else { 0.0 };
                 (cards[i], chance)
             })
             .collect()
     }
 
-    /// The log of the sum of the weights of `poly` times those of `context`.
-    fn log_total(poly: &Poly, context: &Poly) -> f64 {
-        let sum: f64 = poly.c.iter().flatten().zip(context.c.iter().flatten()).map(|(a, b)| a * b).sum();
-        poly.log_scale + context.log_scale + sum.ln()
-    }
-
     /// The log of the normalization: the sum of the weights of every split.
     pub(crate) fn log_normalization(&self) -> f64 {
-        let suits = self.suits();
+        let suits = self.suits().map(|s| s.1);
         let others = suits[1..].iter().fold(Poly::one(), |product, poly| product.times(poly));
-        Beliefs::log_total(&suits[0], &self.context(&others, &self.exp_psi()))
+        suits[0].log_dot(&self.context(&others, &self.exp_psi(), &suits[0]))
     }
 
     /// The chances of each card's place, each suit's length and the points
     /// of the first hand.
     pub(crate) fn chances(&self) -> Chances {
-        let suits = self.suits();
+        let both = self.suits();
+        let suits: [Poly; 4] = std::array::from_fn(|s| both[s].1.clone());
         let exp_psi = self.exp_psi();
         let others = Beliefs::others(&suits);
-        let contexts: [Poly; 4] = std::array::from_fn(|s| self.context(&others[s], &exp_psi));
-        let log_z = Beliefs::log_total(&suits[0], &contexts[0]);
+        let contexts: [Poly; 4] = std::array::from_fn(|s| self.context(&others[s], &exp_psi, &suits[s]));
+        let log_z = suits[0].log_dot(&contexts[0]);
         let mut card = [0.0; 52];
         for c in self.in_first {
             card[index(c)] = 1.0;
         }
         for suit in Suit::ALL {
-            for (c, chance) in self.card_chances(suit, &contexts[suit as usize], log_z) {
+            let s = suit as usize;
+            for (c, chance) in self.card_chances(suit, &both[s].0, &contexts[s], log_z) {
                 card[index(c)] = chance;
             }
         }
@@ -373,8 +389,8 @@ impl Beliefs {
         for suit in Suit::ALL {
             let s = suit as usize;
             let known = self.in_first.in_suit(suit).len();
-            for k in 0..COUNTS - known {
-                let sum: f64 = suits[s].c[k].iter().zip(&contexts[s].c[k]).map(|(a, b)| a * b).sum();
+            for k in 0..suits[s].counts.min(COUNTS - known) {
+                let sum: f64 = (0..suits[s].points).map(|p| suits[s].get(k, p) * contexts[s].get(k, p)).sum();
                 if sum > 0.0 {
                     length[s][k + known] = (suits[s].log_scale + contexts[s].log_scale + sum.ln() - log_z).exp();
                 }
@@ -383,7 +399,7 @@ impl Beliefs {
         let all = others[0].times(&suits[0]);
         let mut points = [0.0; POINTS];
         for (p, chance) in points.iter_mut().enumerate() {
-            let w = all.c[self.wanted()][p];
+            let w = all.get(self.wanted(), p);
             if w > 0.0 {
                 *chance = (all.log_scale + w.ln() + self.psi(p) - log_z).exp();
             }
@@ -439,7 +455,7 @@ impl Beliefs {
     /// points in turn, given those of the suits before it, and then its
     /// cards given those.
     pub(crate) fn deal(&self, rng: &mut impl Rng) -> Cards {
-        let suits = self.suits();
+        let suits = self.suits().map(|s| s.1);
         let mut first = self.in_first;
         let mut left = self.wanted();
         let mut so_far = 0;
@@ -449,15 +465,16 @@ impl Beliefs {
             // The weight of each count and points of this suit, with all
             // that the later suits can add to them.
             let mut weights = Vec::new();
-            for k in 0..=left.min(COUNTS - 1) {
-                for (p, &w) in suits[s].c[k].iter().enumerate().take(POINTS - so_far) {
+            for k in 0..=left.min(suits[s].counts - 1) {
+                for p in 0..suits[s].points.min(POINTS - so_far) {
+                    let w = suits[s].get(k, p);
                     if w == 0.0 {
                         continue;
                     }
                     let rest = log_sum_exp(
                         (0..POINTS - so_far - p)
-                            .filter(|&q| later.c[left - k][q] > 0.0)
-                            .map(|q| later.c[left - k][q].ln() + self.psi(so_far + p + q)),
+                            .filter(|&q| later.get(left - k, q) > 0.0)
+                            .map(|q| later.get(left - k, q).ln() + self.psi(so_far + p + q)),
                     );
                     if rest > f64::NEG_INFINITY {
                         weights.push(((k, p), w.ln() + rest));
@@ -1154,25 +1171,6 @@ mod timing {
             sum += beliefs.chances().card.iter().sum::<f64>();
         }
         println!("chances: {:?} each ({sum})", started.elapsed() / n);
-        let started = std::time::Instant::now();
-        for _ in 0..n {
-            sum += beliefs.suits()[0].log_scale;
-        }
-        println!("suits: {:?} each", started.elapsed() / n);
-        let suits = beliefs.suits();
-        let started = std::time::Instant::now();
-        for _ in 0..n {
-            sum += Beliefs::others(&suits)[0].log_scale;
-        }
-        println!("others: {:?} each", started.elapsed() / n);
-        let others = Beliefs::others(&suits);
-        let exp_psi = beliefs.exp_psi();
-        let started = std::time::Instant::now();
-        for _ in 0..n {
-            sum += beliefs.context(&others[0], &exp_psi).log_scale;
-        }
-        println!("context: {:?} each", started.elapsed() / n);
-
         let started = std::time::Instant::now();
         for _ in 0..n {
             sum += beliefs.log_normalization();
