@@ -396,6 +396,10 @@ pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
 /// third passing on the second, so that it starts by playing as it did.
 pub(crate) const V2_TRUMPS_HISTORY_DEEP: Shape =
     Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8] };
+/// Every table that does not read the calls, and layers that are wider and
+/// one deeper, to be trained for far longer than the screens: a model of
+/// two layers grows into it playing as it did (see [`Model::grown_to`]).
+pub(crate) const V2_BIG: Shape = Shape { name: "v2-big", tables: V2_LATER_TRUMPS_HISTORY.tables, layers: &[64, 32, 16] };
 /// [`V2_TRUMPS_HISTORY`] and [`Table::Later`].
 pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
     v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
@@ -416,6 +420,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_WIDE,
     &V2_LATER_TRUMPS_HISTORY,
     &V2_TRUMPS_HISTORY_DEEP,
+    &V2_BIG,
 ];
 
 impl Shape {
