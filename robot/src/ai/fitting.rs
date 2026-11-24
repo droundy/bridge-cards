@@ -17,71 +17,66 @@ use rand::{Rng, SeedableRng};
 #[cfg(test)]
 pub(crate) type Choices = Vec<Vec<(Vec<usize>, f64)>>;
 
-/// An n-tuple network with up to two layers of hidden units.  The score of
-/// a candidate is the sum of the linear weights of its entries, plus the
+/// An n-tuple network with layers of hidden units.  The score of a
+/// candidate is the sum of the linear weights of its entries, plus the
 /// output of the units: each unit of the first layer sums its weights of the
 /// candidate's entries and a bias, as an NNUE accumulator is summed, a few
-/// additions an entry, and takes the larger of that and 0; each unit of the
-/// second layer, if there is one, does the same with its weights of the
-/// first layer's units; and the last layer's units, times their output
-/// weights, are added to the score.  The units let the network weigh
-/// combinations of entries from different tables, and the second layer
-/// combinations of those.  With no units it is the sum of weights alone.
+/// additions an entry, and takes the larger of that and 0; each unit of a
+/// later layer does the same with its weights of the units of the layer
+/// before; and the last layer's units, times their output weights, are added
+/// to the score.  The units let the network weigh combinations of entries
+/// from different tables, and each later layer combinations of those.  With
+/// no units it is the sum of weights alone.
 #[derive(Clone)]
 pub(crate) struct Network {
     entries: usize,
-    hidden: usize,
-    second: usize,
-    /// The linear weights, one an entry; then the first layer's weights,
-    /// `hidden` an entry, and its biases; then, with a second layer, its
-    /// weights, `second` for each unit of the first, and its biases; then the
-    /// output weights of the last layer.
+    /// How many units each layer has, the first first.
+    layers: Vec<usize>,
+    /// The linear weights, one an entry; then the first layer's weights, as
+    /// many an entry as it has units, and its biases; then each later
+    /// layer's weights, as many for each unit of the layer before as it has
+    /// units, and its biases; then the output weights of the last layer.
     pub(crate) params: Vec<f64>,
 }
 
 /// What a network works out on the way to a candidate's score.
 struct Forward {
-    /// The first layer's sums, and the larger of each and 0.
+    /// Each layer's sums, and the larger of each and 0.
     #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
-    sums: Vec<f64>,
-    active: Vec<f64>,
-    /// The same of the second layer, if there is one.
-    #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
-    second_sums: Vec<f64>,
-    second_active: Vec<f64>,
+    sums: Vec<Vec<f64>>,
+    active: Vec<Vec<f64>>,
 }
 
 impl Network {
     /// How many parameters a network of these sizes has.
-    pub(crate) fn size(entries: usize, hidden: usize, second: usize) -> usize {
-        size(entries, hidden, second)
+    pub(crate) fn size(entries: usize, layers: &[usize]) -> usize {
+        size(entries, layers)
     }
 
-    /// A network of `entries` entries, `hidden` units in its first layer
-    /// and `second` in its second (none for one layer), that scores every
-    /// candidate the same, so that it starts by choosing at random.  The
-    /// units' weights are small and random, the same for the same `seed`, so
-    /// that the units can learn different things.
+    /// A network of `entries` entries and `layers` of units (none for the
+    /// sum of weights alone), that scores every candidate the same, so that
+    /// it starts by choosing at random.  The units' weights are small and
+    /// random, the same for the same `seed`, so that the units can learn
+    /// different things.
     #[cfg(test)]
-    pub(crate) fn new(entries: usize, hidden: usize, second: usize, seed: u64) -> Network {
+    pub(crate) fn new(entries: usize, layers: &[usize], seed: u64) -> Network {
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut network = Network { entries, hidden, second, params: vec![0.0; size(entries, hidden, second)] };
-        let first = network.first_weights();
-        for p in &mut network.params[first..first + entries * hidden] {
-            *p = rng.gen_range(-0.1..0.1);
-        }
-        let second_weights = network.second_weights();
-        for p in &mut network.params[second_weights..second_weights + hidden * second] {
-            *p = rng.gen_range(-0.5..0.5);
+        let mut network = Network { entries, layers: layers.to_vec(), params: vec![0.0; size(entries, layers)] };
+        for layer in 0..layers.len() {
+            let (start, end) = (network.weights(layer), network.biases(layer));
+            let range = if layer == 0 { 0.1 } else { 0.5 };
+            for p in &mut network.params[start..end] {
+                *p = rng.gen_range(-range..range);
+            }
         }
         network
     }
 
     /// The network of these sizes with `params`, such as one written out
     /// before.
-    pub(crate) fn with_params(entries: usize, hidden: usize, second: usize, params: Vec<f64>) -> Network {
-        assert_eq!(params.len(), size(entries, hidden, second), "the size of the network");
-        Network { entries, hidden, second, params }
+    pub(crate) fn with_params(entries: usize, layers: &[usize], params: Vec<f64>) -> Network {
+        assert_eq!(params.len(), size(entries, layers), "the size of the network");
+        Network { entries, layers: layers.to_vec(), params }
     }
 
     /// `values`, laid out as this network's weights are (its weights, or
@@ -93,115 +88,146 @@ impl Network {
     pub(crate) fn with_entries_moved(&self, values: &[f64], moved: &[Option<usize>], entries: usize) -> Vec<f64> {
         assert_eq!(moved.len(), self.entries);
         assert_eq!(values.len(), self.params.len());
-        let h = self.hidden;
-        let new = Network { entries, hidden: h, second: self.second, params: Vec::new() };
-        let mut result = vec![0.0; size(entries, h, self.second)];
+        let h = self.layers.first().copied().unwrap_or(0);
+        let new = Network { entries, layers: self.layers.clone(), params: Vec::new() };
+        let mut result = vec![0.0; size(entries, &self.layers)];
         for (old, to) in moved.iter().enumerate() {
             if let Some(to) = *to {
                 result[to] = values[old];
-                let (from, to) = (self.first_weights() + old * h, new.first_weights() + to * h);
+                let (from, to) = (self.weights(0) + old * h, new.weights(0) + to * h);
                 result[to..to + h].copy_from_slice(&values[from..from + h]);
             }
         }
-        let start = new.first_biases();
-        result[start..].copy_from_slice(&values[self.first_biases()..]);
+        let start = new.after_entries();
+        result[start..].copy_from_slice(&values[self.after_entries()..]);
         result
     }
 
-    /// This network grown into one of `entries` entries, `hidden` units in
-    /// its first layer and `second` in its second, at least as many as it
-    /// has (and a second layer only if it has one), which scores every
-    /// candidate as it did: entry `e` becomes `moved[e]`, with its weights,
-    /// and the entries and units that are new add nothing.  An entry that is
-    /// new has weights only into the new units, and a unit that is new has
-    /// weights of 0 out of it, so that neither changes a score; the new
-    /// weights into the new units are the small random ones of
-    /// [`Network::new`] with `seed`, so that they can learn.
+    /// This network grown into one of `entries` entries and `layers` of
+    /// units (see [`grows`]), which scores every candidate as it did: entry
+    /// `e` becomes `moved[e]`, with its weights, and the entries and units
+    /// that are new add nothing.  An entry or unit that is new has weights
+    /// only into the new units of the layer after it, and a new unit of the
+    /// last layer has an output weight of 0, so that none changes a score;
+    /// the weights into the new units are the small random ones of
+    /// [`Network::new`] with `seed`, so that they can learn.  A layer that is
+    /// added after the last one passes on each of that layer's units, as its
+    /// first units: a weight of 1 from the unit of the same number and 0 from
+    /// the others, which changes nothing because the units are never below
+    /// 0.
     #[cfg(test)]
-    pub(crate) fn grown(&self, moved: &[usize], entries: usize, hidden: usize, second: usize, seed: u64) -> Network {
+    pub(crate) fn grown(&self, moved: &[usize], entries: usize, layers: &[usize], seed: u64) -> Network {
         assert_eq!(moved.len(), self.entries);
-        assert!(hidden >= self.hidden && second >= self.second && (second == 0) == (self.second == 0));
-        let mut grown = Network::new(entries, hidden, second, seed);
-        let (old_h, old_s) = (self.hidden, self.second);
-        // Every new entry's weights into the old units are 0.
-        for entry in 0..entries {
-            let row = grown.first_weights() + entry * hidden;
-            grown.params[row..row + old_h].fill(0.0);
+        assert!(grows(&self.layers, layers), "{:?} cannot grow into {layers:?}", self.layers);
+        let old = &self.layers;
+        let mut grown = Network::new(entries, layers, seed);
+        for (o, &n) in moved.iter().enumerate() {
+            grown.params[n] = self.params[o];
         }
-        for (old, &new) in moved.iter().enumerate() {
-            grown.params[new] = self.params[old];
-            let (from, to) = (self.first_weights() + old * old_h, grown.first_weights() + new * hidden);
-            grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
-        }
-        let (from, to) = (self.first_biases(), grown.first_biases());
-        grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
-        for unit in 0..hidden {
-            let to = grown.second_weights() + unit * second;
-            if unit < old_h {
-                let from = self.second_weights() + unit * old_s;
-                grown.params[to..to + old_s].copy_from_slice(&self.params[from..from + old_s]);
-            } else {
-                // A new unit of the first layer feeds only the new units of
-                // the second.
-                grown.params[to..to + old_s].fill(0.0);
+        if let Some(&h) = layers.first() {
+            let old_h = old.first().copied().unwrap_or(0);
+            // Every new entry's weights into the old units are 0.
+            for entry in 0..entries {
+                let row = grown.weights(0) + entry * h;
+                grown.params[row..row + old_h].fill(0.0);
+            }
+            for (o, &n) in moved.iter().enumerate() {
+                let (from, to) = (self.weights(0) + o * old_h, grown.weights(0) + n * h);
+                grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
+            }
+            if old_h > 0 {
+                let (from, to) = (self.biases(0), grown.biases(0));
+                grown.params[to..to + old_h].copy_from_slice(&self.params[from..from + old_h]);
             }
         }
-        let (from, to) = (self.second_biases(), grown.second_biases());
-        grown.params[to..to + old_s].copy_from_slice(&self.params[from..from + old_s]);
+        let last = old.last().copied().unwrap_or(0);
+        for layer in 1..layers.len() {
+            let (inputs, width) = (layers[layer - 1], layers[layer]);
+            if let Some(&old_width) = old.get(layer) {
+                let old_inputs = old[layer - 1];
+                for unit in 0..inputs {
+                    let to = grown.weights(layer) + unit * width;
+                    if unit < old_inputs {
+                        let from = self.weights(layer) + unit * old_width;
+                        grown.params[to..to + old_width].copy_from_slice(&self.params[from..from + old_width]);
+                    } else {
+                        grown.params[to..to + old_width].fill(0.0);
+                    }
+                }
+                let (from, to) = (self.biases(layer), grown.biases(layer));
+                grown.params[to..to + old_width].copy_from_slice(&self.params[from..from + old_width]);
+            } else {
+                // An added layer: its first `last` units pass on those of
+                // the layer before.
+                for unit in 0..inputs {
+                    let to = grown.weights(layer) + unit * width;
+                    grown.params[to..to + last].fill(0.0);
+                    if unit < last {
+                        grown.params[to + unit] = 1.0;
+                    }
+                }
+            }
+        }
         // The output weights of the last layer: the old units', and 0 for
         // the new ones.
-        let last = if second > 0 { old_s } else { old_h };
         let (from, to) = (self.outputs(), grown.outputs());
         grown.params[to..].fill(0.0);
         grown.params[to..to + last].copy_from_slice(&self.params[from..from + last]);
         grown
     }
 
-    fn first_weights(&self) -> usize {
-        self.entries
+    /// Where the weights into `layer` start.
+    fn weights(&self, layer: usize) -> usize {
+        if layer == 0 { self.entries } else { self.biases(layer - 1) + self.layers[layer - 1] }
     }
-    fn first_biases(&self) -> usize {
-        self.entries * (1 + self.hidden)
+    /// Where the biases of `layer` start.
+    fn biases(&self, layer: usize) -> usize {
+        let inputs = if layer == 0 { self.entries } else { self.layers[layer - 1] };
+        self.weights(layer) + inputs * self.layers[layer]
     }
-    fn second_weights(&self) -> usize {
-        self.first_biases() + self.hidden
-    }
-    fn second_biases(&self) -> usize {
-        self.second_weights() + self.hidden * self.second
+    /// Where the weights that do not belong to an entry start.
+    #[cfg(test)]
+    fn after_entries(&self) -> usize {
+        self.entries * (1 + self.layers.first().copied().unwrap_or(0))
     }
     fn outputs(&self) -> usize {
-        self.second_biases() + self.second
+        match self.layers.len() {
+            0 => self.entries,
+            n => self.biases(n - 1) + self.layers[n - 1],
+        }
     }
 
     /// The layers' sums and outputs for a candidate with `entries`.
     fn forward(&self, entries: &[usize]) -> Forward {
-        let h = self.hidden;
-        let mut sums = self.params[self.first_biases()..self.first_biases() + h].to_vec();
-        for &e in entries {
-            let row = self.first_weights() + e * h;
-            for (sum, w) in sums.iter_mut().zip(&self.params[row..row + h]) {
-                *sum += w;
+        let mut sums: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
+        let mut active: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
+        for (layer, &width) in self.layers.iter().enumerate() {
+            let biases = self.biases(layer);
+            let mut sum = self.params[biases..biases + width].to_vec();
+            let weights = self.weights(layer);
+            let mut add = |input: usize, a: f64| {
+                let row = weights + input * width;
+                for (s, w) in sum.iter_mut().zip(&self.params[row..row + width]) {
+                    *s += w * a;
+                }
+            };
+            match active.last() {
+                None => entries.iter().for_each(|&e| add(e, 1.0)),
+                Some(before) => before.iter().enumerate().filter(|&(_, &a)| a != 0.0).for_each(|(i, &a)| add(i, a)),
             }
+            active.push(sum.iter().map(|s| s.max(0.0)).collect());
+            sums.push(sum);
         }
-        let active: Vec<f64> = sums.iter().map(|s| s.max(0.0)).collect();
-        let mut second_sums = self.params[self.second_biases()..self.second_biases() + self.second].to_vec();
-        for (unit, &a) in active.iter().enumerate() {
-            let row = self.second_weights() + unit * self.second;
-            for (sum, w) in second_sums.iter_mut().zip(&self.params[row..row + self.second]) {
-                *sum += w * a;
-            }
-        }
-        let second_active = second_sums.iter().map(|s| s.max(0.0)).collect();
-        Forward { sums, active, second_sums, second_active }
+        Forward { sums, active }
     }
 
     /// The score of a candidate with `entries`.
     pub(crate) fn score(&self, entries: &[usize]) -> f64 {
         let linear: f64 = entries.iter().map(|&e| self.params[e]).sum();
         let forward = self.forward(entries);
-        let last = if self.second > 0 { &forward.second_active } else { &forward.active };
         let outputs = &self.params[self.outputs()..];
-        linear + last.iter().zip(outputs).map(|(a, o)| a * o).sum::<f64>()
+        let units: f64 = forward.active.last().map_or(0.0, |last| last.iter().zip(outputs).map(|(a, o)| a * o).sum());
+        linear + units
     }
 
     /// Adds `coefficient` times the gradient of the score of a candidate with
@@ -211,36 +237,40 @@ impl Network {
         for &e in entries {
             gradient[e] += coefficient;
         }
+        let Some(&last) = self.layers.last() else { return };
         let forward = self.forward(entries);
         let outputs = self.outputs();
-        // How much the score moves with each first-layer unit's sum.
-        let mut through_first = vec![0.0; self.hidden];
-        if self.second > 0 {
-            for (k, (&sum, &a)) in forward.second_sums.iter().zip(&forward.second_active).enumerate() {
-                gradient[outputs + k] += coefficient * a;
-                if sum > 0.0 {
-                    let through = coefficient * self.params[outputs + k];
-                    gradient[self.second_biases() + k] += through;
-                    for (unit, &a1) in forward.active.iter().enumerate() {
-                        let w = self.second_weights() + unit * self.second + k;
-                        gradient[w] += through * a1;
-                        through_first[unit] += through * self.params[w];
+        for (k, &a) in forward.active[self.layers.len() - 1].iter().enumerate() {
+            gradient[outputs + k] += coefficient * a;
+        }
+        // How much the score moves with each unit's output of the layer.
+        let mut through: Vec<f64> = (0..last).map(|k| coefficient * self.params[outputs + k]).collect();
+        for layer in (0..self.layers.len()).rev() {
+            let width = self.layers[layer];
+            // And with each unit's sum.
+            let into: Vec<f64> =
+                through.iter().zip(&forward.sums[layer]).map(|(&t, &sum)| if sum > 0.0 { t } else { 0.0 }).collect();
+            let biases = self.biases(layer);
+            for (k, &t) in into.iter().enumerate() {
+                gradient[biases + k] += t;
+            }
+            let weights = self.weights(layer);
+            if layer == 0 {
+                for &e in entries {
+                    for (k, &t) in into.iter().enumerate() {
+                        gradient[weights + e * width + k] += t;
                     }
                 }
-            }
-        } else {
-            for (unit, &a) in forward.active.iter().enumerate() {
-                gradient[outputs + unit] += coefficient * a;
-                through_first[unit] = coefficient * self.params[outputs + unit];
-            }
-        }
-        for (unit, &sum) in forward.sums.iter().enumerate() {
-            if sum > 0.0 {
-                let through = through_first[unit];
-                gradient[self.first_biases() + unit] += through;
-                for &e in entries {
-                    gradient[self.first_weights() + e * self.hidden + unit] += through;
+            } else {
+                let mut before = vec![0.0; self.layers[layer - 1]];
+                for (unit, (&a, b)) in forward.active[layer - 1].iter().zip(&mut before).enumerate() {
+                    for (k, &t) in into.iter().enumerate() {
+                        let w = weights + unit * width + k;
+                        gradient[w] += t * a;
+                        *b += t * self.params[w];
+                    }
                 }
+                through = before;
             }
         }
     }
@@ -259,12 +289,10 @@ impl Network {
     }
 
     /// Which units of each layer are active (above 0) for a candidate with
-    /// `entries`: the first layer's, then the second's.
+    /// `entries`, the first layer first.
     #[cfg(test)]
-    pub(crate) fn active_units(&self, entries: &[usize]) -> (Vec<bool>, Vec<bool>) {
-        let forward = self.forward(entries);
-        let active = |values: &[f64]| values.iter().map(|&v| v > 0.0).collect();
-        (active(&forward.active), active(&forward.second_active))
+    pub(crate) fn active_units(&self, entries: &[usize]) -> Vec<Vec<bool>> {
+        self.forward(entries).active.iter().map(|layer| layer.iter().map(|&v| v > 0.0).collect()).collect()
     }
 
     /// The mean value of the candidate it chooses, over `choices`.
@@ -295,16 +323,26 @@ impl Network {
 
     /// The network of these sizes written to the file `path`.
     #[cfg(test)]
-    pub(crate) fn read(path: &str, entries: usize, hidden: usize, second: usize) -> Network {
+    pub(crate) fn read(path: &str, entries: usize, layers: &[usize]) -> Network {
         let text = std::fs::read_to_string(path).unwrap();
-        Network::with_params(entries, hidden, second, text.lines().map(|l| l.parse().unwrap()).collect())
+        Network::with_params(entries, layers, text.lines().map(|l| l.parse().unwrap()).collect())
     }
 }
 
 /// How many parameters a network of these sizes has.
-pub(crate) fn size(entries: usize, hidden: usize, second: usize) -> usize {
-    let last = if second > 0 { second } else { hidden };
-    entries * (1 + hidden) + hidden + hidden * second + second + last
+pub(crate) fn size(entries: usize, layers: &[usize]) -> usize {
+    let network = Network { entries, layers: layers.to_vec(), params: Vec::new() };
+    network.outputs() + layers.last().copied().unwrap_or(0)
+}
+
+/// Whether a network with `old` layers of units can grow into one with
+/// `new` ([`Network::grown`]): each of its layers is at least as wide, and
+/// each layer added after its last is at least as wide as that, so that it
+/// can pass that layer on.
+#[cfg(test)]
+pub(crate) fn grows(old: &[usize], new: &[usize]) -> bool {
+    let last = old.last().copied().unwrap_or(0);
+    new.len() >= old.len() && old.iter().zip(new).all(|(o, n)| n >= o) && new[old.len()..].iter().all(|&n| n >= last)
 }
 
 /// Steps of Adam on a network's parameters, ascending.
@@ -418,16 +456,20 @@ pub(crate) fn cross_validate(
     (best.0, held_out)
 }
 
+/// Layers of units of the networks that the tests try.
+#[cfg(test)]
+const TRIED: [&[usize]; 4] = [&[], &[3], &[3, 2], &[3, 2, 2]];
+
 #[test]
 fn the_gradient_is_the_slope_of_the_score() {
-    for second in [0, 2] {
-        the_gradient_is_the_slope_with(second);
+    for layers in TRIED {
+        the_gradient_is_the_slope_with(layers);
     }
 }
 
 #[cfg(test)]
-fn the_gradient_is_the_slope_with(second: usize) {
-    let mut network = Network::new(10, 3, second, 1);
+fn the_gradient_is_the_slope_with(layers: &[usize]) {
+    let mut network = Network::new(10, layers, 1);
     let mut rng = StdRng::seed_from_u64(2);
     for p in &mut network.params {
         *p += rng.gen_range(-0.5..0.5);
@@ -440,14 +482,14 @@ fn the_gradient_is_the_slope_with(second: usize) {
         up.params[j] += 1e-6;
         down.params[j] -= 1e-6;
         let slope = (up.score(&entries) - down.score(&entries)) / 2e-6;
-        assert!((slope - gradient[j]).abs() < 1e-4, "parameter {j}: {slope} and {}", gradient[j]);
+        assert!((slope - gradient[j]).abs() < 1e-4, "{layers:?}, parameter {j}: {slope} and {}", gradient[j]);
     }
 }
 
 #[test]
 fn scaling_the_scores_multiplies_every_score() {
-    for second in [0, 2] {
-        let mut network = Network::new(10, 3, second, 1);
+    for layers in TRIED {
+        let mut network = Network::new(10, layers, 1);
         let mut rng = StdRng::seed_from_u64(3);
         for p in &mut network.params {
             *p += rng.gen_range(-0.5..0.5);
@@ -459,4 +501,32 @@ fn scaling_the_scores_multiplies_every_score() {
             assert!((now - 0.3 * score).abs() < 1e-12, "{entries:?}: {now} for {score}");
         }
     }
+}
+
+/// A network grown wider, deeper and with more entries scores as it did,
+/// and its new units learn: some of the gradient reaches every weight into
+/// them.
+#[test]
+fn a_grown_network_scores_as_it_did() {
+    for (old, new) in [(&[][..], &[2][..]), (&[3], &[3, 3]), (&[3, 2], &[4, 2]), (&[3, 2], &[3, 2, 2]), (&[3, 2], &[4, 3, 4, 3])] {
+        assert!(grows(old, new));
+        let mut network = Network::new(10, old, 1);
+        let mut rng = StdRng::seed_from_u64(4);
+        for p in &mut network.params {
+            *p += rng.gen_range(-0.5..0.5);
+        }
+        let moved: Vec<usize> = (0..10).map(|e| e + e / 4).collect();
+        let grown = network.grown(&moved, 13, new, 5);
+        let mut gradient = vec![0.0; grown.params.len()];
+        for _ in 0..50 {
+            let entries: Vec<usize> = (0..3).map(|_| rng.gen_range(0..10)).collect();
+            let at: Vec<usize> = entries.iter().map(|&e| moved[e]).collect();
+            let (before, after) = (network.score(&entries), grown.score(&at));
+            assert!((before - after).abs() < 1e-12, "{old:?} to {new:?}: {before} and {after}");
+            grown.add_gradient(&at, 1.0, &mut gradient);
+        }
+        let outputs = &gradient[grown.outputs()..];
+        assert!(outputs.iter().any(|&g| g != 0.0), "{old:?} to {new:?}: {outputs:?}");
+    }
+    assert!(!grows(&[3, 2], &[3, 1, 2]) && !grows(&[3, 2], &[3]) && !grows(&[3, 2], &[3, 2, 1]));
 }

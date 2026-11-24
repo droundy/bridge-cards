@@ -291,14 +291,12 @@ pub(crate) struct Shape {
     /// What a model file calls it.
     pub(crate) name: &'static str,
     pub(crate) tables: &'static [Table],
-    /// How many units the first hidden layer has: each table entry feeds
-    /// them as well as the score, so that the model can weigh combinations
-    /// of the facts of different tables.
-    pub(crate) hidden: usize,
-    /// How many units the second hidden layer has (0 for none): each takes
-    /// all the units of the first, so that the model can weigh combinations
-    /// of combinations.
-    pub(crate) second: usize,
+    /// How many units each hidden layer has, the first first: each table
+    /// entry feeds the first as well as the score, so that the model can
+    /// weigh combinations of the facts of different tables, and each later
+    /// layer takes all the units of the one before, so that it can weigh
+    /// combinations of those.
+    pub(crate) layers: &'static [usize],
 }
 
 /// The first shape, of the model trained by self-play from round 0.
@@ -317,8 +315,7 @@ pub(crate) const V1: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
-    hidden: 16,
-    second: 8,
+    layers: &[16, 8],
 };
 
 /// [`V1`] without the entries that no card looks up: the same facts, and
@@ -339,17 +336,16 @@ pub(crate) const V2: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
-    hidden: 16,
-    second: 8,
+    layers: &[16, 8],
 };
 
 /// [`V2`] with hidden layers twice as wide, to see whether its width is what
 /// limits it.
-pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, hidden: 32, second: 16 };
+pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16] };
 
 /// [`V2`] and more tables, to see whether they pay.
 const fn v2_and(name: &'static str, tables: &'static [Table]) -> Shape {
-    Shape { name, tables, hidden: 16, second: 8 }
+    Shape { name, tables, layers: &[16, 8] }
 }
 
 /// The tables of [`V2`] and then `$table`s.
@@ -389,12 +385,17 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
 /// [`V2_TRUMPS`] with hidden layers twice as wide, to see whether its width
 /// is what stops training from going further.
-pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, hidden: 32, second: 16 };
+pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16] };
 /// [`V2_TRUMPS`] and [`Table::History`].
 pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_tables_and!(Table::Trumps, Table::History));
 /// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
 pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
-    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, hidden: 32, second: 16 };
+    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16] };
+/// [`V2_TRUMPS_HISTORY`] with a third hidden layer, to see whether depth
+/// pays where width did not.  A model of two layers grows into it with the
+/// third passing on the second, so that it starts by playing as it did.
+pub(crate) const V2_TRUMPS_HISTORY_DEEP: Shape =
+    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8] };
 /// [`V2_TRUMPS_HISTORY`] and [`Table::Later`].
 pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
     v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
@@ -414,6 +415,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY,
     &V2_TRUMPS_HISTORY_WIDE,
     &V2_LATER_TRUMPS_HISTORY,
+    &V2_TRUMPS_HISTORY_DEEP,
 ];
 
 impl Shape {
@@ -435,7 +437,7 @@ impl Shape {
 
     /// How many weights a model of this shape has.
     pub(crate) fn size(&self) -> usize {
-        Network::size(self.entries(), self.hidden, self.second)
+        Network::size(self.entries(), self.layers)
     }
 }
 
@@ -449,7 +451,7 @@ pub(crate) struct Model {
 impl Model {
     /// The model of `shape` with `params`, such as one written out before.
     pub(crate) fn with_params(shape: &'static Shape, params: Vec<f64>) -> Model {
-        let network = Network::with_params(shape.entries(), shape.hidden, shape.second, params);
+        let network = Network::with_params(shape.entries(), shape.layers, params);
         Model { shape, network }
     }
 
@@ -457,7 +459,7 @@ impl Model {
     /// [`Network::new`]).
     #[cfg(test)]
     pub(crate) fn new(shape: &'static Shape, seed: u64) -> Model {
-        let network = Network::new(shape.entries(), shape.hidden, shape.second, seed);
+        let network = Network::new(shape.entries(), shape.layers, seed);
         Model { shape, network }
     }
 
@@ -495,16 +497,16 @@ impl Model {
     /// did until it learns more (see [`Network::grown`]): each of its tables
     /// becomes the same table of `shape`, wherever that is, the tables that
     /// it lacks start adding nothing, and so do the units of layers that are
-    /// wider.  A model of [`V1`] is first laid out as one of [`V2`].  `None`
-    /// if `shape` lacks one of its tables, or has a narrower layer, or a
-    /// second layer where it has none or none where it has one.
+    /// wider or added after its last (see [`crate::ai::fitting::grows`]).  A
+    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if `shape`
+    /// lacks one of its tables, or its layers cannot grow into those of
+    /// `shape`.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
         if self.shape == &V1 {
             return self.without_room().grown_to(shape);
         }
-        let (hidden, second) = (self.shape.hidden, self.shape.second);
-        if shape.hidden < hidden || shape.second < second || (shape.second == 0) != (second == 0) {
+        if !crate::ai::fitting::grows(self.shape.layers, shape.layers) {
             return None;
         }
         // Where each table starts among the entries of `shape`.
@@ -521,7 +523,7 @@ impl Model {
             let at = shape.tables.iter().position(|t| t == table)?;
             moved.extend((0..table.size()).map(|index| starts[at] + index));
         }
-        let network = self.network.grown(&moved, shape.entries(), shape.hidden, shape.second, 11);
+        let network = self.network.grown(&moved, shape.entries(), shape.layers, 11);
         Some(Model { shape, network })
     }
 
@@ -1233,7 +1235,7 @@ fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
 #[cfg(test)]
 pub(crate) fn random_model(seed: u64) -> Model {
     use rand::{Rng, SeedableRng};
-    const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut model = Model::new(&SMALL, 3);
     for p in &mut model.network.params {
@@ -1501,15 +1503,14 @@ mod tests {
                 Table::SecondLength,
                 Table::FirstPoints,
             ],
-            hidden: 20,
-            second: 11,
+            layers: &[20, 11],
         };
         let mut grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
         assert_eq!(grown.len(), SHAPES.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
         // Nor can a shape that lacks a table, or has narrower layers.
-        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, hidden: 16, second: 8 };
-        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, hidden: 12, second: 8 };
+        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8] };
+        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8] };
         assert!(new.grown_to(&FEWER).is_none() && new.grown_to(&NARROWER).is_none());
         let more = grown.last().unwrap();
         let mut gradient = vec![0.0; more.network.params.len()];
@@ -1527,7 +1528,7 @@ mod tests {
         }
         // The output weights of the new units of the last layer come last,
         // and some of the time those units are active, so that they learn.
-        let new_outputs = &gradient[gradient.len() - (MORE.second - V2.second)..];
+        let new_outputs = &gradient[gradient.len() - (MORE.layers[1] - V2.layers[1])..];
         assert!(new_outputs.iter().all(|&g| g > 0.0), "{new_outputs:?}");
     }
 
@@ -1673,13 +1674,14 @@ mod tests {
             debug_assert!(used.iter().all(|&e| (start..start + table.size()).contains(&e)));
             start += table.size();
         }
-        let (mut first, mut second) = (vec![0usize; model.shape.hidden], vec![0usize; model.shape.second]);
+        let mut counts: Vec<Vec<usize>> = model.shape.layers.iter().map(|&width| vec![0; width]).collect();
         let mut cards = 0;
         for s in &test {
             for (entries, _) in &s.choice {
-                let (a, b) = network.active_units(entries);
-                for (count, on) in first.iter_mut().zip(a).chain(second.iter_mut().zip(b)) {
-                    *count += on as usize;
+                for (layer, active) in counts.iter_mut().zip(network.active_units(entries)) {
+                    for (count, on) in layer.iter_mut().zip(active) {
+                        *count += on as usize;
+                    }
                 }
                 cards += 1;
             }
@@ -1687,8 +1689,9 @@ mod tests {
         let share = |counts: &[usize]| {
             counts.iter().map(|&c| format!("{:.0}%", 100.0 * c as f64 / cards as f64)).collect::<Vec<_>>().join(" ")
         };
-        println!("how often each unit of the first layer is active: {}", share(&first));
-        println!("and of the second: {}", share(&second));
+        for (layer, counts) in counts.iter().enumerate() {
+            println!("how often each unit of layer {} is active: {}", layer + 1, share(counts));
+        }
     }
 
     /// Writes the play model file `PLAY_MODEL_FILE` again to `PLAY_MODEL_OUT`
@@ -1784,7 +1787,7 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
         let mut weights = Model::new(&SMALL, 3);
         for p in &mut weights.network.params {
             *p = rng.gen_range(-1.0..1.0);
@@ -3880,7 +3883,7 @@ mod tests {
     fn make_play_model_file() {
         let shape = shape_of("PLAY_SHAPE");
         let read = |path: &str| {
-            let network = Network::read(path, shape.entries(), shape.hidden, shape.second);
+            let network = Network::read(path, shape.entries(), shape.layers);
             Model { shape, network }
         };
         let weights = read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
@@ -3923,7 +3926,7 @@ mod tests {
                 .strip_suffix(".txt")
                 .and_then(|stem| SHAPES.iter().filter(|s| stem.ends_with(&format!("-{}", s.name))).max_by_key(|s| s.name.len()));
             let shape = named.copied().unwrap_or_else(|| shape_of("PLAY_SHAPE"));
-            Model { shape, network: Network::read(path, shape.entries(), shape.hidden, shape.second) }
+            Model { shape, network: Network::read(path, shape.entries(), shape.layers) }
         }
     }
 
