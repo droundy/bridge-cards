@@ -5082,8 +5082,13 @@ mod tests {
     /// first hidden hand then, and the tricks done before the play.
     type Tracked = (crate::ai::locations::Beliefs, crate::ai::locations::Update, Cards, usize);
 
-    /// The beliefs of the declarer and both defenders after each play of a
-    /// hidden hand, in `json` played out by `model` at every seat (each card
+    /// A tracker's beliefs before the opening lead, the entries of the prior
+    /// they started from, and the first and second hidden hands.
+    type Started = (crate::ai::locations::Beliefs, crate::ai::locations::Opening, Cards, Cards);
+
+    /// The beliefs of the declarer and both defenders before the opening
+    /// lead, from `prior`, and after each play of a hidden hand, with
+    /// `evidence`, in `json` played out by `model` at every seat (each card
     /// the one it scores highest, the opening lead by
     /// `likely_opening_leads`), with what each update added, the first
     /// hidden hand as it then was, and the tricks done before the play.
@@ -5091,17 +5096,25 @@ mod tests {
         json: &str,
         convention: &Convention,
         model: &Model,
+        prior: &crate::ai::locations::Prior,
         evidence: &crate::ai::locations::Evidence,
-    ) -> Vec<Tracked> {
+    ) -> (Vec<Started>, Vec<Tracked>) {
         use crate::ai::locations::Tracker;
         use crate::ai::opening_lead::{likely_opening_leads, Auction};
         let mut game: GameState<()> = serde_json::from_str(json).unwrap();
         let Some(dummy) = game.dummy() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let declarer = dummy + 2;
         let mut trackers: Vec<Tracker> =
             [declarer, declarer + 1, declarer + 3].iter().filter_map(|&viewer| Tracker::new(&game, viewer)).collect();
+        let started: Vec<Started> = trackers
+            .iter_mut()
+            .map(|tracker| {
+                let opening = tracker.start(&game, convention, prior);
+                (tracker.beliefs.clone(), opening, game.hands[tracker.first], game.hands[tracker.second])
+            })
+            .collect();
         let mut seen = Vec::new();
         while !game.hand_done {
             let card = if game.tricks.is_empty() && game.played.is_empty() {
@@ -5119,30 +5132,38 @@ mod tests {
                 }
             }
         }
-        seen
+        (started, seen)
     }
 
-    /// Learns the evidence of how hidden hands play (see
-    /// [`crate::ai::locations::Tracker`]) by log loss on the true deal, from
-    /// games of the play model `PLAY_MODEL` (see [`read_model`]) at every
-    /// seat: `PLAY_LOC_ROUNDS` (200) rounds of `PLAY_LOC_GAMES` (128) fresh
-    /// deals, each giving `PLAY_LOC_EXAMPLES` (8) of its plays at random,
-    /// with a step of Adam of size `PLAY_LOC_RATE` (0.01) a round, the
-    /// beliefs before each play taken as they are, with no slope through
-    /// them.  Every `PLAY_LOC_REPORT` (20) rounds it prints the log loss a
-    /// play on `PLAY_LOC_HELD` (200) other deals, against vacant places
-    /// (the same exact bookkeeping, with no evidence), by the tricks done,
-    /// and the calibration of the cards' chances.  It writes the weights to
+    /// Learns what the auction shows of the hidden hands and what their
+    /// plays show (see [`crate::ai::locations::Tracker`]) by log loss on
+    /// the true deal, from games of the play model `PLAY_MODEL` (see
+    /// [`read_model`]) at every seat: `PLAY_LOC_ROUNDS` (200) rounds of
+    /// `PLAY_LOC_GAMES` (128) fresh deals, each giving the beliefs of each
+    /// player before the opening lead to the prior and `PLAY_LOC_EXAMPLES`
+    /// (8) of its plays at random to the evidence, with a step of Adam of
+    /// size `PLAY_LOC_RATE` (0.01) a round for each, the beliefs before each
+    /// play taken as they are, with no slope through them.  The prior starts
+    /// as `PLAY_LOC_PRIOR` (walls, or none): walls make each length and
+    /// number of points outside what the calls showed cost `PLAY_LOC_WALL`
+    /// (10).  Every `PLAY_LOC_REPORT` (20) rounds it prints the log loss a
+    /// play on `PLAY_LOC_HELD` (200) other deals, before the opening lead
+    /// and by the tricks done, against vacant places and the walls (each
+    /// with the exact bookkeeping and no evidence), how often a hand is
+    /// outside what its calls showed, and the calibration of the cards'
+    /// chances.  It writes the prior's and the evidence's weights to
     /// `PLAY_LOC_OUT` if that is set, and uses `PLAY_THREADS` (1) threads.
     #[test]
     #[ignore]
     fn learn_card_locations() {
-        use crate::ai::locations::Evidence;
+        use crate::ai::locations::{Evidence, Prior};
         let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
         let rounds = number("PLAY_LOC_ROUNDS", 200);
         let games = number("PLAY_LOC_GAMES", 128);
         let examples = number("PLAY_LOC_EXAMPLES", 8);
-        let rate: f64 = std::env::var("PLAY_LOC_RATE").map_or(0.01, |v| v.parse().expect("PLAY_LOC_RATE"));
+        let float = |name: &str, default: f64| -> f64 { std::env::var(name).map_or(default, |v| v.parse().expect(name)) };
+        let rate = float("PLAY_LOC_RATE", 0.01);
+        let wall = float("PLAY_LOC_WALL", 10.0);
         let report = number("PLAY_LOC_REPORT", 20);
         let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
         let deals = |seed: u64, count: usize| -> Vec<String> {
@@ -5153,25 +5174,32 @@ mod tests {
         };
         let held = deals(77, number("PLAY_LOC_HELD", 200));
         let convention_of = |json: &str| serde_json::from_str::<GameState<()>>(json).unwrap().system.convention();
+        // Before the opening lead, then by the tricks done.
         let stage = |done: usize| match done {
-            0 => 0,
-            1..=4 => 1,
-            5..=8 => 2,
-            _ => 3,
+            0 => 1,
+            1..=4 => 2,
+            5..=8 => 3,
+            _ => 4,
         };
-        // The mean log likelihood a play by stage, and with `calibrate` the
-        // predicted and observed chances of the cards, in tenths.
-        // The log likelihood summed and the plays by stage, and for each
+        // The log likelihood summed and the beliefs by stage, the hands
+        // outside what their calls showed, and with `calibrate`, for each
         // tenth of the chances, the chances and the cards there summed and
         // their number.
-        type Judged = ([(f64, usize); 4], [(f64, f64, usize); 10]);
-        let judge = |evidence: &Evidence, calibrate: bool| -> Judged {
-            let results: Vec<_> = workers.install(|| {
+        type Judged = ([(f64, usize); 5], usize, [(f64, f64, usize); 10]);
+        let judge = |prior: &Prior, evidence: &Evidence, calibrate: bool| -> Judged {
+            let results: Vec<Judged> = workers.install(|| {
                 held.par_iter()
                     .map(|json| {
-                        let mut by_stage = [(0.0, 0); 4];
+                        let mut by_stage = [(0.0, 0); 5];
+                        let mut outside = 0;
                         let mut bins = [(0.0, 0.0, 0); 10];
-                        for (i, (beliefs, _, first, done)) in tracked_beliefs(json, &convention_of(json), &model, evidence).iter().enumerate() {
+                        let (started, seen) = tracked_beliefs(json, &convention_of(json), &model, prior, evidence);
+                        for (beliefs, opening, first, second) in &started {
+                            by_stage[0].0 += beliefs.log_likelihood(*first);
+                            by_stage[0].1 += 1;
+                            outside += usize::from(opening.outside(*first, *second));
+                        }
+                        for (i, (beliefs, _, first, done)) in seen.iter().enumerate() {
                             let s = &mut by_stage[stage(*done)];
                             s.0 += beliefs.log_likelihood(*first);
                             s.1 += 1;
@@ -5186,79 +5214,104 @@ mod tests {
                                 }
                             }
                         }
-                        (by_stage, bins)
+                        (by_stage, outside, bins)
                     })
                     .collect()
             });
-            let mut by_stage = [(0.0, 0); 4];
-            let mut bins = [(0.0, 0.0, 0); 10];
-            for (s, b) in results {
-                for (total, part) in by_stage.iter_mut().zip(s) {
-                    total.0 += part.0;
-                    total.1 += part.1;
+            let mut total: Judged = ([(0.0, 0); 5], 0, [(0.0, 0.0, 0); 10]);
+            for (s, o, b) in results {
+                for (sum, part) in total.0.iter_mut().zip(s) {
+                    sum.0 += part.0;
+                    sum.1 += part.1;
                 }
-                for (total, part) in bins.iter_mut().zip(b) {
-                    total.0 += part.0;
-                    total.1 += part.1;
-                    total.2 += part.2;
+                total.1 += o;
+                for (sum, part) in total.2.iter_mut().zip(b) {
+                    sum.0 += part.0;
+                    sum.1 += part.1;
+                    sum.2 += part.2;
                 }
             }
-            (by_stage, bins)
+            total
         };
-        let (vacant, _) = judge(&Evidence::none(), false);
-        let show = |stages: &[(f64, usize); 4]| -> String {
-            let total: f64 = stages.iter().map(|s| s.0).sum();
-            let count: usize = stages.iter().map(|s| s.1).sum();
+        let show = |stages: &[(f64, usize); 5]| -> String {
+            let total: f64 = stages[1..].iter().map(|s| s.0).sum();
+            let count: usize = stages[1..].iter().map(|s| s.1).sum();
             let each: Vec<String> = stages.iter().map(|s| format!("{:.4}", -s.0 / s.1.max(1) as f64)).collect();
-            format!("{:.4} (by tricks done 0, 1–4, 5–8, 9–12: {})", -total / count.max(1) as f64, each.join(", "))
+            format!(
+                "{:.4} a play (before the lead, then by tricks done 0, 1–4, 5–8, 9–12: {})",
+                -total / count.max(1) as f64,
+                each.join(", ")
+            )
         };
-        println!("vacant places lose {} nats a play", show(&vacant));
+        let (vacant, _, _) = judge(&Prior::none(), &Evidence::none(), false);
+        let walls = Prior::walls(wall);
+        let (walled, outside, _) = judge(&walls, &Evidence::none(), false);
+        println!("vacant places lose {} nats", show(&vacant));
+        println!(
+            "the walls at {wall} lose {} nats, with {outside} of the {} players' views having a hidden hand outside what its calls showed",
+            show(&walled),
+            walled[0].1
+        );
+        let mut prior = match std::env::var("PLAY_LOC_PRIOR").as_deref() {
+            Ok("none") => Prior::none(),
+            _ => walls.clone(),
+        };
         let mut evidence = Evidence::none();
-        let mut adam = fitting::Adam::new(evidence.weights.len());
+        let mut prior_adam = fitting::Adam::new(prior.weights.len());
+        let mut evidence_adam = fitting::Adam::new(evidence.weights.len());
         let started = std::time::Instant::now();
         for round in 1..=rounds {
             let dealt = deals(1000 + round as u64, games);
-            let parts: Vec<(Vec<f64>, usize)> = workers.install(|| {
+            let parts: Vec<(Vec<f64>, usize, Vec<f64>, usize)> = workers.install(|| {
                 dealt
                     .par_iter()
                     .enumerate()
                     .map(|(g, json)| {
                         let mut rng = StdRng::seed_from_u64(round as u64 * 100_003 + g as u64);
-                        let seen = tracked_beliefs(json, &convention_of(json), &model, &evidence);
+                        let (begun, seen) = tracked_beliefs(json, &convention_of(json), &model, &prior, &evidence);
+                        let mut prior_slope = vec![0.0; prior.weights.len()];
+                        for (beliefs, opening, first, _) in &begun {
+                            opening.add_slope(beliefs, *first, &mut prior_slope);
+                        }
                         let mut slope = vec![0.0; evidence.weights.len()];
                         let chosen = examples.min(seen.len());
                         for i in rand::seq::index::sample(&mut rng, seen.len(), chosen) {
                             let (beliefs, update, first, _) = &seen[i];
                             update.add_slope(beliefs, *first, &mut slope);
                         }
-                        (slope, chosen)
+                        (prior_slope, begun.len(), slope, chosen)
                     })
                     .collect()
             });
-            let count: usize = parts.iter().map(|p| p.1).sum();
-            let mut gradient = vec![0.0; evidence.weights.len()];
-            for (slope, _) in &parts {
-                for (g, s) in gradient.iter_mut().zip(slope) {
-                    *g += s / count.max(1) as f64;
+            let mean = |slopes: Vec<(&Vec<f64>, usize)>, len: usize| -> Vec<f64> {
+                let count: usize = slopes.iter().map(|s| s.1).sum();
+                let mut gradient = vec![0.0; len];
+                for (slope, _) in slopes {
+                    for (g, s) in gradient.iter_mut().zip(slope) {
+                        *g += s / count.max(1) as f64;
+                    }
                 }
-            }
-            adam.step(&mut evidence.weights, &gradient, rate);
+                gradient
+            };
+            let prior_gradient = mean(parts.iter().map(|p| (&p.0, p.1)).collect(), prior.weights.len());
+            let gradient = mean(parts.iter().map(|p| (&p.2, p.3)).collect(), evidence.weights.len());
+            prior_adam.step(&mut prior.weights, &prior_gradient, rate);
+            evidence_adam.step(&mut evidence.weights, &gradient, rate);
             if round % report == 0 || round == rounds {
-                let (learned, bins) = judge(&evidence, true);
+                let (learned, _, bins) = judge(&prior, &evidence, true);
                 let calibration: Vec<String> = bins
                     .iter()
                     .filter(|b| b.2 > 0)
                     .map(|b| format!("{:.3}/{:.3} ({})", b.0 / b.2 as f64, b.1 / b.2 as f64, b.2))
                     .collect();
                 println!(
-                    "round {round} at {:.0} s: the beliefs lose {} nats a play, vacant places {}; predicted/observed {}",
+                    "round {round} at {:.0} s: the beliefs lose {} nats; predicted/observed {}",
                     started.elapsed().as_secs_f64(),
                     show(&learned),
-                    show(&vacant),
                     calibration.join(", ")
                 );
                 if let Ok(path) = std::env::var("PLAY_LOC_OUT") {
-                    let text: Vec<String> = evidence.weights.iter().map(|w| w.to_string()).collect();
+                    let text: Vec<String> = prior.weights.iter().chain(&evidence.weights).map(|w| w.to_string()).collect();
                     std::fs::write(&path, text.join("\n") + "\n").unwrap();
                 }
             }

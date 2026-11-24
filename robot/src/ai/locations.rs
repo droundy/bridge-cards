@@ -541,6 +541,120 @@ impl Evidence {
     }
 }
 
+/// The prior's tables: for each hidden hand's role (the declarer or a
+/// defender) and the fewest and most cards of a suit that its calls showed
+/// (by the bidding system's tables, see `Convention::shown_bounds`), a
+/// potential for each length it could hold, inside those bounds or not;
+/// and the same for its high card points.
+const LENGTH_PRIOR: usize = ROLES * COUNTS * COUNTS * COUNTS;
+const POINTS_PRIOR: usize = ROLES * POINTS * POINTS * POINTS;
+
+/// What the auction shows of the hidden hands before the opening lead, as
+/// potentials on each hand's lengths and points that depend only on what
+/// the calls showed, never on the calls themselves.
+#[derive(Clone)]
+pub(crate) struct Prior {
+    pub(crate) weights: Vec<f64>,
+}
+
+impl Prior {
+    /// No prior: vacant places.
+    pub(crate) fn none() -> Prior {
+        Prior { weights: vec![0.0; LENGTH_PRIOR + POINTS_PRIOR] }
+    }
+
+    /// The auction alone: each length and number of points outside what
+    /// the calls showed costs `penalty`, and those inside are equally
+    /// likely.
+    pub(crate) fn walls(penalty: f64) -> Prior {
+        let mut prior = Prior::none();
+        for role in 0..ROLES {
+            for low in 0..COUNTS {
+                for high in low..COUNTS {
+                    for v in (0..low).chain(high + 1..COUNTS) {
+                        prior.weights[length_entry(role, low, high, v)] = -penalty;
+                    }
+                }
+            }
+            for low in 0..POINTS {
+                for high in low..POINTS {
+                    for v in (0..low).chain(high + 1..POINTS) {
+                        prior.weights[points_entry(role, low, high, v)] = -penalty;
+                    }
+                }
+            }
+        }
+        prior
+    }
+}
+
+fn length_entry(role: usize, low: usize, high: usize, length: usize) -> usize {
+    ((role * COUNTS + low) * COUNTS + high) * COUNTS + length
+}
+
+fn points_entry(role: usize, low: usize, high: usize, points: usize) -> usize {
+    LENGTH_PRIOR + ((role * POINTS + low) * POINTS + high) * POINTS + points
+}
+
+/// What the calls of a hidden hand showed: its role, the fewest and most
+/// cards of each suit, and the fewest and most points.
+#[derive(Clone, Copy, Debug)]
+struct Showed {
+    role: usize,
+    lengths: [(usize, usize); 4],
+    points: (usize, usize),
+}
+
+impl Showed {
+    /// Whether `hand` is outside what the calls showed.
+    fn outside(&self, hand: Cards) -> bool {
+        let out = |(low, high): (usize, usize), v: usize| v < low || v > high;
+        Suit::ALL.iter().any(|&suit| out(self.lengths[suit as usize], hand.in_suit(suit).len()))
+            || out(self.points, hand.high_card_points())
+    }
+}
+
+/// The entries of the prior that a [`Tracker`]'s beliefs started from.
+#[derive(Clone)]
+pub(crate) struct Opening {
+    showed: [Showed; 2],
+    /// The unseen cards of each suit, and their points.
+    unseen: [usize; 4],
+    points: usize,
+}
+
+impl Opening {
+    /// The slope of the log likelihood of `beliefs`, the beliefs before the
+    /// opening lead, giving the first hand `first`, in the weights of the
+    /// prior, added to `slope`.
+    pub(crate) fn add_slope(&self, beliefs: &Beliefs, first: Cards, slope: &mut [f64]) {
+        let of_parameters = beliefs.slope(first);
+        let [one, two] = self.showed;
+        for suit in 0..4 {
+            let n = self.unseen[suit];
+            let (l1, h1) = one.lengths[suit];
+            let (l2, h2) = two.lengths[suit];
+            for (l, &s) in of_parameters.phi[suit].iter().enumerate().take(n + 1) {
+                slope[length_entry(one.role, l1, h1, l)] += s;
+                slope[length_entry(two.role, l2, h2, n - l)] += s;
+            }
+        }
+        let ((l1, h1), (l2, h2)) = (one.points, two.points);
+        for (p, &s) in of_parameters.psi.iter().enumerate().take(self.points.min(POINTS - 1) + 1) {
+            slope[points_entry(one.role, l1, h1, p)] += s;
+            if self.points - p < POINTS {
+                slope[points_entry(two.role, l2, h2, self.points - p)] += s;
+            }
+        }
+    }
+
+    /// Whether either hidden hand, `first` and the rest of the unseen
+    /// cards, is outside what its calls showed.
+    pub(crate) fn outside(&self, first: Cards, second: Cards) -> bool {
+        self.showed[0].outside(first) || self.showed[1].outside(second)
+    }
+}
+
 /// The entries of the evidence that one play added to a [`Tracker`]'s
 /// beliefs, for the slope of later log likelihoods in them.
 #[derive(Clone)]
@@ -607,6 +721,48 @@ impl Tracker {
         let (first, second) = (hidden.next()?, hidden.next()?);
         let unseen = Cards::ALL - game.original_hands[viewer] - game.original_hands[dummy];
         Some(Tracker { first, second, declarer: dummy + 2, beliefs: Beliefs::vacant(unseen, 13) })
+    }
+
+    /// Adds to the beliefs, before the opening lead of `game`, what the
+    /// `prior` makes of what the calls of each hidden hand showed, read by
+    /// `convention`: the first hand's lengths and points directly, and the
+    /// second's as what the first's leave it.  Gives the entries it used.
+    pub(crate) fn start<C>(&mut self, game: &crate::GameState<C>, convention: &super::Convention, prior: &Prior) -> Opening {
+        let showed = [self.first, self.second].map(|seat| {
+            let caller = game.hand_called_by(seat);
+            let place = (caller as usize + 4 - game.dealer as usize) % 4;
+            let offset = (game.bids.len() + 4 - place) % 4;
+            let (min, max) = convention.shown_bounds(&game.bids, offset);
+            let bounds = |low: u8, high: u8, most: usize| {
+                let low = (low as usize).min(most);
+                (low, (high as usize).clamp(low, most))
+            };
+            Showed {
+                role: usize::from(seat != self.declarer),
+                lengths: Suit::ALL.map(|suit| bounds(min.length[suit], max.length[suit], COUNTS - 1)),
+                points: bounds(min.hcp, max.hcp, POINTS - 1),
+            }
+        });
+        let unseen = Suit::ALL.map(|suit| self.beliefs.unseen.in_suit(suit).len());
+        let points = self.beliefs.unseen.high_card_points();
+        let opening = Opening { showed, unseen, points };
+        let [one, two] = showed;
+        let parameters = &mut self.beliefs.parameters;
+        for (suit, &n) in unseen.iter().enumerate() {
+            let (l1, h1) = one.lengths[suit];
+            let (l2, h2) = two.lengths[suit];
+            for (l, potential) in parameters.phi[suit].iter_mut().enumerate().take(n + 1) {
+                *potential += prior.weights[length_entry(one.role, l1, h1, l)] + prior.weights[length_entry(two.role, l2, h2, n - l)];
+            }
+        }
+        let ((l1, h1), (l2, h2)) = (one.points, two.points);
+        for (p, potential) in parameters.psi.iter_mut().enumerate().take(points.min(POINTS - 1) + 1) {
+            *potential += prior.weights[points_entry(one.role, l1, h1, p)];
+            if points - p < POINTS {
+                *potential += prior.weights[points_entry(two.role, l2, h2, points - p)];
+            }
+        }
+        opening
     }
 
     /// Takes in the play of `card` next in `game`, as `game` is before it:
@@ -899,6 +1055,39 @@ mod tests {
             }
         }
         assert!(updates > 500, "only {updates} updates");
+    }
+
+    #[test]
+    fn the_prior_slope_is_that_of_the_log_likelihood() {
+        let mut rng = StdRng::seed_from_u64(8);
+        let mut prior = Prior::walls(3.0);
+        prior.weights.iter_mut().for_each(|w| *w += rng.gen_range(-0.5..0.5));
+        let mut checked = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(31, 10) {
+            let convention = game.system.convention();
+            for tracker in trackers(&game) {
+                let first = game.hands[tracker.first];
+                let mut started = tracker.clone();
+                let opening = started.start(&game, &convention, &prior);
+                let mut slope = vec![0.0; prior.weights.len()];
+                opening.add_slope(&started.beliefs, first, &mut slope);
+                let used: Vec<usize> = (0..slope.len()).filter(|&i| slope[i] != 0.0).take(40).collect();
+                for entry in used {
+                    let moved = |by: f64| {
+                        let mut moved = prior.clone();
+                        moved.weights[entry] += by;
+                        let mut t = tracker.clone();
+                        t.start(&game, &convention, &moved);
+                        t.beliefs.log_likelihood(first)
+                    };
+                    let e = 1e-5;
+                    let difference = (moved(e) - moved(-e)) / (2.0 * e);
+                    assert!((difference - slope[entry]).abs() < 1e-6, "entry {entry}: {difference} against {}", slope[entry]);
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 500, "only {checked}");
     }
 
     #[test]
