@@ -634,19 +634,20 @@ impl Beliefs {
 }
 
 /// The sizes of what the evidence of a play is indexed by: who played it
-/// (the declarer or a defender), its place in the trick, how (a lead, a card
+/// (the declarer, a defender, or the declarer from the dummy, whose play a
+/// defender sees as evidence of the declarer's hand), its place in the trick, how (a lead, a card
 /// that follows suit, a ruff or a discard), the trumps (none, the card's
 /// suit, another), the state of the trick before it (the player's side
 /// winning or nobody yet, the card beating the winner, or losing to it),
 /// and the card's rank among the unplayed cards of its suit (how many are
 /// higher, up to 4).
-const ROLES: usize = 2;
+const PLAYERS: usize = 3;
 const PLACES: usize = 4;
 const HOWS: usize = 4;
 const TRUMPS: usize = 3;
 const STATES: usize = 3;
 const RANKS: usize = 5;
-const CONTEXTS: usize = ROLES * PLACES * HOWS * TRUMPS * STATES * RANKS;
+const CONTEXTS: usize = PLAYERS * PLACES * HOWS * TRUMPS * STATES * RANKS;
 /// And for each unseen card of the suit, its rank among the unplayed cards
 /// once the card is played, and how it lies to the card played: just below
 /// it with nothing unplayed between (an equal), below it and below the card
@@ -656,9 +657,10 @@ const RELATIONS: usize = 5;
 const FIELD_WEIGHTS: usize = CONTEXTS * RANKS * RELATIONS;
 const LENGTH_WEIGHTS: usize = CONTEXTS * COUNTS;
 
-/// What the play of a hidden hand shows: a field for each unseen card of the
-/// suit played, as log odds of the card being in the hand that played, and
-/// a potential for each length of that suit in that hand, both from one
+/// What a play shows of the hidden hand that made it, or, for a defender, of
+/// the declarer's hand when the declarer plays from the dummy: a field for
+/// each unseen card of the suit played, as log odds of the card being in
+/// that hand, and a potential for each length of that suit in that hand, both from one
 /// table entry for each situation (see [`CONTEXTS`] and [`RELATIONS`]), all
 /// in one vector of weights, the fields first.
 #[derive(Clone)]
@@ -671,6 +673,32 @@ impl Evidence {
     pub(crate) fn none() -> Evidence {
         Evidence { weights: vec![0.0; FIELD_WEIGHTS + LENGTH_WEIGHTS] }
     }
+
+    /// The evidence of `weights`, as [`Evidence::weights`] holds them, or as
+    /// they were held before the dummy's plays were evidence, which then
+    /// show nothing.
+    pub(crate) fn from_weights(weights: &[f64]) -> Evidence {
+        let mut evidence = Evidence::none();
+        if weights.len() == evidence.weights.len() {
+            evidence.weights.copy_from_slice(weights);
+        } else {
+            // The players were the outermost index, and there were two.
+            let (fields, lengths) = (FIELD_WEIGHTS / PLAYERS * 2, LENGTH_WEIGHTS / PLAYERS * 2);
+            assert_eq!(weights.len(), fields + lengths, "the evidence's weights");
+            evidence.weights[..fields].copy_from_slice(&weights[..fields]);
+            evidence.weights[FIELD_WEIGHTS..FIELD_WEIGHTS + lengths].copy_from_slice(&weights[fields..]);
+        }
+        evidence
+    }
+
+    /// The same evidence with the dummy's plays showing nothing.
+    pub(crate) fn without_the_dummy(&self) -> Evidence {
+        let mut evidence = self.clone();
+        let (fields, lengths) = (FIELD_WEIGHTS / PLAYERS, LENGTH_WEIGHTS / PLAYERS);
+        evidence.weights[2 * fields..FIELD_WEIGHTS].fill(0.0);
+        evidence.weights[FIELD_WEIGHTS + 2 * lengths..].fill(0.0);
+        evidence
+    }
 }
 
 /// The prior's tables: for each hidden hand's role (the declarer or a
@@ -678,6 +706,8 @@ impl Evidence {
 /// (by the bidding system's tables, see `Convention::shown_bounds`), a
 /// potential for each length it could hold, inside those bounds or not;
 /// and the same for its high card points.
+/// The hidden hands' roles: the declarer, or a defender.
+const ROLES: usize = 2;
 const LENGTH_PRIOR: usize = ROLES * COUNTS * COUNTS * COUNTS;
 const POINTS_PRIOR: usize = ROLES * POINTS * POINTS * POINTS;
 
@@ -862,7 +892,7 @@ pub(crate) struct Update {
     /// The entry for the length 0 of the suit in the hand that played.
     lengths: usize,
     suit: Suit,
-    /// Whether the first hidden hand played.
+    /// Whether the play showed something of the first hidden hand.
     first: bool,
     /// The unseen cards of the suit, after the play.
     unseen: usize,
@@ -965,14 +995,21 @@ impl Tracker {
 
     /// Takes in the play of `card` next in `game`, as `game` is before it:
     /// the card leaves the unseen cards, a hand that does not follow suit
-    /// has shown out, and the play of a hidden hand adds the `evidence` of
-    /// how it was played, which it gives as an [`Update`].
+    /// has shown out, and the play of a hidden hand, or for a defender the
+    /// declarer's play from the dummy, adds the `evidence` of how it was
+    /// played, which it gives as an [`Update`].
     pub(crate) fn observe<C>(&mut self, game: &crate::GameState<C>, card: Card, evidence: &Evidence) -> Option<Update> {
         let seat = game.hand_playing()?;
-        if seat != self.first && seat != self.second {
+        let dummy = self.declarer + 2;
+        // The hidden hand that the play shows something of, and who played.
+        let (shown, player) = if seat == self.first || seat == self.second {
+            (seat, usize::from(seat != self.declarer))
+        } else if seat == dummy && (self.declarer == self.first || self.declarer == self.second) {
+            (self.declarer, 2)
+        } else {
             return None;
-        }
-        let first = seat == self.first;
+        };
+        let first = shown == self.first;
         let trick: &[Card] = if game.played.len() == 4 { &[] } else { &game.played };
         let trump = super::ensemble::trump_of(game);
         let unplayed = game.hands.iter().fold(Cards::EMPTY, |all, &hand| all + hand);
@@ -1003,19 +1040,20 @@ impl Tracker {
             Some(w) if beats(trump, card, w) => 1,
             Some(_) => 2,
         };
-        let role = usize::from(seat != self.declarer);
         let rank_among = |c: Card, cards: Cards| cards.in_suit(c.suit()).filter(|x| x.rank() > c.rank()).count().min(RANKS - 1);
-        let context = ((((role * PLACES + trick.len()) * HOWS + how) * TRUMPS + trumps) * STATES + state) * RANKS
+        let context = ((((player * PLACES + trick.len()) * HOWS + how) * TRUMPS + trumps) * STATES + state) * RANKS
             + rank_among(card, unplayed);
 
-        // What is known exactly.
+        // What is known exactly, which the dummy's cards were already.
         let beliefs = &mut self.beliefs;
         let gone = Cards::singleton(card);
-        beliefs.unseen -= gone;
-        beliefs.in_first -= gone;
-        beliefs.in_second -= gone;
+        if seat != dummy {
+            beliefs.unseen -= gone;
+            beliefs.in_first -= gone;
+            beliefs.in_second -= gone;
+        }
         let parameters = &mut beliefs.parameters;
-        if first {
+        if seat != dummy && first {
             // The first hand now holds one card fewer of the suit and fewer
             // points, so each potential moves to the length and points it
             // now stands for.
@@ -1028,7 +1066,7 @@ impl Tracker {
             parameters.psi[POINTS - p..].fill(0.0);
         }
         parameters.h[index(card)] = 0.0;
-        if let Some(led) = led.filter(|&led| led != suit) {
+        if let Some(led) = led.filter(|&led| led != suit && seat != dummy) {
             let rest = beliefs.unseen.in_suit(led) - beliefs.in_first - beliefs.in_second;
             if first {
                 beliefs.in_second += rest;
@@ -1242,7 +1280,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(7);
         let mut evidence = Evidence::none();
         evidence.weights.iter_mut().for_each(|w| *w = rng.gen_range(-1.0..1.0));
-        let mut updates = 0;
+        let (mut updates, mut from_the_dummy) = (0, 0);
         for game in crate::ai::opening_lead::candidates::opening_leads(29, 20) {
             let mut game = crate::ai::playout::copy_of(&game);
             let mut trackers = trackers(&game);
@@ -1265,6 +1303,7 @@ mod tests {
                         continue;
                     }
                     updates += 1;
+                    from_the_dummy += usize::from(at.hand_playing() == at.dummy());
                     // The slope through this update alone, against a finite
                     // difference of the update with each entry moved.
                     let mut slope = vec![0.0; evidence.weights.len()];
@@ -1286,6 +1325,7 @@ mod tests {
             }
         }
         assert!(updates > 500, "only {updates} updates");
+        assert!(from_the_dummy > 100, "only {from_the_dummy} updates from the dummy");
     }
 
     #[test]
@@ -1359,6 +1399,17 @@ mod tests {
             }
         }
         assert!(compared > 1000, "only {compared}");
+    }
+
+    #[test]
+    fn evidence_from_before_the_dummy_shows_nothing_of_the_dummy() {
+        let mut rng = StdRng::seed_from_u64(17);
+        let mut evidence = Evidence::none();
+        evidence.weights.iter_mut().for_each(|w| *w = rng.gen_range(-1.0..1.0));
+        let (fields, lengths) = (FIELD_WEIGHTS / PLAYERS * 2, LENGTH_WEIGHTS / PLAYERS * 2);
+        let old: Vec<f64> = evidence.weights[..fields].iter().chain(&evidence.weights[FIELD_WEIGHTS..FIELD_WEIGHTS + lengths]).copied().collect();
+        assert_eq!(Evidence::from_weights(&old).weights, evidence.without_the_dummy().weights);
+        assert_eq!(Evidence::from_weights(&evidence.weights).weights, evidence.weights);
     }
 
     #[test]
