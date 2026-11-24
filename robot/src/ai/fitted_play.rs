@@ -442,6 +442,13 @@ impl Shape {
         entries
     }
 
+    /// Whether it reads the players' beliefs about where the hidden cards
+    /// lie, which only self-play keeps.
+    #[cfg(test)]
+    pub(crate) fn reads_beliefs(&self) -> bool {
+        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit))
+    }
+
     /// How many weights a model of this shape has.
     pub(crate) fn size(&self) -> usize {
         Network::size(self.entries(), self.hidden, self.second)
@@ -1457,7 +1464,7 @@ mod tests {
                     assert!((least..=most).contains(&hand.high_card_points()), "{json}");
                 }
                 for card in game.could_be_played() {
-                    for shape in SHAPES {
+                    for shape in SHAPES.iter().filter(|shape| !shape.reads_beliefs()) {
                         let mut start = 0;
                         for (table, entry) in shape.tables.iter().zip(view.entries(card, shape).one) {
                             assert!((start..start + table.size()).contains(&entry), "{table:?}");
@@ -1623,8 +1630,9 @@ mod tests {
             hidden: 20,
             second: 11,
         };
-        let mut grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
-        assert_eq!(grown.len(), SHAPES.len() - 1, "every shape but v1 grows from v1");
+        let shapes: Vec<&'static Shape> = SHAPES.iter().copied().filter(|shape| !shape.reads_beliefs()).collect();
+        let mut grown: Vec<Model> = shapes.iter().filter_map(|&shape| old.grown_to(shape)).collect();
+        assert_eq!(grown.len(), shapes.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
         // Nor can a shape that lacks a table, or has narrower layers.
         const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, hidden: 16, second: 8 };
