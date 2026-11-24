@@ -89,12 +89,14 @@ pub(crate) struct Chances {
     pub(crate) log_normalization: f64,
 }
 
+/// A suit's free cards with their weights and points, and the forward and
+/// backward weights of each.
+type SuitWeights = (Vec<(Card, f64, usize)>, Vec<Poly>, Vec<Poly>);
+
 /// The joint chances of where some cards of a suit lie (see
 /// [`Beliefs::joint`]).
 pub(crate) struct Joint {
-    /// For each suit, its free cards with their weights and points, and the
-    /// forward and backward weights of each.
-    suits: [(Vec<(Card, f64, usize)>, Vec<Poly>, Vec<Poly>); 4],
+    suits: [SuitWeights; 4],
     log_z: f64,
 }
 
