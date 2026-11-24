@@ -473,6 +473,7 @@ impl Model {
         }
     }
 
+    #[cfg(test)]
     /// The entries of its tables that playing `card` looks up in `view`.
     pub(crate) fn entries(&self, view: &View, card: Card) -> Vec<usize> {
         view.entries(card, self.shape)
@@ -841,6 +842,7 @@ impl View {
         }
     }
 
+    #[cfg(test)]
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
     pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {

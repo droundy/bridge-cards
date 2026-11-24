@@ -40,9 +40,9 @@ pub(crate) struct Network {
 }
 
 /// What a network works out on the way to a candidate's score.
+#[cfg(test)]
 struct Forward {
     /// Each layer's sums, and the larger of each and 0.
-    #[cfg_attr(not(test), expect(dead_code, reason = "only fitting reads the sums"))]
     sums: Vec<Vec<f64>>,
     active: Vec<Vec<f64>>,
 }
@@ -198,6 +198,7 @@ impl Network {
     }
 
     /// The layers' sums and outputs for a candidate with `entries`.
+    #[cfg(test)]
     fn forward(&self, entries: &[usize]) -> Forward {
         let mut sums: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
         let mut active: Vec<Vec<f64>> = Vec::with_capacity(self.layers.len());
