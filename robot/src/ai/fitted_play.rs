@@ -539,7 +539,7 @@ impl Shown {
         shown_out: Cards,
         hidden: Cards,
     ) -> Shown {
-        let first = (seat as usize + 4 - game.dealer as usize) % 4;
+        let first = (game.hand_called_by(seat) as usize + 4 - game.dealer as usize) % 4;
         let offset = (game.bids.len() + 4 - first) % 4;
         let (min, max) = convention.shown_bounds(&game.bids, offset);
         let length = Suit::ALL.map(|suit| {
@@ -770,7 +770,7 @@ impl View {
         let mut bid_by = [0; 4];
         for (i, bid) in game.bids.iter().enumerate() {
             if let Bid::Suit(_, suit) = bid {
-                bid_by[*suit as usize] |= 1 << from_me(game.dealer + i);
+                bid_by[*suit as usize] |= 1 << from_me(game.hand_of_caller(game.dealer + i));
             }
         }
         let later: Vec<Seat> = (1..4 - place).map(|n| seat + n).collect();
@@ -2318,6 +2318,111 @@ mod tests {
         [game.ns_tricks, game.ew_tricks]
     }
 
+    /// The seat that `seat` becomes when the table is reflected through the
+    /// declarer of `game` and the dummy: the declarer's two opponents trade
+    /// places.
+    fn reflected(game: &GameState<()>, seat: Seat) -> Option<Seat> {
+        let declarer = game.dummy()? + 2;
+        Some(declarer + (4 - (seat as usize + 4 - declarer as usize) % 4) % 4)
+    }
+
+    /// `game` at the start of a trick with the declarer's opponents' hands
+    /// trading places and the play so far turned round: each opponent keeps
+    /// its own cards, has played the same cards to the same tricks, and sits
+    /// on the other side of the declarer, so that each trick so far went the
+    /// other way round the table, and the calls that showed each hand still
+    /// show it (see [`GameState::hand_called_by`]).  Reflecting the table and
+    /// reversing the direction of play leaves the game as it was, so this is
+    /// `game` played clockwise to here and the other way from here on: the
+    /// cards that are gone, the suits shown out of and the tricks won are the
+    /// same, and each opponent's cards to come lie on the other side of the
+    /// declarer's.  `None` in the middle of a trick or before the opening lead.
+    fn mirrored(game: &GameState<()>) -> Option<GameState<()>> {
+        if !current_trick(game).is_empty() || game.tricks.is_empty() || game.hand_done {
+            return None;
+        }
+        let m = |seat: Seat| reflected(game, seat).unwrap();
+        reflected(game, Seat::South)?;
+        let mut twin = crate::ai::playout::copy_of(game);
+        let mut callers = Seated::new([Seat::South; 4]);
+        for seat in (0..4).map(Seat::from) {
+            twin.hands[m(seat)] = game.hands[seat];
+            twin.original_hands[m(seat)] = game.original_hands[seat];
+            twin.shown_out[m(seat)] = game.shown_out[seat];
+            callers[m(seat)] = game.hand_called_by(seat);
+        }
+        twin.hands_called_by = Some(callers);
+        let turned = |cards: &[Card]| [cards[0], cards[3], cards[2], cards[1]];
+        twin.tricks = game.tricks.iter().map(|(leader, cards)| (m(*leader), turned(cards))).collect();
+        if game.played.len() == 4 {
+            twin.played = turned(&game.played).to_vec();
+        }
+        twin.lead = game.lead.map(m);
+        Some(twin)
+    }
+
+    #[test]
+    fn mirrored_games_are_the_same_play_turned_round() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut twins = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(23, 40) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(twin) = mirrored(&game) {
+                    twins += 1;
+                    let m = |seat: Seat| reflected(&game, seat).unwrap();
+                    // Mirrored again, it is the game as it was.
+                    let back = mirrored(&twin).unwrap();
+                    assert_eq!(serde_json::to_string(&back.tricks).unwrap(), serde_json::to_string(&game.tricks).unwrap());
+                    assert_eq!(back.hands, game.hands);
+                    assert_eq!(back.lead, game.lead);
+                    assert!((0..4).map(Seat::from).all(|s| back.hand_called_by(s) == s));
+                    // Each card of each trick so far was played by the seat
+                    // its hand now sits in, and each trick was won by the
+                    // seat that leads the next.
+                    let trump = super::super::ensemble::trump_of(&game);
+                    for (k, ((leader, cards), (twin_leader, twin_cards))) in game.tricks.iter().zip(&twin.tricks).enumerate() {
+                        for (i, &card) in cards.iter().enumerate() {
+                            let j = twin_cards.iter().position(|&c| c == card).unwrap();
+                            assert_eq!(*twin_leader + j, m(*leader + i));
+                            assert!(twin.original_hands[*twin_leader + j].contains(card));
+                        }
+                        let mut winner = 0;
+                        for i in 1..4 {
+                            if beats(trump, twin_cards[i], twin_cards[winner]) {
+                                winner = i;
+                            }
+                        }
+                        let next = twin.tricks.get(k + 1).map(|t| t.0).or(twin.lead).unwrap();
+                        assert_eq!(*twin_leader + winner, next);
+                    }
+                    // Each hand that cannot be seen shows the same in both,
+                    // and so do the cards in sight.
+                    if let (Some(view), Some(twin_view)) = (View::new(&game, &convention), View::new(&twin, &convention)) {
+                        assert_eq!(view.mine, twin_view.mine);
+                        assert_eq!(view.other, twin_view.other);
+                        assert_eq!(view.hidden, twin_view.hidden);
+                        assert_eq!(view.contract, twin_view.contract);
+                        for (a, b) in view.shown.iter().zip(twin_view.shown.iter().rev()) {
+                            assert_eq!((a.length, a.points), (b.length, b.points));
+                        }
+                    }
+                    // The twin plays on to the end.
+                    let mut twin = twin;
+                    while !twin.hand_done {
+                        let legal: Vec<Card> = twin.could_be_played().collect();
+                        twin.play(legal[rng.gen_range(0..legal.len())]);
+                    }
+                    assert_eq!(twin.ns_tricks + twin.ew_tricks, 13);
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(twins > 100, "only {twins} twins");
+    }
+
     /// Plays `card` in `game`, a game of self-play, and the rest of the game
     /// after it, on the same deal and with the same `players`, each model
     /// playing the card it scores highest and the players of any card
@@ -2378,6 +2483,10 @@ mod tests {
         level: f64,
         apart: f64,
         by_runs: bool,
+        /// Whether each choice played out on the true deal, when the
+        /// declarer's side is on lead, is also played out in the game
+        /// [`mirrored`], as a choice of its own.
+        mirror: bool,
     }
 
     /// About `count` deals of the hands that the player to play in `game`
@@ -2637,6 +2746,7 @@ mod tests {
             game.play(card);
         }
         let any_card = players.iter().any(|p| matches!(p, Player::Random));
+        let mut twins = Vec::new();
         if !later.is_empty() && !any_card {
             let chosen = playouts.per_game.min(later.len());
             let weight = later.len() as f64 / chosen as f64;
@@ -2696,8 +2806,60 @@ mod tests {
                 }
                 decision.played_out = Some(tricks);
                 decision.weight = weight;
+                // The same choice with the opponents' cards to come on the
+                // other side of the declarer's, played out on its own draws
+                // turned round with the table, as a choice of its own.
+                let declarers = game.lead.is_some_and(|lead| chooser(game, lead) as usize % 2 == *side)
+                    && game.dummy().is_some_and(|dummy| dummy as usize % 2 == *side);
+                if playouts.mirror && playouts.by_runs && playouts.deals == 0 && declarers {
+                    if let Some(twin) = mirrored(game) {
+                        let learner = decision.learner;
+                        let model = &learners[learner];
+                        let m = |seat: Seat| reflected(game, seat).unwrap();
+                        let (_, _, seed, qualities) = &deals[0];
+                        let mut turned_players = players;
+                        let mut turned_qualities = *qualities;
+                        for seat in (0..4).map(Seat::from) {
+                            turned_players[m(seat) as usize] = players[seat as usize];
+                            for t in 0..13 {
+                                turned_qualities[t][m(seat) as usize] = qualities[t][seat as usize];
+                            }
+                        }
+                        if let Some(view) = View::new(&twin, convention) {
+                            let legal: Vec<Card> = view.legal().collect();
+                            let (run, count) = runs_of(&twin, &legal);
+                            let entries: Vec<Vec<usize>> = legal.iter().map(|&card| model.entries(&view, card)).collect();
+                            let all: Vec<f64> = entries.iter().map(|e| model.network.score(e)).collect();
+                            let (scores, shares) = run_scores(&run, &all, count, temperature);
+                            let chances = run_chances(&scores, temperature);
+                            let cards: Vec<(Vec<usize>, f64)> =
+                                entries.into_iter().zip(&run).zip(&shares).map(|((e, &r), share)| (e, chances[r] * share)).collect();
+                            let twin_runs: Vec<Card> = crate::ai::playout::one_of_each_run(&twin).collect();
+                            let values: Vec<f64> = twin_runs
+                                .iter()
+                                .map(|&card| {
+                                    let won = playout_at(&twin, card, convention, learners, turned_players, temperature, &turned_qualities, *seed);
+                                    won[*side] as f64
+                                })
+                                .collect();
+                            twins.push(Decision {
+                                learner,
+                                cards,
+                                chosen: 0,
+                                side: *side,
+                                trick: twin.tricks.len(),
+                                won_before: if *side == 0 { twin.ns_tricks } else { twin.ew_tricks },
+                                played_out: Some(legal.iter().map(|&card| values[crate::ai::playout::run_of(&twin_runs, card)]).collect()),
+                                weight,
+                                run,
+                                runs: count,
+                            });
+                        }
+                    }
+                }
             }
         }
+        decisions.extend(twins);
         let watched = record.then(|| {
             let start: GameState<()> = serde_json::from_str(json).unwrap();
             let dummy = start.dummy().unwrap();
@@ -3036,6 +3198,7 @@ mod tests {
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
                 by_runs: false,
+                mirror: false,
             },
             Learning::FreeEnergy => Playouts {
                 share: 0.0,
@@ -3050,6 +3213,7 @@ mod tests {
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
                 by_runs: true,
+                mirror: number("PLAY_SELF_MIRROR", 0) == 1,
             },
             Learning::Playouts => Playouts {
                 share: 0.0,
@@ -3064,6 +3228,7 @@ mod tests {
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
                 by_runs: false,
+                mirror: false,
             },
         };
         let anneal_from = float("PLAY_SELF_ANNEAL_FROM", 1.0);
@@ -3208,6 +3373,13 @@ mod tests {
             println!("the learners' scores are multiplied by {temperature}, to play as they did at temperature 1");
         }
         let anneal_start = number("PLAY_SELF_ANNEAL_START", first_round);
+        // With `PLAY_SELF_NOISE` 1, the sums of each learner's slopes and of
+        // their squares, weight by weight, and the rounds summed, for how
+        // much of each round's slope is noise (with `PLAY_SELF_RATE` 0 the
+        // learners stay as they are, and every round's slope is a draw of
+        // the same thing).
+        let noise_on = number("PLAY_SELF_NOISE", 0) == 1;
+        let mut noise: Vec<(Vec<f64>, Vec<f64>, usize)> = Vec::new();
         let cooling = number("PLAY_SELF_COOLING", 0) as f64;
         let cooling_start = number("PLAY_SELF_COOLING_START", first_round);
         let cooled = |round: usize| {
@@ -3603,6 +3775,17 @@ mod tests {
                 if scale != 1.0 {
                     learner.network.scale_scores(1.0 / scale);
                 }
+                if noise_on {
+                    if noise.len() <= i {
+                        noise.push((vec![0.0; gradient.len()], vec![0.0; gradient.len()], 0));
+                    }
+                    let (sums, squares, rounds) = &mut noise[i];
+                    for ((sum, square), g) in sums.iter_mut().zip(squares.iter_mut()).zip(&gradient) {
+                        *sum += g;
+                        *square += g * g;
+                    }
+                    *rounds += 1;
+                }
                 let rate = rate * cooled(round);
                 for p in &mut learner.network.params {
                     *p *= 1.0 - rate * ramp * decay;
@@ -3611,6 +3794,31 @@ mod tests {
                 if scale != 1.0 {
                     learner.network.scale_scores(scale);
                 }
+            }
+            if noise_on && watching && noise.first().is_some_and(|n| n.2 > 1) {
+                // For each learner, the mean slope's square, less what its
+                // noise adds to it, against the variance of one round's
+                // slope: summed over the weights, and over the weights each
+                // in units of its own noise.
+                let each: Vec<String> = noise
+                    .iter()
+                    .map(|(sums, squares, rounds)| {
+                        let r = *rounds as f64;
+                        let (mut signal, mut spread, mut whitened) = (0.0, 0.0, 0.0);
+                        for (sum, square) in sums.iter().zip(squares) {
+                            let mean = sum / r;
+                            let variance = (square / r - mean * mean) * r / (r - 1.0);
+                            let squared = mean * mean - variance / r;
+                            signal += squared;
+                            spread += variance;
+                            if variance > 0.0 {
+                                whitened += squared / variance;
+                            }
+                        }
+                        format!("{signal:.3e}/{spread:.3e} = {:.4}, whitened {whitened:.2}", signal / spread)
+                    })
+                    .collect();
+                println!("round {round}: over {} rounds, each learner's slope squared against the variance of a round's: {}", noise[0].2, each.join("; "));
             }
             for result in results {
                 for mut game in result.3 {
