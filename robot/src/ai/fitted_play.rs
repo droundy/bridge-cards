@@ -5078,6 +5078,193 @@ mod tests {
         time("playout (100 deals)", Box::new(move |g| player.play(g)));
     }
 
+    /// A tracker's beliefs after a play, what the play added to them, the
+    /// first hidden hand then, and the tricks done before the play.
+    type Tracked = (crate::ai::locations::Beliefs, crate::ai::locations::Update, Cards, usize);
+
+    /// The beliefs of the declarer and both defenders after each play of a
+    /// hidden hand, in `json` played out by `model` at every seat (each card
+    /// the one it scores highest, the opening lead by
+    /// `likely_opening_leads`), with what each update added, the first
+    /// hidden hand as it then was, and the tricks done before the play.
+    fn tracked_beliefs(
+        json: &str,
+        convention: &Convention,
+        model: &Model,
+        evidence: &crate::ai::locations::Evidence,
+    ) -> Vec<Tracked> {
+        use crate::ai::locations::Tracker;
+        use crate::ai::opening_lead::{likely_opening_leads, Auction};
+        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let Some(dummy) = game.dummy() else {
+            return Vec::new();
+        };
+        let declarer = dummy + 2;
+        let mut trackers: Vec<Tracker> =
+            [declarer, declarer + 1, declarer + 3].iter().filter_map(|&viewer| Tracker::new(&game, viewer)).collect();
+        let mut seen = Vec::new();
+        while !game.hand_done {
+            let card = if game.tricks.is_empty() && game.played.is_empty() {
+                let leader = game.turn().unwrap();
+                likely_opening_leads(&Auction::new(&game).unwrap(), game.hands[leader])[0]
+            } else {
+                model_card(model, &game, convention)
+            };
+            let done = game.tricks.len();
+            let updates: Vec<_> = trackers.iter_mut().map(|t| t.observe(&game, card, evidence)).collect();
+            game.play(card);
+            for (tracker, update) in trackers.iter().zip(updates) {
+                if let Some(update) = update.filter(|_| !tracker.beliefs.unseen.is_empty()) {
+                    seen.push((tracker.beliefs.clone(), update, game.hands[tracker.first], done));
+                }
+            }
+        }
+        seen
+    }
+
+    /// Learns the evidence of how hidden hands play (see
+    /// [`crate::ai::locations::Tracker`]) by log loss on the true deal, from
+    /// games of the play model `PLAY_MODEL` (see [`read_model`]) at every
+    /// seat: `PLAY_LOC_ROUNDS` (200) rounds of `PLAY_LOC_GAMES` (128) fresh
+    /// deals, each giving `PLAY_LOC_EXAMPLES` (8) of its plays at random,
+    /// with a step of Adam of size `PLAY_LOC_RATE` (0.01) a round, the
+    /// beliefs before each play taken as they are, with no slope through
+    /// them.  Every `PLAY_LOC_REPORT` (20) rounds it prints the log loss a
+    /// play on `PLAY_LOC_HELD` (200) other deals, against vacant places
+    /// (the same exact bookkeeping, with no evidence), by the tricks done,
+    /// and the calibration of the cards' chances.  It writes the weights to
+    /// `PLAY_LOC_OUT` if that is set, and uses `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn learn_card_locations() {
+        use crate::ai::locations::Evidence;
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let rounds = number("PLAY_LOC_ROUNDS", 200);
+        let games = number("PLAY_LOC_GAMES", 128);
+        let examples = number("PLAY_LOC_EXAMPLES", 8);
+        let rate: f64 = std::env::var("PLAY_LOC_RATE").map_or(0.01, |v| v.parse().expect("PLAY_LOC_RATE"));
+        let report = number("PLAY_LOC_REPORT", 20);
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        let deals = |seed: u64, count: usize| -> Vec<String> {
+            crate::ai::opening_lead::candidates::opening_leads(seed, count)
+                .iter()
+                .map(|game| serde_json::to_string(game).unwrap())
+                .collect()
+        };
+        let held = deals(77, number("PLAY_LOC_HELD", 200));
+        let convention_of = |json: &str| serde_json::from_str::<GameState<()>>(json).unwrap().system.convention();
+        let stage = |done: usize| match done {
+            0 => 0,
+            1..=4 => 1,
+            5..=8 => 2,
+            _ => 3,
+        };
+        // The mean log likelihood a play by stage, and with `calibrate` the
+        // predicted and observed chances of the cards, in tenths.
+        // The log likelihood summed and the plays by stage, and for each
+        // tenth of the chances, the chances and the cards there summed and
+        // their number.
+        type Judged = ([(f64, usize); 4], [(f64, f64, usize); 10]);
+        let judge = |evidence: &Evidence, calibrate: bool| -> Judged {
+            let results: Vec<_> = workers.install(|| {
+                held.par_iter()
+                    .map(|json| {
+                        let mut by_stage = [(0.0, 0); 4];
+                        let mut bins = [(0.0, 0.0, 0); 10];
+                        for (i, (beliefs, _, first, done)) in tracked_beliefs(json, &convention_of(json), &model, evidence).iter().enumerate() {
+                            let s = &mut by_stage[stage(*done)];
+                            s.0 += beliefs.log_likelihood(*first);
+                            s.1 += 1;
+                            if calibrate && i % 4 == 0 {
+                                let chances = beliefs.chances();
+                                for card in beliefs.unseen - beliefs.in_first - beliefs.in_second {
+                                    let p = chances.card[crate::ai::locations::index(card)];
+                                    let bin = &mut bins[((p * 10.0) as usize).min(9)];
+                                    bin.0 += p;
+                                    bin.1 += f64::from(u8::from(first.contains(card)));
+                                    bin.2 += 1;
+                                }
+                            }
+                        }
+                        (by_stage, bins)
+                    })
+                    .collect()
+            });
+            let mut by_stage = [(0.0, 0); 4];
+            let mut bins = [(0.0, 0.0, 0); 10];
+            for (s, b) in results {
+                for (total, part) in by_stage.iter_mut().zip(s) {
+                    total.0 += part.0;
+                    total.1 += part.1;
+                }
+                for (total, part) in bins.iter_mut().zip(b) {
+                    total.0 += part.0;
+                    total.1 += part.1;
+                    total.2 += part.2;
+                }
+            }
+            (by_stage, bins)
+        };
+        let (vacant, _) = judge(&Evidence::none(), false);
+        let show = |stages: &[(f64, usize); 4]| -> String {
+            let total: f64 = stages.iter().map(|s| s.0).sum();
+            let count: usize = stages.iter().map(|s| s.1).sum();
+            let each: Vec<String> = stages.iter().map(|s| format!("{:.4}", -s.0 / s.1.max(1) as f64)).collect();
+            format!("{:.4} (by tricks done 0, 1–4, 5–8, 9–12: {})", -total / count.max(1) as f64, each.join(", "))
+        };
+        println!("vacant places lose {} nats a play", show(&vacant));
+        let mut evidence = Evidence::none();
+        let mut adam = fitting::Adam::new(evidence.weights.len());
+        let started = std::time::Instant::now();
+        for round in 1..=rounds {
+            let dealt = deals(1000 + round as u64, games);
+            let parts: Vec<(Vec<f64>, usize)> = workers.install(|| {
+                dealt
+                    .par_iter()
+                    .enumerate()
+                    .map(|(g, json)| {
+                        let mut rng = StdRng::seed_from_u64(round as u64 * 100_003 + g as u64);
+                        let seen = tracked_beliefs(json, &convention_of(json), &model, &evidence);
+                        let mut slope = vec![0.0; evidence.weights.len()];
+                        let chosen = examples.min(seen.len());
+                        for i in rand::seq::index::sample(&mut rng, seen.len(), chosen) {
+                            let (beliefs, update, first, _) = &seen[i];
+                            update.add_slope(beliefs, *first, &mut slope);
+                        }
+                        (slope, chosen)
+                    })
+                    .collect()
+            });
+            let count: usize = parts.iter().map(|p| p.1).sum();
+            let mut gradient = vec![0.0; evidence.weights.len()];
+            for (slope, _) in &parts {
+                for (g, s) in gradient.iter_mut().zip(slope) {
+                    *g += s / count.max(1) as f64;
+                }
+            }
+            adam.step(&mut evidence.weights, &gradient, rate);
+            if round % report == 0 || round == rounds {
+                let (learned, bins) = judge(&evidence, true);
+                let calibration: Vec<String> = bins
+                    .iter()
+                    .filter(|b| b.2 > 0)
+                    .map(|b| format!("{:.3}/{:.3} ({})", b.0 / b.2 as f64, b.1 / b.2 as f64, b.2))
+                    .collect();
+                println!(
+                    "round {round} at {:.0} s: the beliefs lose {} nats a play, vacant places {}; predicted/observed {}",
+                    started.elapsed().as_secs_f64(),
+                    show(&learned),
+                    show(&vacant),
+                    calibration.join(", ")
+                );
+                if let Ok(path) = std::env::var("PLAY_LOC_OUT") {
+                    let text: Vec<String> = evidence.weights.iter().map(|w| w.to_string()).collect();
+                    std::fs::write(&path, text.join("\n") + "\n").unwrap();
+                }
+            }
+        }
+    }
+
     /// Averages the weights of learner `PLAY_LEARNER` (1) over its snapshots
     /// in the directory `PLAY_SELF_SNAPSHOTS` from round `PLAY_FROM` to
     /// `PLAY_TO`, and plays the average, and each of those snapshots, against
