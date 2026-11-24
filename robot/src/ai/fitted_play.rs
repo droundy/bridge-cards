@@ -395,6 +395,9 @@ pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_table
 /// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
 pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
     Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, hidden: 32, second: 16 };
+/// [`V2_TRUMPS_HISTORY`] and [`Table::Later`].
+pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
+    v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
 
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
@@ -410,6 +413,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_WIDE,
     &V2_TRUMPS_HISTORY,
     &V2_TRUMPS_HISTORY_WIDE,
+    &V2_LATER_TRUMPS_HISTORY,
 ];
 
 impl Shape {
