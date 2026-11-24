@@ -708,11 +708,32 @@ pub(crate) struct View {
 pub(crate) static LOCATIONS: std::sync::OnceLock<(crate::ai::locations::Prior, crate::ai::locations::Evidence)> =
     std::sync::OnceLock::new();
 
+/// How much the players' beliefs about where the hidden cards lie are the
+/// truth, λ from 0 to 1, as the bits of an `f64`: the chance of each way the
+/// cards a table reads could lie is λ for the way they do lie and 1 − λ times
+/// that of the beliefs.  At 1 the beliefs are the true deal, and no beliefs
+/// are kept.  Self-play sets it from `PLAY_SELF_ORACLE`.
+#[cfg(test)]
+pub(crate) static ORACLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// λ of [`ORACLE`].
+#[cfg(test)]
+fn oracle() -> f64 {
+    f64::from_bits(ORACLE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Sets λ of [`ORACLE`].
+#[cfg(test)]
+fn set_oracle(lambda: f64) {
+    ORACLE.store(lambda.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A player's beliefs about where the hidden cards lie, as a [`View`] reads
 /// them.
 #[cfg(test)]
 pub(crate) struct Seen {
-    beliefs: crate::ai::locations::Beliefs,
+    /// The beliefs, unless they are the truth alone.
+    beliefs: Option<crate::ai::locations::Beliefs>,
     /// Its joint chances, worked out when a table first reads them.
     joint: std::sync::OnceLock<crate::ai::locations::Joint>,
     /// The hidden cards whose place is not known.
@@ -722,6 +743,10 @@ pub(crate) struct Seen {
     /// Whether the player's first hidden hand is the beliefs' second, as it
     /// is for the declarer playing from the dummy.
     swapped: bool,
+    /// The cards that the player's first hidden hand holds.
+    truth: Cards,
+    /// How much the beliefs are the truth (see [`ORACLE`]).
+    oracle: f64,
 }
 
 impl View {
@@ -843,17 +868,24 @@ impl View {
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
         #[cfg(test)]
-        let beliefs = LOCATIONS.get().and_then(|(prior, evidence)| {
+        let beliefs = (|| {
+            let player_first = (1..4).map(|n| seat + n).find(|&s| s != in_sight)?;
+            let (truth, oracle) = (hands[player_first], oracle());
+            if oracle >= 1.0 {
+                let joint = std::sync::OnceLock::new();
+                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle }));
+            }
+            let (prior, evidence) = LOCATIONS.get()?;
             let viewer = if seat == dummy { declarer } else { seat };
             let plays = game.tricks.get(..done)?.iter().flat_map(|(_, cards)| cards.iter().copied()).chain(trick.iter().copied());
             let tracker = crate::ai::locations::replayed(game, convention, viewer, plays, prior, evidence)?;
-            let player_first = (1..4).map(|n| seat + n).find(|&s| s != in_sight)?;
             let swapped = player_first != tracker.first;
             let b = &tracker.beliefs;
             let first = if swapped { b.in_second } else { b.in_first };
             let free = b.unseen - b.in_first - b.in_second;
-            Some(std::sync::Arc::new(Seen { beliefs: tracker.beliefs, joint: std::sync::OnceLock::new(), free, first, swapped }))
-        });
+            let joint = std::sync::OnceLock::new();
+            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle }))
+        })();
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let mut shown = || {
             let hidden_seat = hidden_seats.next().unwrap();
@@ -1031,7 +1063,7 @@ impl View {
         // the hidden ones told apart, each with its chance.
         #[cfg(test)]
         let split = |above: bool| -> Vec<(usize, f64)> {
-            let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS");
+            let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
             let in_suit = self.left.in_suit(suit);
             let near: Vec<Card> = if above {
                 in_suit.filter(|c| c.rank() > card.rank()).take(3).collect()
@@ -1041,8 +1073,15 @@ impl View {
             let mut window: Vec<Card> = near.into_iter().filter(|&c| seen.free.contains(c)).collect();
             window.sort_by_key(|c| c.rank());
             let mut out = Vec::new();
-            let joint = seen.joint.get_or_init(|| seen.beliefs.joint());
-            for (bits, &chance) in joint.of(&window).iter().enumerate() {
+            let believed = match &seen.beliefs {
+                Some(beliefs) => seen.joint.get_or_init(|| beliefs.joint()).of(&window),
+                None => (0..1 << window.len()).map(|bits| f64::from(u8::from(bits == 0))).collect(),
+            };
+            // The way the window's cards do lie, in the bits of the beliefs.
+            let true_bits: usize =
+                window.iter().enumerate().filter(|(_, c)| seen.truth.contains(**c) != seen.swapped).map(|(t, _)| 1 << t).sum();
+            for (bits, &believed) in believed.iter().enumerate() {
+                let chance = (1.0 - seen.oracle) * believed + seen.oracle * f64::from(u8::from(bits == true_bits));
                 if chance == 0.0 {
                     continue;
                 }
@@ -3129,6 +3168,12 @@ mod tests {
     /// grows as n times their mean square, where Adam divides by the root of
     /// their mean square.  Adam's momentum does not change the drift or the
     /// noise over more than ten rounds or so, as its weights sum to one.
+    /// The shapes that read the players' beliefs read them as much the truth
+    /// as `PLAY_SELF_ORACLE` (0) says (see [`ORACLE`]); with
+    /// `PLAY_SELF_ORACLE_ROUNDS` (0) set to n, that fades to 0 in a straight
+    /// line over the n rounds from `PLAY_SELF_ORACLE_START` (the first of the
+    /// run), so that a player that learned with the true deal in sight learns
+    /// to do without it.
     ///
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
@@ -3569,6 +3614,23 @@ mod tests {
                 rate * cooled(first_round)
             );
         }
+        let oracle_from = float("PLAY_SELF_ORACLE", 0.0);
+        let oracle_rounds = number("PLAY_SELF_ORACLE_ROUNDS", 0);
+        let oracle_start = number("PLAY_SELF_ORACLE_START", first_round);
+        let oracle_at = |round: usize| {
+            if oracle_rounds == 0 {
+                oracle_from
+            } else {
+                oracle_from * (1.0 - round.saturating_sub(oracle_start) as f64 / oracle_rounds as f64).max(0.0)
+            }
+        };
+        if oracle_from > 0.0 {
+            println!(
+                "the beliefs are {oracle_from} the truth{}, {} at round {first_round}",
+                if oracle_rounds == 0 { String::new() } else { format!(", fading to none over {oracle_rounds} rounds from {oracle_start}") },
+                oracle_at(first_round)
+            );
+        }
         let mut playout_losses = vec![Tally::default(); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
@@ -3601,6 +3663,7 @@ mod tests {
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         for round in first_round..=last_round {
+            set_oracle(oracle_at(round));
             // The temperature of the slope, annealed geometrically down to
             // that of the games.
             let annealed = if learning == Learning::FreeEnergy {
@@ -5310,6 +5373,51 @@ mod tests {
         assert!(weighted > 2000, "only {weighted} weighted entries");
     }
 
+    #[test]
+    fn beliefs_mixed_with_the_truth_are_mixed_entry_by_entry() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let model = Model::new(&V2_TRUMPS, 3).grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let mut rng = StdRng::seed_from_u64(14);
+        let mut compared = 0;
+        // The chances of the weighted entries of the views of `game` with
+        // the beliefs `lambda` the truth.
+        let chances = |game: &GameState<()>, convention: &Convention, lambda: f64| {
+            set_oracle(lambda);
+            let view = View::new(game, convention);
+            set_oracle(0.0);
+            let view = view?;
+            let mut chances = std::collections::BTreeMap::<(Card, usize), f64>::new();
+            for card in view.legal() {
+                for (entry, chance) in model.entries(&view, card).weighted {
+                    *chances.entry((card, entry)).or_default() += chance;
+                }
+            }
+            Some(chances)
+        };
+        for game in crate::ai::opening_lead::candidates::opening_leads(47, 12) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let (Some(believed), Some(truth), Some(half)) =
+                    (chances(&game, &convention, 0.0), chances(&game, &convention, 1.0), chances(&game, &convention, 0.5))
+                {
+                    for (key, &chance) in &truth {
+                        assert_eq!(chance, 1.0, "the truth is one way the cards lie");
+                        assert!(believed.get(key).is_some_and(|&c| c > 0.0), "the beliefs rule out the truth");
+                    }
+                    for (key, &chance) in &half {
+                        let mixed = 0.5 * believed.get(key).copied().unwrap_or(0.0) + 0.5 * truth.get(key).copied().unwrap_or(0.0);
+                        assert!((chance - mixed).abs() < 1e-12, "{chance} against {mixed}");
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 2000, "only {compared} compared");
+    }
+
     /// The prior and the evidence of the players' beliefs in the file at
     /// `path`: the prior's weights and then the evidence's, one a line, as
     /// `learn_card_locations` writes them (see [`Evidence::from_weights`]).
@@ -5601,6 +5709,8 @@ mod tests {
         if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
             let _ = LOCATIONS.set(read_locations(&path));
         }
+        // How much the beliefs are the truth, as the learner learned with.
+        set_oracle(std::env::var("PLAY_SELF_ORACLE").map_or(0.0, |v| v.parse().expect("PLAY_SELF_ORACLE")));
         let learner = number("PLAY_LEARNER", 1);
         let (from, to) = (number("PLAY_FROM", 0), number("PLAY_TO", usize::MAX));
         let mut paths: Vec<(usize, String)> = std::fs::read_dir(&directory)
