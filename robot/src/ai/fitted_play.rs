@@ -2057,6 +2057,9 @@ mod tests {
         weight: f64,
         run: Vec<usize>,
         runs: usize,
+        /// 1 for a choice that was also played out mirrored (see
+        /// [`mirrored`]), 2 for the mirrored choice, and 0 for the others.
+        mirror: u8,
     }
 
     /// The runs of touching cards among `legal`, the cards that the player
@@ -2563,6 +2566,10 @@ mod tests {
         weights: f64,
         scores: f64,
         tricks: f64,
+        /// What the likeliest cards lose, and the number of choices, of the
+        /// choices also played out mirrored and of their mirrored twins.
+        paired_lost: [f64; 2],
+        paired: [usize; 2],
     }
 
     impl Tally {
@@ -2578,6 +2585,10 @@ mod tests {
             self.weights += other.weights;
             self.scores += other.scores;
             self.tricks += other.tricks;
+            for k in 0..2 {
+                self.paired_lost[k] += other.paired_lost[k];
+                self.paired[k] += other.paired[k];
+            }
         }
 
         /// The factor that brings the differences of the scores of a choice
@@ -2729,6 +2740,7 @@ mod tests {
                         weight: if share > 0.0 { 1.0 / share } else { 0.0 },
                         run,
                         runs: count,
+                        mirror: 0,
                     });
                 }
                 legal[chosen]
@@ -2853,7 +2865,9 @@ mod tests {
                                 weight,
                                 run,
                                 runs: count,
+                                mirror: 2,
                             });
+                            decision.mirror = 1;
                         }
                     }
                 }
@@ -3600,7 +3614,7 @@ mod tests {
                                                     tally.across += d.weight * (s - score_mean) * (v - worth_mean);
                                                     tally.squares += d.weight * (s - score_mean) * (s - score_mean);
                                                 }
-                                                if gathering {
+                                                if gathering && d.mirror != 2 {
                                                     gathered[d.learner].push((all, d.run.clone(), d.runs, worth, d.weight));
                                                 }
                                             }
@@ -3676,6 +3690,12 @@ mod tests {
                                                 (0..values.len()).max_by(|&a, &b| chance(a).total_cmp(&chance(b))).unwrap();
                                             lost[d.learner].lost += values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
                                             lost[d.learner].choices += 1;
+                                            if d.mirror > 0 {
+                                                let tally = &mut lost[d.learner];
+                                                tally.paired_lost[d.mirror as usize - 1] +=
+                                                    values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
+                                                tally.paired[d.mirror as usize - 1] += 1;
+                                            }
                                         }
                                         counts[d.learner] += 1;
                                     }
@@ -3925,6 +3945,16 @@ mod tests {
                         ", the likeliest cards lose {} tricks a play to the best played out",
                         lost.join(", ")
                     );
+                    if playouts.mirror {
+                        let paired: Vec<String> = playout_losses
+                            .iter()
+                            .map(|t| {
+                                let [a, b] = [0, 1].map(|k| t.paired_lost[k] / t.paired[k].max(1) as f64);
+                                format!("{a:.4} and {b:.4} ({})", t.paired[1])
+                            })
+                            .collect();
+                        print!(", of those also played out mirrored and of their twins {}", paired.join(", "));
+                    }
                     if learning == Learning::FreeEnergy {
                         let short: Vec<String> = playout_losses
                             .iter()
