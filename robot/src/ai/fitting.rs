@@ -17,6 +17,15 @@ use rand::{Rng, SeedableRng};
 #[cfg(test)]
 pub(crate) type Choices = Vec<Vec<(Vec<usize>, f64)>>;
 
+/// The entries of a network's tables that a candidate looks up: entries
+/// that are there, and entries that are there with a chance, such as those
+/// for where cards that cannot be seen might lie, each with that chance.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Entries {
+    pub(crate) one: Vec<usize>,
+    pub(crate) weighted: Vec<(usize, f64)>,
+}
+
 /// An n-tuple network with up to two layers of hidden units.  The score of
 /// a candidate is the sum of the linear weights of its entries, plus the
 /// output of the units: each unit of the first layer sums its weights of the
@@ -157,6 +166,16 @@ impl Network {
         grown
     }
 
+    /// Gives entry `to` the weights of entry `from`: its linear weight and
+    /// its weights into the first layer.
+    #[cfg(test)]
+    pub(crate) fn copy_entry(&mut self, from: usize, to: usize) {
+        self.params[to] = self.params[from];
+        let h = self.hidden;
+        let (from, to) = (self.first_weights() + from * h, self.first_weights() + to * h);
+        self.params.copy_within(from..from + h, to);
+    }
+
     fn first_weights(&self) -> usize {
         self.entries
     }
@@ -174,13 +193,26 @@ impl Network {
     }
 
     /// The layers' sums and outputs for a candidate with `entries`.
+    #[cfg(test)]
     fn forward(&self, entries: &[usize]) -> Forward {
+        self.forward_with(entries, &[])
+    }
+
+    /// [`Network::forward`] of `one` entries and `weighted` ones, each
+    /// counted its weight times.
+    fn forward_with(&self, one: &[usize], weighted: &[(usize, f64)]) -> Forward {
         let h = self.hidden;
         let mut sums = self.params[self.first_biases()..self.first_biases() + h].to_vec();
-        for &e in entries {
+        for &e in one {
             let row = self.first_weights() + e * h;
             for (sum, w) in sums.iter_mut().zip(&self.params[row..row + h]) {
                 *sum += w;
+            }
+        }
+        for &(e, weight) in weighted {
+            let row = self.first_weights() + e * h;
+            for (sum, w) in sums.iter_mut().zip(&self.params[row..row + h]) {
+                *sum += weight * w;
             }
         }
         let active: Vec<f64> = sums.iter().map(|s| s.max(0.0)).collect();
@@ -196,9 +228,24 @@ impl Network {
     }
 
     /// The score of a candidate with `entries`.
+    #[cfg(test)]
     pub(crate) fn score(&self, entries: &[usize]) -> f64 {
-        let linear: f64 = entries.iter().map(|&e| self.params[e]).sum();
-        let forward = self.forward(entries);
+        self.score_with(entries, &[])
+    }
+
+    /// The score of a candidate with `entries`.
+    pub(crate) fn score_of(&self, entries: &Entries) -> f64 {
+        self.score_with(&entries.one, &entries.weighted)
+    }
+
+    /// The score of a candidate with `one` entries and `weighted` ones: the
+    /// expected score, for the linear weights, of a candidate whose
+    /// weighted entries are each there with their weight as its chance, and
+    /// the score of their mean for the units.
+    fn score_with(&self, one: &[usize], weighted: &[(usize, f64)]) -> f64 {
+        let linear: f64 =
+            one.iter().map(|&e| self.params[e]).sum::<f64>() + weighted.iter().map(|&(e, w)| w * self.params[e]).sum::<f64>();
+        let forward = self.forward_with(one, weighted);
         let last = if self.second > 0 { &forward.second_active } else { &forward.active };
         let outputs = &self.params[self.outputs()..];
         linear + last.iter().zip(outputs).map(|(a, o)| a * o).sum::<f64>()
@@ -208,10 +255,24 @@ impl Network {
     /// `entries` to `gradient`.
     #[cfg(test)]
     pub(crate) fn add_gradient(&self, entries: &[usize], coefficient: f64, gradient: &mut [f64]) {
-        for &e in entries {
+        self.add_gradient_with(entries, &[], coefficient, gradient);
+    }
+
+    /// [`Network::add_gradient`] of a candidate with `entries`.
+    #[cfg(test)]
+    pub(crate) fn add_gradient_of(&self, entries: &Entries, coefficient: f64, gradient: &mut [f64]) {
+        self.add_gradient_with(&entries.one, &entries.weighted, coefficient, gradient);
+    }
+
+    #[cfg(test)]
+    fn add_gradient_with(&self, one: &[usize], weighted: &[(usize, f64)], coefficient: f64, gradient: &mut [f64]) {
+        for &e in one {
             gradient[e] += coefficient;
         }
-        let forward = self.forward(entries);
+        for &(e, w) in weighted {
+            gradient[e] += coefficient * w;
+        }
+        let forward = self.forward_with(one, weighted);
         let outputs = self.outputs();
         // How much the score moves with each first-layer unit's sum.
         let mut through_first = vec![0.0; self.hidden];
@@ -238,8 +299,11 @@ impl Network {
             if sum > 0.0 {
                 let through = through_first[unit];
                 gradient[self.first_biases() + unit] += through;
-                for &e in entries {
+                for &e in one {
                     gradient[self.first_weights() + e * self.hidden + unit] += through;
+                }
+                for &(e, w) in weighted {
+                    gradient[self.first_weights() + e * self.hidden + unit] += through * w;
                 }
             }
         }

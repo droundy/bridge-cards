@@ -8,7 +8,7 @@
 //! good, only which facts each table sees; the opening lead has its own
 //! tables (`opening_lead`), since the dummy is not yet in sight then.
 
-use super::fitting::Network;
+use super::fitting::{Entries, Network};
 #[cfg(test)]
 mod model_file;
 use super::Convention;
@@ -447,13 +447,13 @@ impl Model {
     }
 
     /// The entries of its tables that playing `card` looks up in `view`.
-    pub(crate) fn entries(&self, view: &View, card: Card) -> Vec<usize> {
+    pub(crate) fn entries(&self, view: &View, card: Card) -> Entries {
         view.entries(card, self.shape)
     }
 
     /// Its score for playing `card` in `view`.
     pub(crate) fn score(&self, view: &View, card: Card) -> f64 {
-        self.network.score(&self.entries(view, card))
+        self.network.score_of(&self.entries(view, card))
     }
 
     /// This model of [`V1`] as a model of [`V2`], which scores every card
@@ -816,7 +816,7 @@ impl View {
 
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
-    pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {
+    pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Entries {
         let suit = card.suit();
         let (role, place) = (self.role, self.place);
         let how = match self.lead {
@@ -917,7 +917,7 @@ impl View {
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
         };
         let mut offset = 0;
-        shape
+        let one = shape
             .tables
             .iter()
             .map(|&table| {
@@ -926,7 +926,8 @@ impl View {
                 offset += table.size();
                 offset - table.size() + index
             })
-            .collect()
+            .collect();
+        Entries { one, weighted: Vec::new() }
     }
 }
 
@@ -1315,7 +1316,7 @@ mod tests {
                 for card in game.could_be_played() {
                     for shape in SHAPES {
                         let mut start = 0;
-                        for (table, entry) in shape.tables.iter().zip(view.entries(card, shape)) {
+                        for (table, entry) in shape.tables.iter().zip(view.entries(card, shape).one) {
                             assert!((start..start + table.size()).contains(&entry), "{table:?}");
                             start += table.size();
                         }
@@ -1497,7 +1498,7 @@ mod tests {
                     let b = model.score(&view, card);
                     assert!((a - b).abs() < 1e-9, "{}: {a} {b}", model.shape.name);
                 }
-                more.network.add_gradient(&more.entries(&view, card), 1.0, &mut gradient);
+                more.network.add_gradient_of(&more.entries(&view, card), 1.0, &mut gradient);
             }
         }
         // The output weights of the new units of the last layer come last,
@@ -1977,7 +1978,7 @@ mod tests {
                         // The tricks of the player's side, up to a number that
                         // is the same for every card.
                         let value = if leaders { mean } else { -mean };
-                        (view.entries(card, shape), value)
+                        (view.entries(card, shape).one, value)
                     })
                     .collect();
                 situations.push(Situation {
@@ -2048,7 +2049,7 @@ mod tests {
     /// number, and how many runs there are.
     struct Decision {
         learner: usize,
-        cards: Vec<(Vec<usize>, f64)>,
+        cards: Vec<(Entries, f64)>,
         chosen: usize,
         side: usize,
         trick: usize,
@@ -2677,10 +2678,10 @@ mod tests {
             let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
                 let (run, count) = if playouts.by_runs { runs_of(&game, &legal) } else { (Vec::new(), 0) };
-                let cards: Vec<(Vec<usize>, f64)> = if playouts.by_runs {
+                let cards: Vec<(Entries, f64)> = if playouts.by_runs {
                     // Each run's chance, shared among its cards.
-                    let entries: Vec<Vec<usize>> = legal.iter().map(|&card| weights.entries(&view, card)).collect();
-                    let all: Vec<f64> = entries.iter().map(|e| weights.network.score(e)).collect();
+                    let entries: Vec<Entries> = legal.iter().map(|&card| weights.entries(&view, card)).collect();
+                    let all: Vec<f64> = entries.iter().map(|e| weights.network.score_of(e)).collect();
                     let (scores, shares) = run_scores(&run, &all, count, temperature);
                     let chances = run_chances(&scores, temperature);
                     entries.into_iter().zip(&run).zip(&shares).map(|((e, &r), share)| (e, chances[r] * share)).collect()
@@ -2840,11 +2841,11 @@ mod tests {
                         if let Some(view) = View::new(&twin, convention) {
                             let legal: Vec<Card> = view.legal().collect();
                             let (run, count) = runs_of(&twin, &legal);
-                            let entries: Vec<Vec<usize>> = legal.iter().map(|&card| model.entries(&view, card)).collect();
-                            let all: Vec<f64> = entries.iter().map(|e| model.network.score(e)).collect();
+                            let entries: Vec<Entries> = legal.iter().map(|&card| model.entries(&view, card)).collect();
+                            let all: Vec<f64> = entries.iter().map(|e| model.network.score_of(e)).collect();
                             let (scores, shares) = run_scores(&run, &all, count, temperature);
                             let chances = run_chances(&scores, temperature);
-                            let cards: Vec<(Vec<usize>, f64)> =
+                            let cards: Vec<(Entries, f64)> =
                                 entries.into_iter().zip(&run).zip(&shares).map(|((e, &r), share)| (e, chances[r] * share)).collect();
                             let twin_runs: Vec<Card> = crate::ai::playout::one_of_each_run(&twin).collect();
                             let values: Vec<f64> = twin_runs
@@ -3590,7 +3591,7 @@ mod tests {
                                                 // at the annealed temperature,
                                                 // over the runs, each run's
                                                 // slope shared among its cards.
-                                                let all: Vec<f64> = d.cards.iter().map(|(e, _)| model.network.score(e)).collect();
+                                                let all: Vec<f64> = d.cards.iter().map(|(e, _)| model.network.score_of(e)).collect();
                                                 let mut worth = vec![0.0; d.runs];
                                                 for (&r, &v) in d.run.iter().zip(values) {
                                                     worth[r] = v;
@@ -3598,7 +3599,7 @@ mod tests {
                                                 let (scores, shares) = run_scores(&d.run, &all, d.runs, annealed);
                                                 let slope = free_energy_slope(&scores, &worth, annealed);
                                                 for (((entries, _), &r), share) in d.cards.iter().zip(&d.run).zip(&shares) {
-                                                    model.network.add_gradient(entries, d.weight * slope[r] * share, &mut gradients[d.learner]);
+                                                    model.network.add_gradient_of(entries, d.weight * slope[r] * share, &mut gradients[d.learner]);
                                                 }
                                                 // How far the free energy at
                                                 // the games' temperature falls
@@ -3627,7 +3628,7 @@ mod tests {
                                                 // each square divided by
                                                 // that of its accuracy.
                                                 let scores: Vec<f64> =
-                                                    d.cards.iter().map(|(entries, _)| model.network.score(entries)).collect();
+                                                    d.cards.iter().map(|(entries, _)| model.network.score_of(entries)).collect();
                                                 let n = values.len() as f64;
                                                 let value_mean = values.iter().sum::<f64>() / n;
                                                 let score_mean = scores.iter().sum::<f64>() / n;
@@ -3646,7 +3647,7 @@ mod tests {
                                                     tally.weights += w;
                                                     tally.scores += w * score;
                                                     tally.tricks += w * value;
-                                                    model.network.add_gradient(entries, -w * off, &mut gradients[d.learner]);
+                                                    model.network.add_gradient_of(entries, -w * off, &mut gradients[d.learner]);
                                                 }
                                             }
                                         } else {
@@ -3657,7 +3658,7 @@ mod tests {
                                                 let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
                                                 let spreading = -chance * (log + spread);
                                                 let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
-                                                learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                learners_now[d.learner].network.add_gradient_of(entries, g, &mut gradients[d.learner]);
                                             }
                                             if let Some(values) = &d.played_out {
                                                 let weight = playout_weights[d.learner % playout_weights.len()];
@@ -3671,7 +3672,7 @@ mod tests {
                                                     let mean: f64 = values.iter().zip(&soft).map(|(v, p)| v * p).sum();
                                                     for (((entries, _), value), p) in d.cards.iter().zip(values).zip(&soft) {
                                                         let g = weight * d.weight * p * (value - mean) / (softened * temperature);
-                                                        learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                        learners_now[d.learner].network.add_gradient_of(entries, g, &mut gradients[d.learner]);
                                                     }
                                                 }
                                             }
@@ -4597,7 +4598,7 @@ mod tests {
             };
             debug_assert!(loss == 0.0 || run_of(runs, best) != run_of(runs, played));
             for (sums, card) in sums.iter_mut().zip([played, best]) {
-                for entry in model.entries(&view, card) {
+                for entry in model.entries(&view, card).one {
                     let (count, sum, squares) = &mut sums[entry];
                     *count += 1;
                     *sum += loss;
