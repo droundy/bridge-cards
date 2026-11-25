@@ -130,6 +130,21 @@ pub(crate) enum Table {
     /// its suit, a discard by what it costs its own suit against the
     /// cheapest discard, and a ruff is always 0.
     SuitPlay,
+    /// [`Table::Run`] with nothing but the median run: 5 entries.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the screens fit it"))]
+    RunMedianOnly,
+    /// The guaranteed run, the fewest tricks in a row over the ways that the
+    /// hidden cards could lie that were tried, and the median run (0 to 4
+    /// or more), with no role or play: 25 entries.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the screens fit it"))]
+    RunBoth,
+    /// The role, the play, and both runs of [`Table::RunBoth`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the screens fit it"))]
+    RunBothPlay,
+    /// Both runs of [`Table::RunBoth`], with the search looking eight tricks
+    /// ahead, not four (0 to 8 or more): 81 entries.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the screens fit it"))]
+    RunDeep,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     /// The place, and whether each of the three cards just above is the
@@ -192,6 +207,10 @@ impl Table {
             Table::SuitTricks => 4 * PLAYS * 5,
             Table::Run => 4 * PLAYS * 5,
             Table::SuitPlay => 4 * PLAYS * 4 * 4,
+            Table::RunMedianOnly => 5,
+            Table::RunBoth => 25,
+            Table::RunBothPlay => 4 * PLAYS * 25,
+            Table::RunDeep => 81,
             Table::Bids => 4 * PLAYS * 16,
             Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
@@ -329,6 +348,12 @@ impl Table {
                 let what = ["gives away no trick", "gives away 1 trick", "gives away 2 tricks", "gives away 3 or more", "off the suit, or not worked out"];
                 format!("{}, in its suit {}", role_play(index / 5), what[index % 5])
             }
+            Table::RunMedianOnly => format!("the median run is {} tricks", index),
+            Table::RunBoth => format!("the guaranteed run is {} tricks, the median {}", index / 5, index % 5),
+            Table::RunBothPlay => {
+                format!("{}, the guaranteed run is {} tricks, the median {}", role_play(index / 25), index / 5 % 5, index % 5)
+            }
+            Table::RunDeep => format!("the guaranteed run is {} tricks, the median {} (eight ahead)", index / 9, index % 9),
             Table::Run => format!("{}, the median run is {}{} tricks", role_play(index / 5), index % 5, if index % 5 == RUN_MOST { " or more" } else { "" }),
             Table::Later3Knots => {
                 let (state, knot) = (index / KNOTS.len(), KNOTS[index % KNOTS.len()]);
@@ -716,7 +741,7 @@ impl Shape {
     /// lie, which only self-play keeps.
     #[cfg(test)]
     pub(crate) fn reads_beliefs(&self) -> bool {
-        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run))
+        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run | Table::RunMedianOnly | Table::RunBoth | Table::RunBothPlay | Table::RunDeep))
     }
 
     /// How many weights a model of this shape has.
@@ -1011,6 +1036,10 @@ pub(crate) struct View {
 /// The most tricks in a row that [`Table::Run`] counts.
 #[cfg(test)]
 const RUN_MOST: usize = 4;
+
+/// The most tricks in a row that [`Table::RunDeep`] counts.
+#[cfg(test)]
+const RUN_DEEP: usize = 8;
 
 /// How many ways that the hidden cards could lie [`Table::Run`] tries.
 #[cfg(test)]
@@ -1633,14 +1662,14 @@ impl View {
         legal.into_iter().zip(losses).collect()
     }
 
-    /// What [`Table::Run`] says of playing `card`: the median, over the
+    /// What [`Table::Run`] says of playing `card`: the fewest and then the median, over the
     /// ways that the hidden cards could lie by the player's beliefs (or the
     /// true way, as [`ORACLE`] says), of the tricks in a row that the player's
     /// side takes from this trick on, found by [`RunSearch`] in each, at
     /// most [`RUN_MOST`].  With an even number of ways it is the lower of the
     /// middle two.
     #[cfg(test)]
-    fn run_median(&self, card: Card) -> usize {
+    fn run_stats(&self, card: Card, most: usize) -> (usize, usize) {
         let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
         let place = self.trick.len();
         let leader = (4 - place) % 4;
@@ -1678,10 +1707,10 @@ impl View {
             let mut played: Vec<(usize, Card)> = self.trick.iter().enumerate().map(|(i, &c)| ((i + 4 - place) % 4, c)).collect();
             played.push((0, card));
             search.nodes = 0;
-            runs.push(search.trick(&mut hands, leader, &mut played, RUN_MOST));
+            runs.push(search.trick(&mut hands, leader, &mut played, most));
         }
         runs.sort_unstable();
-        runs[(runs.len() - 1) / 2]
+        (runs[0], runs[(runs.len() - 1) / 2])
     }
 
     /// The entries of the tables of `shape`, laid end to end, that playing
@@ -1895,7 +1924,7 @@ impl View {
             Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
-            Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run => {
+            Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run | Table::RunMedianOnly | Table::RunBoth | Table::RunBothPlay | Table::RunDeep => {
                 panic!("{table:?} reads the player's beliefs, which only self-play keeps")
             }
         };
@@ -1961,7 +1990,24 @@ impl View {
                 #[cfg(test)]
                 Table::Run => {
                     let start = offset + (role * PLAYS + play) * 5;
-                    weighted.push((start + self.run_median(card), 1.0));
+                    weighted.push((start + self.run_stats(card, RUN_MOST).1, 1.0));
+                }
+                #[cfg(test)]
+                Table::RunMedianOnly => weighted.push((offset + self.run_stats(card, RUN_MOST).1, 1.0)),
+                #[cfg(test)]
+                Table::RunBoth => {
+                    let (least, median) = self.run_stats(card, RUN_MOST);
+                    weighted.push((offset + least * 5 + median, 1.0));
+                }
+                #[cfg(test)]
+                Table::RunBothPlay => {
+                    let (least, median) = self.run_stats(card, RUN_MOST);
+                    weighted.push((offset + (role * PLAYS + play) * 25 + least * 5 + median, 1.0));
+                }
+                #[cfg(test)]
+                Table::RunDeep => {
+                    let (least, median) = self.run_stats(card, RUN_DEEP);
+                    weighted.push((offset + least * 9 + median, 1.0));
                 }
                 #[cfg(test)]
                 Table::Later3Knots => {
@@ -2378,7 +2424,7 @@ mod tests {
             }
             let other = View::new(&dealt, &convention).unwrap();
             for card in view.legal() {
-                assert_eq!(view.run_median(card), other.run_median(card), "{}", serde_json::to_string(&game).unwrap());
+                assert_eq!(view.run_stats(card, RUN_MOST), other.run_stats(card, RUN_MOST), "{}", serde_json::to_string(&game).unwrap());
                 checked += 1;
             }
         }
@@ -2414,6 +2460,20 @@ mod tests {
         // diamond takes the second trick, the lead being seat 0's.
         let (run, _) = run_of(["DA2", "HKQ", "D34", "C56"], None);
         assert_eq!(run, 2);
+    }
+
+    #[test]
+    fn a_deeper_search_counts_a_longer_run() {
+        use std::str::FromStr;
+        // Six tricks of winners: four ahead stops at four, eight ahead
+        // counts them all.
+        let hands = ["SAKQJT9", "S876543", "H234567", "H9TJQKA"];
+        let run_in = |most: usize| {
+            let mut hands = hands.map(|h| Cards::from_str(h).unwrap());
+            RunSearch { trump: None, nodes: 0 }.trick(&mut hands, 0, &mut Vec::new(), most)
+        };
+        assert_eq!(run_in(RUN_MOST), 4);
+        assert_eq!(run_in(RUN_DEEP), 6);
     }
 
     #[test]
@@ -2751,7 +2811,7 @@ mod tests {
 
     /// The tables that a shape written out by [`shape_spec`] can name: every
     /// one but those of [`V1`].
-    const NAMED_TABLES: [Table; 23] = [
+    const NAMED_TABLES: [Table; 27] = [
         Table::Trick,
         Table::Above,
         Table::Below,
@@ -2775,6 +2835,10 @@ mod tests {
         Table::Later3Knots,
         Table::SuitTricks,
         Table::Run,
+        Table::RunMedianOnly,
+        Table::RunBoth,
+        Table::RunBothPlay,
+        Table::RunDeep,
     ];
 
     /// The shape that `spec` names: a shape's name, or tables joined by `+`
@@ -2848,7 +2912,7 @@ mod tests {
                 // One fit of every situation, or with PLAY_SPLIT=1 one for
                 // each of the groups, each tested on its own group.
                 let fits: Vec<Network> = if split {
-                    (0..GROUPS.len())
+                    (0..group_names().len())
                         .map(|g| {
                             let choices: Vec<_> = train.iter().filter(|s| s.group == g).map(|s| &s.choice).collect();
                             fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)
@@ -2882,11 +2946,11 @@ mod tests {
                     }
                     None => println!(),
                 }
-                for (g, name) in GROUPS.iter().enumerate() {
+                for (g, name) in group_names().iter().enumerate() {
                     let at: Vec<usize> = (0..test.len()).filter(|&i| test[i].group == g).collect();
                     let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
                     let (mean, spread) = error(&these);
-                    print!("    {name:<17} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                    print!("    {name:<19} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
                     match &first {
                         Some(first) => {
                             let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
@@ -3384,20 +3448,36 @@ mod tests {
     /// plays, the declarer's side or the defence, and in what contract.
     const GROUPS: [&str; 4] = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
 
+    /// The names of the groups of the screen: those of [`GROUPS`], or with
+    /// `PLAY_GROUP_BY=run` the longest median run (see [`Table::Run`]) that
+    /// any card the player could play has, 0 to 4 or more.
+    fn group_names() -> Vec<String> {
+        if var("PLAY_GROUP_BY", "") == "run" {
+            (0..=RUN_MOST).map(|n| format!("longest run {n}{}", if n == RUN_MOST { "+" } else { "" })).collect()
+        } else {
+            GROUPS.iter().map(|name| name.to_string()).collect()
+        }
+    }
+
     /// The situations in the files `paths`, comma-separated, each card with
     /// its entries in the tables of `shape`.
     ///
     /// A shape that reads the players' beliefs reads them by the weights in
     /// the file `PLAY_SELF_LOCATIONS` (see [`read_locations`]).
     fn read_situations(paths: &str, shape: &Shape) -> Vec<Situation> {
-        if shape.reads_beliefs() && LOCATIONS.get().is_none() {
+        // With PLAY_GROUP_BY=run the groups are made of the runs, which the
+        // beliefs give, so they are kept from shape to shape.
+        let by_run = var("PLAY_GROUP_BY", "") == "run";
+        static RUN_GROUPS: std::sync::Mutex<Option<std::collections::HashMap<(String, usize), usize>>> =
+            std::sync::Mutex::new(None);
+        if (shape.reads_beliefs() || by_run) && LOCATIONS.get().is_none() {
             let path = std::env::var("PLAY_SELF_LOCATIONS").expect("PLAY_SELF_LOCATIONS, for a shape that reads the beliefs");
             let _ = LOCATIONS.set(read_locations(&path));
         }
         let mut conventions = std::collections::HashMap::new();
         let mut situations = Vec::new();
         for path in paths.split(',') {
-            for line in std::fs::read_to_string(path.trim()).unwrap().lines() {
+            for (line_number, line) in std::fs::read_to_string(path.trim()).unwrap().lines().enumerate() {
                 let json: serde_json::Value = serde_json::from_str(line).unwrap();
                 let game: GameState<()> =
                     serde_json::from_str(json["situation"].as_str().unwrap()).unwrap();
@@ -3426,7 +3506,17 @@ mod tests {
                     .collect();
                 situations.push(Situation {
                     stage: json["stage"].as_u64().unwrap() as usize,
-                    group: 2 * usize::from(view.role >= 2) + usize::from(view.trump.is_none()),
+                    group: if by_run {
+                        let key = (path.trim().to_string(), line_number);
+                        let kept = RUN_GROUPS.lock().unwrap().get_or_insert_with(Default::default).get(&key).copied();
+                        kept.unwrap_or_else(|| {
+                            let longest = view.legal().into_iter().map(|card| view.run_stats(card, RUN_MOST).1).max().unwrap_or(0);
+                            RUN_GROUPS.lock().unwrap().get_or_insert_with(Default::default).insert(key, longest);
+                            longest
+                        })
+                    } else {
+                        2 * usize::from(view.role >= 2) + usize::from(view.trump.is_none())
+                    },
                     choice,
                 });
             }
