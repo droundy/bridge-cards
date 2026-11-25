@@ -1122,7 +1122,7 @@ fn cash(mut hands: [u16; 4], ours: [usize; 2], opponents: [usize; 2], ruffs: [bo
 
 /// Where a run of [`Table::RunPlan`] stands between suits.
 #[cfg(test)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct RunState {
     /// The tricks taken in a row so far, at most [`RUN_MOST`].
     run: u8,
@@ -1263,7 +1263,7 @@ fn best_rest(
     side: [usize; 2],
     opponents: [usize; 2],
     trump: Option<Suit>,
-    known: &mut Vec<((RunState, u8), [f64; RUN_MOST + 1])>,
+    known: &mut RunMemo,
 ) -> [f64; RUN_MOST + 1] {
     let mut runs = [0.0; RUN_MOST + 1];
     if state.run as usize >= RUN_MOST || remaining == 0 {
@@ -1296,6 +1296,17 @@ fn best_rest(
     known.push(((state, remaining), best));
     best
 }
+
+/// What [`best_rest`] has worked out, by the state and the suits left (a
+/// list, since it is short and a hash costs more than looking through it).
+#[cfg(test)]
+type RunMemo = Vec<((RunState, u8), [f64; RUN_MOST + 1])>;
+
+/// The [`RunMemo`]s of a view: one for each way of the trump states, suit
+/// led and card that leaves another suit, since those are what the rest of
+/// the plan after the trick depends on.
+#[cfg(test)]
+type RunMemos = std::sync::Mutex<Vec<(([(bool, u8); 4], Suit, Option<Card>, u8), RunMemo)>>;
 
 /// The chances of runs of 0 to [`RUN_MOST`] tricks of two independent
 /// parts added up, a run of the most or more counting as the most.
@@ -1494,6 +1505,9 @@ pub(crate) struct Seen {
     /// Each suit's ways of lying among the four hands, for
     /// [`Table::RunOdds`], worked out once for all the cards of a view.
     run_splits: std::sync::OnceLock<[Vec<SuitSplit>; 4]>,
+    /// What [`Table::RunPlan`] has worked out of the plans after the trick,
+    /// shared by the cards of a view whose plans are the same.
+    run_memos: RunMemos,
 }
 
 impl View {
@@ -1620,7 +1634,7 @@ impl View {
             let (truth, oracle) = (hands[player_first], oracle());
             if oracle >= 1.0 {
                 let joint = std::sync::OnceLock::new();
-                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default() }));
+                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default(), run_memos: Default::default() }));
             }
             let (prior, evidence) = LOCATIONS.get()?;
             let viewer = if seat == dummy { declarer } else { seat };
@@ -1631,7 +1645,7 @@ impl View {
             let first = if swapped { b.in_second } else { b.in_first };
             let free = b.unseen - b.in_first - b.in_second;
             let joint = std::sync::OnceLock::new();
-            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default() }))
+            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default(), run_memos: Default::default() }))
         })();
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
@@ -2278,7 +2292,16 @@ impl View {
                 let total: f64 = trump_splits.iter().map(|s| s.1).sum();
                 ways[t as usize] = trump_splits.iter().map(|&(h, c)| (h, c / total)).collect();
             }
-            let mut known: Vec<((RunState, u8), [f64; RUN_MOST + 1])> = Vec::new();
+            // The plan after the trick depends on the card only by the suit
+            // that it leaves, if that is not the suit led.
+            let memo_key = (*key, led, (card.suit() != led).then_some(card), above);
+            let mut known: RunMemo = {
+                let mut memos = seen.run_memos.lock().unwrap();
+                match memos.iter().position(|(k, _)| *k == memo_key) {
+                    Some(i) => memos.swap_remove(i).1,
+                    None => RunMemo::new(),
+                }
+            };
             for &(holdings, chance) in &splits[led as usize] {
                 let hands = without_card(led, holdings);
                 let key = if trump == Some(led) { trump_key(&hands) } else { *key };
@@ -2304,6 +2327,7 @@ impl View {
                     _ => odds[0] += weight,
                 }
             }
+            seen.run_memos.lock().unwrap().push((memo_key, known));
         }
         odds
     }
