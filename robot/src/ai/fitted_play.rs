@@ -94,6 +94,13 @@ pub(crate) enum Table {
     /// a trump that beats them.  Those are exclusive, since a hand that holds
     /// a card of the suit led must follow.
     Later3,
+    /// [`Table::Later3`] with each state's chance p put on a scale that can
+    /// bend: an entry for each of [`KNOTS`], weighted by the hat function of
+    /// p that is 1 at that knot and falls to 0 at the knots beside it (at 0
+    /// below the first), the last rising to 1 at p = 1.  Their weights make a
+    /// function of p that is linear between the knots and 0 at p = 0, which
+    /// a state's p alone, entering the first layer, cannot be.
+    Later3Knots,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     /// The place, and whether each of the three cards just above is the
@@ -152,6 +159,7 @@ impl Table {
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
             Table::Later2 | Table::Later3 => 4 * PLAYS * 4 * 4,
+            Table::Later3Knots => 4 * PLAYS * 4 * 4 * KNOTS.len(),
             Table::Bids => 4 * PLAYS * 16,
             Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
@@ -285,6 +293,10 @@ impl Table {
                 ["no", "cannot beat", "can beat"][index / 3 % 3],
                 ["no", "yes", "known void"][index % 3]
             ),
+            Table::Later3Knots => {
+                let (state, knot) = (index / KNOTS.len(), KNOTS[index % KNOTS.len()]);
+                format!("{}, at the chance {knot}", Table::Later3.describe(state))
+            }
             Table::Later2 | Table::Later3 => {
                 const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
                 format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
@@ -465,10 +477,42 @@ pub(crate) const V2_TRUMPS_BELIEFS: Shape = v2_and(
     ],
 );
 
+/// The chances at which [`Table::Later3Knots`] has a knot, after 0: the
+/// scale may bend at ½, where the plan that plays best tends to change (a
+/// finesse or the drop, which way to guess), and the units can learn bends
+/// elsewhere.
+pub(crate) const KNOTS: [f64; 2] = [0.5, 1.0];
+
+/// The hat functions of the chance `p` at each of [`KNOTS`]: so that
+/// `Σ knot · hat = p`, and with weights `w` the sum `Σ w · hat` is the
+/// function of p that is linear between the knots, `w` at each and 0 at 0.
+#[cfg(test)]
+fn hats(p: f64) -> [f64; KNOTS.len()] {
+    let p = p.clamp(0.0, 1.0);
+    std::array::from_fn(|j| {
+        let (left, at) = (if j == 0 { 0.0 } else { KNOTS[j - 1] }, KNOTS[j]);
+        if p <= left {
+            0.0
+        } else if p <= at {
+            (p - left) / (at - left)
+        } else {
+            match KNOTS.get(j + 1) {
+                Some(&right) if p < right => (right - p) / (right - at),
+                _ => 0.0,
+            }
+        }
+    })
+}
+
 /// [`V2_TRUMPS_HISTORY_LATER2`] with [`Table::Later3`] in place of
 /// [`Table::Later2`], to see what the chances add to what could be.
 pub(crate) const V2_TRUMPS_HISTORY_LATER3: Shape =
     v2_and("v2-trumps-history-later3", v2_tables_and!(Table::Trumps, Table::History, Table::Later3));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] with [`Table::Later3Knots`] in place of
+/// [`Table::Later2`], to see what a scale of the chances that can bend adds.
+pub(crate) const V2_TRUMPS_HISTORY_LATER3_KNOTS: Shape =
+    v2_and("v2-trumps-history-later3-knots", v2_tables_and!(Table::Trumps, Table::History, Table::Later3Knots));
 
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
@@ -490,6 +534,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_LATER2,
     &V2_TRUMPS_BELIEFS,
     &V2_TRUMPS_HISTORY_LATER3,
+    &V2_TRUMPS_HISTORY_LATER3_KNOTS,
 ];
 
 impl Shape {
@@ -513,7 +558,7 @@ impl Shape {
     /// lie, which only self-play keeps.
     #[cfg(test)]
     pub(crate) fn reads_beliefs(&self) -> bool {
-        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3))
+        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots))
     }
 
     /// How many weights a model of this shape has.
@@ -615,6 +660,19 @@ impl Model {
                 moved.extend((0..table.size()).map(|index| starts[at] + index));
                 continue;
             }
+            if let Some(at) = shape.tables.iter().position(|&t| t == Table::Later3Knots).filter(|_| matches!(table, Table::Later2 | Table::Later3)) {
+                // Each state's weights go to its last knot, at p = 1, and
+                // the others get them times their knots, which scores the
+                // chances p as Later3 does (and as Later2 does p = 1).
+                let n = KNOTS.len();
+                moved.extend((0..table.size()).map(|index| starts[at] + index * n + n - 1));
+                for index in 0..table.size() {
+                    for (j, &knot) in KNOTS[..n - 1].iter().enumerate() {
+                        copies.push((starts[at] + index * n + n - 1, starts[at] + index * n + j, knot));
+                    }
+                }
+                continue;
+            }
             let at = shape.tables.iter().position(|&t| t == split(table) && t != table)?;
             if table == Table::Later2 {
                 // The same entries, now with their chances.
@@ -630,13 +688,13 @@ impl Model {
                 if digits.contains(&4) {
                     digits.iter_mut().filter(|d| **d == 4).for_each(|d| *d = 3);
                     let from = place * 125 + digits[0] + 5 * digits[1] + 25 * digits[2];
-                    copies.push((starts[at] + from, starts[at] + index));
+                    copies.push((starts[at] + from, starts[at] + index, 1.0));
                 }
             }
         }
         let mut network = self.network.grown(&moved, shape.entries(), shape.layers, 11);
-        for (from, to) in copies {
-            network.copy_entry(from, to);
+        for (from, to, factor) in copies {
+            network.copy_entry(from, to, factor);
         }
         Some(Model { shape, network })
     }
@@ -1266,7 +1324,7 @@ impl View {
             Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
-            Table::AboveSplit | Table::BelowSplit | Table::Later3 => {
+            Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots => {
                 panic!("{table:?} reads the player's beliefs, which only self-play keeps")
             }
         };
@@ -1323,6 +1381,17 @@ impl View {
                 Table::Later3 => {
                     let start = offset + (role * PLAYS + play) * 16;
                     weighted.extend(self.later3(card).into_iter().map(|(e, p)| (start + e, p)));
+                }
+                #[cfg(test)]
+                Table::Later3Knots => {
+                    let start = offset + (role * PLAYS + play) * 16 * KNOTS.len();
+                    for (e, p) in self.later3(card) {
+                        for (j, hat) in hats(p).into_iter().enumerate() {
+                            if hat > 0.0 {
+                                weighted.push((start + e * KNOTS.len() + j, hat));
+                            }
+                        }
+                    }
                 }
                 _ => {
                     let index = index(table);
@@ -5629,6 +5698,8 @@ mod tests {
         let later3 = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
         time("scores with Later2", &|game, convention| scores(&later2, game, convention));
         time("scores with Later3", &|game, convention| scores(&later3, game, convention));
+        let knots = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap();
+        time("scores with Later3Knots", &|game, convention| scores(&knots, game, convention));
     }
 
     #[test]
@@ -5715,6 +5786,45 @@ mod tests {
             }
         }
         assert!(compared > 2000, "only {compared} compared");
+    }
+
+    #[test]
+    fn the_hats_add_up_to_the_chance() {
+        for i in 0..=100 {
+            let p = i as f64 / 100.0;
+            let sum: f64 = hats(p).iter().zip(KNOTS).map(|(h, k)| h * k).sum();
+            assert!((sum - p).abs() < 1e-12, "{p}: {sum}");
+        }
+    }
+
+    #[test]
+    fn a_model_grown_to_later3_knots_scores_as_it_did() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let mut rng = StdRng::seed_from_u64(16);
+        let mut later2 = Model::new(&V2_TRUMPS_HISTORY_LATER2, 5);
+        later2.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.5..0.5));
+        let later3 = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        let knots = [later2.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap(), later3.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap()];
+        let mut compared = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(49, 10) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        let a = later3.score(&view, card);
+                        for model in &knots {
+                            let b = model.score(&view, card);
+                            assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                        }
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 1000, "only {compared}");
     }
 
     #[test]

@@ -185,14 +185,16 @@ impl Network {
         grown
     }
 
-    /// Gives entry `to` the weights of entry `from`: its linear weight and
-    /// its weights into the first layer.
+    /// Gives entry `to` the weights of entry `from` times `factor`: its
+    /// linear weight and its weights into the first layer.
     #[cfg(test)]
-    pub(crate) fn copy_entry(&mut self, from: usize, to: usize) {
-        self.params[to] = self.params[from];
+    pub(crate) fn copy_entry(&mut self, from: usize, to: usize, factor: f64) {
+        self.params[to] = factor * self.params[from];
         let h = self.layers.first().copied().unwrap_or(0);
         let (from, to) = (self.weights(0) + from * h, self.weights(0) + to * h);
-        self.params.copy_within(from..from + h, to);
+        for k in 0..h {
+            self.params[to + k] = factor * self.params[from + k];
+        }
     }
 
     /// Where the weights into `layer` start.
