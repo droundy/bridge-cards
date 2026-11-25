@@ -1943,14 +1943,26 @@ mod tests {
         for shape in shapes {
             let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), shape);
             let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), shape);
-            let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
+            let split = var("PLAY_SPLIT", "0") == "1";
             for &penalty in &penalties {
                 let started = std::time::Instant::now();
-                let network =
-                    fitting::fit(&choices.iter().collect::<Vec<_>>(), Model::new(shape, 1).network, penalty, steps);
+                // One fit of every situation, or with PLAY_SPLIT=1 one for
+                // each of the groups, each tested on its own group.
+                let fits: Vec<Network> = if split {
+                    (0..GROUPS.len())
+                        .map(|g| {
+                            let choices: Vec<_> = train.iter().filter(|s| s.group == g).map(|s| &s.choice).collect();
+                            fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)
+                        })
+                        .collect()
+                } else {
+                    vec![fitting::fit(&train.iter().map(|s| &s.choice).collect::<Vec<_>>(), Model::new(shape, 1).network, penalty, steps)]
+                };
+                let network = &fits[0];
                 let losses: Vec<f64> = test
                     .iter()
                     .map(|s| {
+                        let network = &fits[if split { s.group } else { 0 }];
                         let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
                         best - s.choice[network.choice(&s.choice)].1
                     })
@@ -1968,10 +1980,24 @@ mod tests {
                         let (mean, spread) = error(&more);
                         println!(", {mean:+.4} ({spread:.4}) more than the first");
                     }
-                    None => {
-                        println!();
-                        first = Some(losses);
+                    None => println!(),
+                }
+                for (g, name) in GROUPS.iter().enumerate() {
+                    let at: Vec<usize> = (0..test.len()).filter(|&i| test[i].group == g).collect();
+                    let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
+                    let (mean, spread) = error(&these);
+                    print!("    {name:<17} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                    match &first {
+                        Some(first) => {
+                            let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
+                            let (mean, spread) = error(&more);
+                            println!(", {mean:+.4} ({spread:.4}) more than the first");
+                        }
+                        None => println!(),
                     }
+                }
+                if first.is_none() {
+                    first = Some(losses);
                 }
                 if let Ok(directory) = std::env::var("PLAY_WEIGHTS_DIR") {
                     std::fs::create_dir_all(&directory).unwrap();
@@ -2448,8 +2474,14 @@ mod tests {
     /// player, the tricks of their side, over the ensemble.
     struct Situation {
         stage: usize,
+        /// Which of [`GROUPS`] it is in.
+        group: usize,
         choice: Vec<(Vec<usize>, f64)>,
     }
+
+    /// The kinds of situation that [`screen_play_shapes`] reports apart: who
+    /// plays, the declarer's side or the defence, and in what contract.
+    const GROUPS: [&str; 4] = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
 
     /// The situations in the files `paths`, comma-separated, each card with
     /// its entries in the tables of `shape`.
@@ -2486,6 +2518,7 @@ mod tests {
                     .collect();
                 situations.push(Situation {
                     stage: json["stage"].as_u64().unwrap() as usize,
+                    group: 2 * usize::from(view.role >= 2) + usize::from(view.trump.is_none()),
                     choice,
                 });
             }
