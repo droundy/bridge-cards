@@ -7646,6 +7646,179 @@ mod tests {
         println!("by how much longer (1, 2, 3, 4): RunPlan {:?}, Run {:?}", &by_gap[0][1..], &by_gap[1][1..]);
     }
 
+    /// Whether the model of `PLAY_MODEL` takes the runs that [`Table::RunPlan`]
+    /// predicts, on `PLAY_POSITIONS` (2000) of the positions of the file
+    /// `PLAY_TEST`, spread evenly through it.  A line a position goes to the
+    /// file `PLAY_OUT`: the position's number, tricks done, role, whether
+    /// notrump, the cards of the trick so far, then P, the longest run that
+    /// RunPlan predicts (the greatest median over the legal cards), T, the
+    /// longest run in the true deal (the greatest over the legal cards of what
+    /// [`RunSearch`] finds on the true hands), M, the run the model makes
+    /// playing every seat greedily, the sum of the runs of `PLAY_PLAYOUTS` (8)
+    /// playouts at temperature `PLAY_TEMPERATURE` (0.03), the model's card,
+    /// and the cards that RunPlan's best run comes from.
+    #[test]
+    #[ignore]
+    fn cashing_the_runs() {
+        use std::io::Write;
+        let _ = LOCATIONS.set(read_locations(&std::env::var("PLAY_SELF_LOCATIONS").expect("PLAY_SELF_LOCATIONS")));
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let lines: Vec<String> = std::fs::read_to_string(std::env::var("PLAY_TEST").expect("PLAY_TEST")).unwrap().lines().map(String::from).collect();
+        let wanted = number("PLAY_POSITIONS", 2000).min(lines.len());
+        let playouts = number("PLAY_PLAYOUTS", 8);
+        let temperature = std::env::var("PLAY_TEMPERATURE").ok().map_or(0.03, |t| t.parse().unwrap());
+        let mut out = std::fs::File::create(std::env::var("PLAY_OUT").expect("PLAY_OUT")).unwrap();
+        let median = |odds: &[f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter()
+                .position(|&p| {
+                    sum += p;
+                    sum >= 0.5
+                })
+                .unwrap()
+        };
+        // The run that the player's side makes from here, with `choose` for the card.
+        let run_of = |game: &GameState<()>, convention: &Convention, choose: &mut dyn FnMut(&GameState<()>, &View) -> Card| {
+            let side = game.hand_playing().unwrap() as usize % 2;
+            let mut game = crate::ai::playout::copy_of(game);
+            let mut run = 0;
+            while !game.hand_done && run < RUN_MOST {
+                let Some(view) = View::new(&game, convention) else { break };
+                let card = choose(&game, &view);
+                let before = [game.ns_tricks, game.ew_tricks];
+                game.play(card);
+                let after = [game.ns_tricks, game.ew_tricks];
+                if after != before {
+                    if after[side] > before[side] {
+                        run += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            run
+        };
+        let mut rng = StdRng::seed_from_u64(5);
+        let started = std::time::Instant::now();
+        for n in 0..wanted {
+            let line = &lines[n * lines.len() / wanted];
+            let json: serde_json::Value = serde_json::from_str(line).unwrap();
+            let game: GameState<()> = serde_json::from_str(json["situation"].as_str().unwrap()).unwrap();
+            let convention = game.system.convention();
+            let view = View::new(&game, &convention).unwrap();
+            let seen = view.beliefs.as_ref().expect("beliefs");
+            let place = view.place;
+            let leader = (4 - place) % 4;
+            let mut search = RunSearch { trump: view.trump, nodes: 0 };
+            let (mut p, mut t) = (0, 0);
+            let mut medians = Vec::new();
+            for card in view.legal() {
+                let m = median(&view.run_plan(card));
+                medians.push((card, m));
+                p = p.max(m);
+                let holdings = [view.mine - Cards::singleton(card), view.other, seen.truth & view.hidden, view.hidden - (seen.truth & view.hidden)];
+                let mut hands: [Cards; 4] = std::array::from_fn(|k| holdings[view.order[k]]);
+                let mut played: Vec<(usize, Card)> = view.trick.iter().flatten().enumerate().map(|(i, &c)| ((i + 4 - place) % 4, c)).collect();
+                played.push((0, card));
+                search.nodes = 0;
+                t = t.max(search.trick(&mut hands, leader, &mut played, RUN_MOST));
+            }
+            let best: Vec<String> = medians.iter().filter(|c| c.1 == p).map(|c| c.0.to_string()).collect();
+            let mut greedy_card = None;
+            let greedy = run_of(&game, &convention, &mut |g, v| {
+                let card = v.best(&model);
+                greedy_card.get_or_insert(card);
+                let _ = g;
+                card
+            });
+            let mut sum = 0;
+            for _ in 0..playouts {
+                sum += run_of(&game, &convention, &mut |g, v| card_at_quality(g, v, &model, temperature, rng.gen_range(0.0..1.0)));
+            }
+            writeln!(
+                out,
+                "{n}\t{}\t{}\t{}\t{}\t{p}\t{t}\t{greedy}\t{sum}\t{}\t{}",
+                game.tricks.len(),
+                view.role,
+                u8::from(view.trump.is_none()),
+                view.trick.iter().flatten().map(|c| c.to_string()).collect::<Vec<_>>().join(" "),
+                greedy_card.unwrap(),
+                best.join(" ")
+            )
+            .unwrap();
+            if n % 100 == 99 {
+                println!("{} positions in {:?}", n + 1, started.elapsed());
+            }
+        }
+    }
+
+    /// Shows the positions `PLAY_AT` (numbers as [`cashing_the_runs`] writes them
+    /// with the same `PLAY_POSITIONS`): the four hands as they truly are, then
+    /// the playout of the model `PLAY_MODEL`, greedy in every seat, from the
+    /// position, after its own card and after each card of RunPlan's best
+    /// run, trick by trick, to the end of the run.
+    #[test]
+    #[ignore]
+    fn show_the_runs() {
+        let _ = LOCATIONS.set(read_locations(&std::env::var("PLAY_SELF_LOCATIONS").expect("PLAY_SELF_LOCATIONS")));
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let lines: Vec<String> = std::fs::read_to_string(std::env::var("PLAY_TEST").expect("PLAY_TEST")).unwrap().lines().map(String::from).collect();
+        let wanted = number("PLAY_POSITIONS", 2000).min(lines.len());
+        let median = |odds: &[f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter().position(|&p| { sum += p; sum >= 0.5 }).unwrap()
+        };
+        let at: Vec<usize> = std::env::var("PLAY_AT").unwrap().split(',').map(|n| n.trim().parse().unwrap()).collect();
+        for n in at {
+            let line = &lines[n * lines.len() / wanted];
+            let json: serde_json::Value = serde_json::from_str(line).unwrap();
+            let game: GameState<()> = serde_json::from_str(json["situation"].as_str().unwrap()).unwrap();
+            let convention = game.system.convention();
+            let view = View::new(&game, &convention).unwrap();
+            let seat = game.hand_playing().unwrap();
+            let dummy = game.dummy().unwrap();
+            println!(
+                "\n=== position {n}: {} {:?}, tricks done {}, the player is {} ({seat:?}), dummy {dummy:?}, trick so far {:?}",
+                game.highest_contract_bid().map_or("?".to_string(), |b| format!("{b:?}")),
+                view.trump,
+                game.tricks.len(),
+                ["declarer", "dummy", "defender (LHO of declarer)", "defender (RHO of declarer)"][view.role],
+                view.trick.iter().flatten().map(|c| c.to_string()).collect::<Vec<_>>(),
+            );
+            for (k, name) in ["me", "LHO", "partner", "RHO"].iter().enumerate() {
+                let s = seat + k;
+                let hidden = k != 0 && s != dummy && !(seat == dummy && k == 2);
+                println!("    {name:<8}{} {}", if hidden { "(hidden)" } else { "        " }, game.hands[s]);
+            }
+            let plan: Vec<(Card, usize)> = view.legal().map(|c| (c, median(&view.run_plan(c)))).collect();
+            let p = plan.iter().map(|c| c.1).max().unwrap();
+            let mut starts: Vec<(String, Card)> = vec![("model".to_string(), view.best(&model))];
+            starts.extend(plan.iter().filter(|c| c.1 == p).take(3).map(|c| ("RunPlan".to_string(), c.0)));
+            println!("    RunPlan's best run {p}: plans {}", plan.iter().filter(|c| c.1 == p).map(|c| c.0.to_string()).collect::<Vec<_>>().join(" "));
+            let side = seat as usize % 2;
+            for (who, first) in starts {
+                let mut g = crate::ai::playout::copy_of(&game);
+                let mut run = 0;
+                let mut text = String::new();
+                let mut card = Some(first);
+                while !g.hand_done && run < RUN_MOST {
+                    let player = g.hand_playing().unwrap();
+                    let c = card.take().unwrap_or_else(|| model_card(&model, &g, &convention));
+                    let before = [g.ns_tricks, g.ew_tricks];
+                    g.play(c);
+                    text += &format!("{player:?}:{c} ");
+                    let after = [g.ns_tricks, g.ew_tricks];
+                    if after != before {
+                        let ours = after[side] > before[side];
+                        text += if ours { "| ours; " } else { "| LOST; " };
+                        if ours { run += 1 } else { break }
+                    }
+                }
+                println!("    {who} plays {first}: run {run}: {text}");
+            }
+        }
+    }
+
     #[test]
     fn a_suit_played_out_alone_takes_its_tricks() {
         let bits = |ranks: &[u8]| ranks.iter().fold(0u16, |b, &r| b | 1 << r);
