@@ -1684,8 +1684,71 @@ mod tests {
         assert!(new_outputs.iter().all(|&g| g > 0.0), "{new_outputs:?}");
     }
 
+    /// The tables that a shape written out by [`shape_spec`] can name: every
+    /// one but those of [`V1`].
+    const NAMED_TABLES: [Table; 16] = [
+        Table::Trick,
+        Table::Above,
+        Table::Below,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::FirstPoints,
+        Table::SecondPoints,
+        Table::History,
+        Table::Trumps,
+        Table::Later,
+        Table::Later2,
+        Table::Bids,
+    ];
+
+    /// The shape that `spec` names: a shape's name, or tables joined by `+`
+    /// that may start with a shape's name for its tables, and then, after a
+    /// `/`, the sizes of the layers joined by `,` (`/0` for none; one layer
+    /// of 16 if there is no `/`).  So `Trick` is the table alone with a
+    /// layer of 16, `Later2/0` that table's weights alone, and
+    /// `v2-trumps-history+Later2/16` the best shape and Later2 with one
+    /// layer.  A shape that is not one of [`SHAPES`] lives until the program
+    /// ends, and is only for fitting, since no model file can name it.
+    fn shape_spec(spec: &str) -> &'static Shape {
+        if let Some(shape) = Shape::named(spec) {
+            return shape;
+        }
+        let (tables, layers) = spec.split_once('/').unwrap_or((spec, "16"));
+        let layers: Vec<usize> = layers.split(',').map(|n| n.trim().parse().unwrap()).filter(|&n| n > 0).collect();
+        let mut all: Vec<Table> = Vec::new();
+        for (i, name) in tables.split('+').map(str::trim).enumerate() {
+            if let Some(table) = NAMED_TABLES.into_iter().find(|t| format!("{t:?}") == name) {
+                all.push(table);
+            } else if let Some(shape) = Shape::named(name).filter(|_| i == 0) {
+                all.extend(shape.tables);
+            } else {
+                panic!("{spec}: there is no table or first shape {name}");
+            }
+        }
+        Box::leak(Box::new(Shape {
+            name: Box::leak(spec.to_string().into_boxed_str()),
+            tables: Box::leak(all.into_boxed_slice()),
+            layers: Box::leak(layers.into_boxed_slice()),
+        }))
+    }
+
+    #[test]
+    fn a_shape_spec_names_its_tables_and_layers() {
+        let shape = shape_spec("v2-trumps+History/16,8");
+        assert_eq!(shape.tables, V2_TRUMPS_HISTORY.tables);
+        assert_eq!(shape.layers, &[16, 8]);
+        let alone = shape_spec("Later2/0");
+        assert_eq!((alone.tables, alone.layers), (&[Table::Later2][..], &[][..]));
+        assert_eq!(shape_spec("Trick+Rank").layers, &[16]);
+        assert_eq!(shape_spec("v2"), &V2);
+    }
+
     /// Screens shapes by a supervised fit to the data in `PLAY_DATA`: for each
-    /// of the shapes `PLAY_SHAPES` (comma-separated) and each of the penalties
+    /// of the shapes `PLAY_SHAPES` (comma-separated, see [`shape_spec`]) and each of the penalties
     /// `PLAY_PENALTIES` (0.01), fits a model by `PLAY_STEPS` (300) steps, and
     /// prints the tricks a play its choices lose to the ensemble's best card
     /// on the data in `PLAY_TEST`, with the standard error, and how many more
@@ -1695,10 +1758,7 @@ mod tests {
     #[test]
     #[ignore]
     fn screen_play_shapes() {
-        let shapes: Vec<&'static Shape> = var("PLAY_SHAPES", "v2")
-            .split(',')
-            .map(|name| Shape::named(name.trim()).unwrap_or_else(|| panic!("PLAY_SHAPES: there is no shape {name}")))
-            .collect();
+        let shapes: Vec<&'static Shape> = var("PLAY_SHAPES", "v2").split(',').map(|name| shape_spec(name.trim())).collect();
         let penalties: Vec<f64> = var("PLAY_PENALTIES", "0.01").split(',').map(|p| p.trim().parse().unwrap()).collect();
         let steps = number("PLAY_STEPS", 300);
         let mut first: Option<Vec<f64>> = None;
@@ -2083,6 +2143,97 @@ mod tests {
                             "values": legal.map(pair).zip(values).collect::<Vec<_>>(),
                         });
                         lines.lock().unwrap().push((i, line.to_string()));
+                    }
+                });
+            }
+        });
+        let mut lines = lines.into_inner().unwrap();
+        lines.sort();
+        let text: String = lines.into_iter().map(|(_, line)| line + "\n").collect();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// Writes a corpus of situations of the play valued by playouts, in the
+    /// form that [`collect_play_data`] writes and [`read_situations`] reads,
+    /// to the file `PLAY_CORPUS`: `PLAY_CORPUS_DEALS` (1000) fresh deals that
+    /// the robot bid, from the seed `PLAY_SEED` (1), are each played by the
+    /// model `PLAY_MODEL` (see [`read_model`]) in every seat at the
+    /// temperature `PLAY_CORPUS_T` (0.03), and of its choices with more than
+    /// one run of touching cards a share `PLAY_CORPUS_SHARE` (0.15) is kept.
+    /// Each card of a kept choice is valued by `PLAY_CORPUS_PLAYOUTS` (32)
+    /// playouts on the true deal by the same model at the same temperature
+    /// (see [`playout_at`]), the playouts after the different cards meeting
+    /// the same luck.  A value is the tricks that the side that led the
+    /// trick takes in the hand.  It runs on `PLAY_THREADS` threads (2), and
+    /// a deal's situations depend only on the seed and its number.
+    #[test]
+    #[ignore]
+    fn collect_playout_corpus() {
+        let path = std::env::var("PLAY_CORPUS").expect("PLAY_CORPUS");
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let count = number("PLAY_CORPUS_DEALS", 1000);
+        let seed = number("PLAY_SEED", 1) as u64;
+        let real = |name: &str, default: f64| var(name, &default.to_string()).parse::<f64>().unwrap();
+        let (temperature, share) = (real("PLAY_CORPUS_T", 0.03), real("PLAY_CORPUS_SHARE", 0.15));
+        let playouts = number("PLAY_CORPUS_PLAYOUTS", 32);
+        let mut dealer = (Generator::new(), StdRng::seed_from_u64(seed), 0);
+        let deals: Vec<String> = (0..count).map(|_| fresh_deal(&mut dealer)).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let lines = std::sync::Mutex::new(Vec::new());
+        let learners = std::slice::from_ref(&model);
+        let players = [Player::Learning(0); 4];
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            for _ in 0..number("PLAY_THREADS", 2) {
+                scope.spawn(|| {
+                    let mut conventions = std::collections::HashMap::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(json) = deals.get(i) else {
+                            break;
+                        };
+                        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+                        let convention = conventions
+                            .entry(format!("{:?}", game.system))
+                            .or_insert_with(|| game.system.convention());
+                        let mut rng = StdRng::seed_from_u64(seed * 1_000_003 + i as u64);
+                        let mut kept = Vec::new();
+                        while !game.hand_done {
+                            let Some(view) = View::new(&game, convention) else {
+                                game.play(model_card(&model, &game, convention));
+                                continue;
+                            };
+                            let legal: Vec<Card> = view.legal().collect();
+                            if runs_of(&game, &legal).1 > 1 && rng.gen_bool(share) {
+                                let situation = serde_json::to_string(&game).unwrap();
+                                let leaders = plays_for_the_leaders(&game);
+                                let player = game.lead.unwrap() + current_trick(&game).len();
+                                let side = |tricks: [usize; 2]| tricks[usize::from(leaders != (player as usize).is_multiple_of(2))];
+                                let mut values = vec![Vec::with_capacity(playouts); legal.len()];
+                                for _ in 0..playouts {
+                                    let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
+                                    let luck = rng.r#gen();
+                                    for (value, &card) in values.iter_mut().zip(&legal) {
+                                        let tricks =
+                                            playout_at(&game, card, convention, learners, players, temperature, &qualities, luck);
+                                        value.push(side(tricks) as f64);
+                                    }
+                                }
+                                kept.push(serde_json::json!({
+                                    "stage": 13 - game.tricks.len(),
+                                    "situation": situation,
+                                    "leaders": leaders,
+                                    "values": legal.iter().map(|&c| pair(c)).zip(values).collect::<Vec<_>>(),
+                                }));
+                            }
+                            let card = card_at_quality(&game, &view, &model, temperature, rng.r#gen());
+                            game.play(card);
+                        }
+                        let mut lines = lines.lock().unwrap();
+                        lines.extend(kept.into_iter().map(|line| (i, line.to_string())));
+                        if i % 100 == 99 {
+                            println!("{} deals, {} situations, {:.0} s", i + 1, lines.len(), started.elapsed().as_secs_f64());
+                        }
                     }
                 });
             }
