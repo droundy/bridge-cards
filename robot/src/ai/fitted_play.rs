@@ -87,6 +87,13 @@ pub(crate) enum Table {
     /// ruffing, which is when it can be void in the suit led and may hold a
     /// trump that beats it.  Following wins over ruffing when both could do it.
     Later2,
+    /// [`Table::Later2`] by the player's beliefs: the same entries, each with
+    /// its chance, where a hand's state is what it does hold, not what it
+    /// could: it cannot beat the card and the trick so far, it holds a card
+    /// of the suit led that beats them, or it holds none of the suit led and
+    /// a trump that beats them.  Those are exclusive, since a hand that holds
+    /// a card of the suit led must follow.
+    Later3,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     /// The place, and whether each of the three cards just above is the
@@ -144,7 +151,7 @@ impl Table {
             Table::History => 4 * PLAYS * 5 * 4,
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
-            Table::Later2 => 4 * PLAYS * 4 * 4,
+            Table::Later2 | Table::Later3 => 4 * PLAYS * 4 * 4,
             Table::Bids => 4 * PLAYS * 16,
             Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
@@ -278,7 +285,7 @@ impl Table {
                 ["no", "cannot beat", "can beat"][index / 3 % 3],
                 ["no", "yes", "known void"][index % 3]
             ),
-            Table::Later2 => {
+            Table::Later2 | Table::Later3 => {
                 const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
                 format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
             }
@@ -458,6 +465,11 @@ pub(crate) const V2_TRUMPS_BELIEFS: Shape = v2_and(
     ],
 );
 
+/// [`V2_TRUMPS_HISTORY_LATER2`] with [`Table::Later3`] in place of
+/// [`Table::Later2`], to see what the chances add to what could be.
+pub(crate) const V2_TRUMPS_HISTORY_LATER3: Shape =
+    v2_and("v2-trumps-history-later3", v2_tables_and!(Table::Trumps, Table::History, Table::Later3));
+
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
     &V1,
@@ -477,6 +489,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_BIG,
     &V2_TRUMPS_HISTORY_LATER2,
     &V2_TRUMPS_BELIEFS,
+    &V2_TRUMPS_HISTORY_LATER3,
 ];
 
 impl Shape {
@@ -500,7 +513,7 @@ impl Shape {
     /// lie, which only self-play keeps.
     #[cfg(test)]
     pub(crate) fn reads_beliefs(&self) -> bool {
-        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit))
+        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3))
     }
 
     /// How many weights a model of this shape has.
@@ -592,6 +605,7 @@ impl Model {
         let split = |table: Table| match table {
             Table::Above => Table::AboveSplit,
             Table::Below => Table::BelowSplit,
+            Table::Later2 => Table::Later3,
             table => table,
         };
         let mut moved = Vec::with_capacity(self.shape.entries());
@@ -602,6 +616,11 @@ impl Model {
                 continue;
             }
             let at = shape.tables.iter().position(|&t| t == split(table) && t != table)?;
+            if table == Table::Later2 {
+                // The same entries, now with their chances.
+                moved.extend((0..table.size()).map(|index| starts[at] + index));
+                continue;
+            }
             moved.extend((0..table.size()).map(|index| {
                 let (place, h) = (index / 64, index % 64);
                 starts[at] + place * 125 + h % 4 + 5 * (h / 4 % 4) + 25 * (h / 16)
@@ -806,6 +825,10 @@ pub(crate) struct Seen {
     truth: Cards,
     /// How much the beliefs are the truth (see [`ORACLE`]).
     oracle: f64,
+    /// What works out the chances of how the hidden hands could beat the
+    /// trick, for [`Table::Later3`], once it first reads them; it keeps them,
+    /// since the cards of a view that do not beat the trick share them.
+    beating: std::sync::OnceLock<crate::ai::locations::Beater>,
 }
 
 impl View {
@@ -932,7 +955,7 @@ impl View {
             let (truth, oracle) = (hands[player_first], oracle());
             if oracle >= 1.0 {
                 let joint = std::sync::OnceLock::new();
-                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle }));
+                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle, beating: std::sync::OnceLock::new() }));
             }
             let (prior, evidence) = LOCATIONS.get()?;
             let viewer = if seat == dummy { declarer } else { seat };
@@ -943,7 +966,7 @@ impl View {
             let first = if swapped { b.in_second } else { b.in_first };
             let free = b.unseen - b.in_first - b.in_second;
             let joint = std::sync::OnceLock::new();
-            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle }))
+            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle, beating: std::sync::OnceLock::new() }))
         })();
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
@@ -1064,6 +1087,83 @@ impl View {
         values[0] * 4 + values[1]
     }
 
+    /// What [`Table::Later3`] says of playing `card`: as
+    /// [`View::later2`] gives it, 4 times the opponents' value and then the
+    /// partner's, but for each way that the hidden hands could hold the
+    /// cards that beat the card and the trick so far, with its chance by the
+    /// player's beliefs, mixed with the truth as [`ORACLE`] says.
+    #[cfg(test)]
+    fn later3(&self, card: Card) -> Vec<(usize, f64)> {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let led = self.lead.unwrap_or(card.suit());
+        let top = match self.winning {
+            Some(winning) if !beats(self.trump, card, winning) => winning,
+            _ => card,
+        };
+        let mut beating = Cards::higher_than(top);
+        if let Some(trump) = self.trump.filter(|&trump| trump != top.suit()) {
+            beating += Cards::ALL.in_suit(trump);
+        }
+        let beating = beating & self.hidden;
+        let led_cards = self.hidden.in_suit(led);
+        let following = beating.in_suit(led);
+        let ruffing = match self.trump {
+            Some(trump) if trump != led => beating.in_suit(trump),
+            _ => Cards::EMPTY,
+        };
+        // The chances of the states of the player's first and second hidden
+        // hands (see `Beliefs::beating`).
+        let mut chances = [[0.0; 3]; 3];
+        if seen.oracle < 1.0 {
+            let beliefs = seen.beliefs.as_ref().expect("the beliefs");
+            let after = if seen.swapped { [self.hidden_after[1], self.hidden_after[0]] } else { self.hidden_after };
+            let believed = seen.beating.get_or_init(|| beliefs.beater()).beating(led_cards, following, ruffing, after);
+            for (a, row) in believed.iter().enumerate() {
+                for (b, &chance) in row.iter().enumerate() {
+                    let (first, second) = if seen.swapped { (b, a) } else { (a, b) };
+                    chances[first][second] += (1.0 - seen.oracle) * chance;
+                }
+            }
+        }
+        if seen.oracle > 0.0 {
+            let state = |hand: Cards, after: bool| {
+                if !after {
+                    0
+                } else if !(hand & following).is_empty() {
+                    1
+                } else if (hand & led_cards).is_empty() && !(hand & ruffing).is_empty() {
+                    2
+                } else {
+                    0
+                }
+            };
+            let first = seen.truth & self.hidden;
+            chances[state(first, self.hidden_after[0])][state(self.hidden - first, self.hidden_after[1])] += seen.oracle;
+        }
+        let mut entries = [0.0; 16];
+        for (a, row) in chances.iter().enumerate() {
+            for (b, &chance) in row.iter().enumerate() {
+                // As in `later2`: the hand that could do the most, where
+                // beating by following goes before ruffing, then not beating,
+                // then not playing.
+                let mut values = [0, 0];
+                for (k, state) in [a, b].into_iter().enumerate() {
+                    if !self.hidden_after[k] {
+                        continue;
+                    }
+                    let value = [1, 2, 3][state];
+                    let side = &mut values[self.hidden_partner[k] as usize];
+                    let rank = |value: usize| [0, 1, 3, 2][value];
+                    if rank(value) > rank(*side) {
+                        *side = value;
+                    }
+                }
+                entries[values[0] * 4 + values[1]] += chance;
+            }
+        }
+        entries.into_iter().enumerate().filter(|&(_, chance)| chance > 0.0).collect()
+    }
+
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
     pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Entries {
@@ -1166,7 +1266,9 @@ impl View {
             Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
-            Table::AboveSplit | Table::BelowSplit => panic!("{table:?} reads the player's beliefs, which only self-play keeps"),
+            Table::AboveSplit | Table::BelowSplit | Table::Later3 => {
+                panic!("{table:?} reads the player's beliefs, which only self-play keeps")
+            }
         };
         // The entries of where the three cards just above or below lie, with
         // the hidden ones told apart, each with its chance.
@@ -1216,6 +1318,11 @@ impl View {
                 #[cfg(test)]
                 Table::AboveSplit | Table::BelowSplit => {
                     weighted.extend(split(table == Table::AboveSplit).into_iter().map(|(e, p)| (offset + e, p)));
+                }
+                #[cfg(test)]
+                Table::Later3 => {
+                    let start = offset + (role * PLAYS + play) * 16;
+                    weighted.extend(self.later3(card).into_iter().map(|(e, p)| (start + e, p)));
                 }
                 _ => {
                     let index = index(table);
@@ -5518,6 +5625,10 @@ mod tests {
         time("a view with beliefs", &|game, convention| View::new(game, convention).map_or(0.0, |v| v.mine.len() as f64));
         time("scores of the old shape with beliefs", &|game, convention| scores(&old, game, convention));
         time("scores of the new shape with beliefs", &|game, convention| scores(&new, game, convention));
+        let later2 = Model::new(&V2_TRUMPS_HISTORY_LATER2, 3);
+        let later3 = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        time("scores with Later2", &|game, convention| scores(&later2, game, convention));
+        time("scores with Later3", &|game, convention| scores(&later3, game, convention));
     }
 
     #[test]
@@ -5551,19 +5662,27 @@ mod tests {
     #[test]
     fn beliefs_mixed_with_the_truth_are_mixed_entry_by_entry() {
         let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
-        let model = Model::new(&V2_TRUMPS, 3).grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let models = [
+            Model::new(&V2_TRUMPS, 3).grown_to(&V2_TRUMPS_BELIEFS).unwrap(),
+            Model::new(&V2_TRUMPS_HISTORY_LATER2, 3).grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap(),
+        ];
         let mut rng = StdRng::seed_from_u64(14);
         let mut compared = 0;
-        // The chances of the weighted entries of the views of `game` with
-        // the beliefs `lambda` the truth.
-        let chances = |game: &GameState<()>, convention: &Convention, lambda: f64| {
+        // The chances of the weighted entries of `model` in the views of
+        // `game` with the beliefs `lambda` the truth, each table's summing
+        // to 1.
+        let chances = |model: &Model, game: &GameState<()>, convention: &Convention, lambda: f64| {
             set_oracle(lambda);
             let view = View::new(game, convention);
             set_oracle(0.0);
             let view = view?;
+            let tables = model.shape.tables.iter().filter(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3)).count();
             let mut chances = std::collections::BTreeMap::<(Card, usize), f64>::new();
             for card in view.legal() {
-                for (entry, chance) in model.entries(&view, card).weighted {
+                let weighted = model.entries(&view, card).weighted;
+                let total: f64 = weighted.iter().map(|w| w.1).sum();
+                assert!((total - tables as f64).abs() < 1e-9, "the chances of {tables} tables sum to {total}");
+                for (entry, chance) in weighted {
                     *chances.entry((card, entry)).or_default() += chance;
                 }
             }
@@ -5573,9 +5692,14 @@ mod tests {
             let convention = game.system.convention();
             let mut game = crate::ai::playout::copy_of(&game);
             while !game.hand_done {
-                if let (Some(believed), Some(truth), Some(half)) =
-                    (chances(&game, &convention, 0.0), chances(&game, &convention, 1.0), chances(&game, &convention, 0.5))
-                {
+                for model in &models {
+                    let (Some(believed), Some(truth), Some(half)) = (
+                        chances(model, &game, &convention, 0.0),
+                        chances(model, &game, &convention, 1.0),
+                        chances(model, &game, &convention, 0.5),
+                    ) else {
+                        continue;
+                    };
                     for (key, &chance) in &truth {
                         assert_eq!(chance, 1.0, "the truth is one way the cards lie");
                         assert!(believed.get(key).is_some_and(|&c| c > 0.0), "the beliefs rule out the truth");
@@ -5591,6 +5715,16 @@ mod tests {
             }
         }
         assert!(compared > 2000, "only {compared} compared");
+    }
+
+    #[test]
+    fn a_model_grown_from_later2_to_later3_keeps_its_weights() {
+        let old = Model::new(&V2_TRUMPS_HISTORY_LATER2, 5);
+        let mut old = old;
+        let mut rng = StdRng::seed_from_u64(15);
+        old.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-1.0..1.0));
+        let new = old.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        assert_eq!(old.network.params, new.network.params, "the same tables and entries, so the same weights");
     }
 
     /// The prior and the evidence of the players' beliefs in the file at

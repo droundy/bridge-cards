@@ -426,7 +426,11 @@ impl Beliefs {
 
     /// The log of the normalization: the sum of the weights of every split.
     pub(crate) fn log_normalization(&self) -> f64 {
-        let suits = self.suits().map(|s| s.1);
+        self.log_normalization_of(&self.suits().map(|s| s.1))
+    }
+
+    /// The log of the normalization from the weights of each suit.
+    fn log_normalization_of(&self, suits: &[Poly; 4]) -> f64 {
         let others = suits[1..].iter().fold(Poly::one(), |product, poly| product.times(poly));
         suits[0].log_dot(&self.context(&others, &self.exp_psi(), &suits[0]))
     }
@@ -496,6 +500,170 @@ impl Beliefs {
             log_z,
         }
     }
+
+    /// The log of the sum of the weights of the splits that give the first
+    /// hand every unseen card of `to_first` and the second every one of
+    /// `to_second`, or −∞ if there are none.
+    ///
+    /// The weights of each suit are `suits`, and `rest` keeps, for each set
+    /// of suits that no forced card is in, the weights of those suits
+    /// together.
+    fn log_normalization_forcing(&self, to_first: Cards, to_second: Cards, suits: &[Poly; 4], rest: &mut Vec<(usize, Poly)>) -> f64 {
+        let (to_first, to_second) = (to_first & self.unseen, to_second & self.unseen);
+        if !(to_first & to_second).is_empty() || !(to_first & self.in_second).is_empty() || !(to_second & self.in_first).is_empty() {
+            return f64::NEG_INFINITY;
+        }
+        let mut forced = self.clone();
+        forced.in_first += to_first;
+        forced.in_second += to_second;
+        if forced.in_first.len() > forced.first_size || forced.in_second.len() > forced.unseen.len() - forced.first_size {
+            return f64::NEG_INFINITY;
+        }
+        // Cards known to be in the first hand carry no field, so those that
+        // were free bring theirs.
+        let fields: f64 = (to_first - self.in_first).map(|card| self.h(card)).sum();
+        // Only the suits of the cards that were forced weigh otherwise.
+        let touched = Suit::ALL.iter().filter(|&&suit| !(to_first + to_second).in_suit(suit).is_empty());
+        let mask = touched.clone().fold(0, |mask, &suit| mask | 1 << suit as usize);
+        let part = touched.fold(Poly::one(), |part, &suit| {
+            let forward = forced.forward(suit);
+            part.times(&forced.suit(suit, &forward[forward.len() - 1]))
+        });
+        let others = match rest.iter().find(|(m, _)| *m == mask) {
+            Some((_, others)) => others.clone(),
+            None => {
+                let others = (0..4).filter(|s| mask & 1 << s == 0).fold(Poly::one(), |product, s| product.times(&suits[s]));
+                rest.push((mask, others.clone()));
+                others
+            }
+        };
+        part.log_dot(&forced.context(&others, &forced.exp_psi(), &part)) + fields
+    }
+
+    /// The chances of how each hidden hand could beat a trick: for the first
+    /// hand's state and then the second's, each 0 (it cannot), 1 (it holds a
+    /// card of `led`, the unseen cards of the suit led, that is among
+    /// `following`, the cards of that suit that beat the trick) or 2 (it holds
+    /// no card of the suit led, and one of `ruffing`, the trumps that beat
+    /// the trick, when trumps are not led).  A hand that is not `after` the
+    /// player in the trick is given state 0 whatever it holds.  They are
+    /// exact: each state is made of events of the form "the hand holds none
+    /// of these cards", which is the other hand holding them all, and the
+    /// chance of every set of those is a sum over the splits that give them
+    /// to the other hand, from which inclusion–exclusion gives the chance of
+    /// each way the events can fall.
+    pub(crate) fn beating(&self, led: Cards, following: Cards, ruffing: Cards, after: [bool; 2]) -> [[f64; 3]; 3] {
+        self.beater().beating(led, following, ruffing, after)
+    }
+
+    /// What [`Beater::beating`] works from, for these beliefs.
+    pub(crate) fn beater(&self) -> Beater {
+        let suits = self.suits().map(|s| s.1);
+        let log_z = self.log_normalization_of(&suits);
+        Beater { beliefs: self.clone(), suits, log_z, rest: Default::default(), kept: Default::default() }
+    }
+}
+
+/// The chances of how the hidden hands could beat a trick (see
+/// [`Beliefs::beating`]), worked out from weights of the suits and the
+/// normalization worked out once, and keeping what it works out.
+pub(crate) struct Beater {
+    beliefs: Beliefs,
+    suits: [Poly; 4],
+    log_z: f64,
+    /// For each set of suits, the weights of the others together.
+    rest: std::sync::Mutex<Vec<(usize, Poly)>>,
+    /// The chances worked out so far, by what they were asked for.
+    kept: std::sync::Mutex<Vec<Kept>>,
+}
+
+/// The chances that a [`Beater`] has worked out, by the cards led,
+/// following and ruffing and the hands after.
+type Kept = ((Cards, Cards, Cards, [bool; 2]), [[f64; 3]; 3]);
+
+impl Beater {
+    /// [`Beliefs::beating`].
+    pub(crate) fn beating(&self, led: Cards, following: Cards, ruffing: Cards, after: [bool; 2]) -> [[f64; 3]; 3] {
+        let key = (led, following, ruffing, after);
+        if let Some((_, chances)) = self.kept.lock().unwrap().iter().find(|(k, _)| *k == key) {
+            return *chances;
+        }
+        // The events: that hand `hand` holds none of `cards`.
+        let mut events: Vec<(Cards, usize)> = Vec::with_capacity(6);
+        for (hand, &later) in after.iter().enumerate() {
+            if later {
+                events.extend([(following, hand), (led, hand), (ruffing, hand)]);
+            }
+        }
+        let chances = self.beating_of(&events);
+        self.kept.lock().unwrap().push((key, chances));
+        chances
+    }
+
+    /// The chances of the states, from the `events` of the hands after the
+    /// player.
+    fn beating_of(&self, events: &[(Cards, usize)]) -> [[f64; 3]; 3] {
+        let beliefs = &self.beliefs;
+        let (suits, log_z) = (&self.suits, self.log_z);
+        let mut rest = self.rest.lock().unwrap();
+        let n = events.len();
+        // The chance of each set of events all happening.
+        type Forced = ((Cards, Cards), f64);
+        let mut known: Vec<Forced> = Vec::new();
+        let all: Vec<f64> = (0..1usize << n)
+            .map(|set| {
+                let (mut to_first, mut to_second) = (Cards::EMPTY, Cards::EMPTY);
+                for (e, &(cards, hand)) in events.iter().enumerate() {
+                    if set & (1 << e) != 0 {
+                        if hand == 0 {
+                            to_second += cards;
+                        } else {
+                            to_first += cards;
+                        }
+                    }
+                }
+                let key = (to_first & beliefs.unseen, to_second & beliefs.unseen);
+                if let Some(&(_, chance)) = known.iter().find(|(k, _)| *k == key) {
+                    return chance;
+                }
+                let chance = (beliefs.log_normalization_forcing(to_first, to_second, suits, &mut rest) - log_z).exp();
+                known.push((key, chance));
+                chance
+            })
+            .collect();
+        let mut chances = [[0.0; 3]; 3];
+        for exactly in 0..1usize << n {
+            // The chance of exactly these events happening, and no others.
+            let mut chance = 0.0;
+            for (set, &p) in all.iter().enumerate() {
+                if set & exactly == exactly {
+                    let sign = if (set ^ exactly).count_ones() % 2 == 0 { 1.0 } else { -1.0 };
+                    chance += sign * p;
+                }
+            }
+            let mut states = [0; 2];
+            for (hand, state) in states.iter_mut().enumerate() {
+                let Some(start) = events.iter().position(|&(_, h)| h == hand) else {
+                    continue;
+                };
+                let happened = |what: usize| exactly & (1 << (start + what)) != 0;
+                *state = if !happened(0) {
+                    1
+                } else if happened(1) && !happened(2) {
+                    2
+                } else {
+                    0
+                };
+            }
+            chances[states[0]][states[1]] += chance;
+        }
+        // What rounding leaves below 0.
+        chances.iter_mut().flatten().for_each(|c| *c = c.max(0.0));
+        chances
+    }
+}
+
+impl Beliefs {
 
     /// The log of the weight of the split that gives the first hand the
     /// unseen cards `first`, before normalization.
@@ -1399,6 +1567,55 @@ mod tests {
             }
         }
         assert!(compared > 1000, "only {compared}");
+    }
+
+    /// The cards of `cards` that `keep` keeps, asked one card at a time.
+    fn some_of(cards: Cards, mut keep: impl FnMut() -> bool) -> Cards {
+        cards.filter(|_| keep()).fold(Cards::EMPTY, |kept, card| kept + Cards::singleton(card))
+    }
+
+    #[test]
+    fn the_chances_of_beating_are_those_of_every_split_counted() {
+        let mut rng = StdRng::seed_from_u64(19);
+        let mut checked = 0;
+        for size in [6, 8, 10, 12] {
+            for _ in 0..30 {
+                let beliefs = random_beliefs(&mut rng, size);
+                let suits: Vec<Suit> = Suit::ALL.into_iter().filter(|&s| !beliefs.unseen.in_suit(s).is_empty()).collect();
+                let led_suit = suits[rng.gen_range(0..suits.len())];
+                let led = beliefs.unseen.in_suit(led_suit);
+                let following = some_of(led, || rng.gen_bool(0.5));
+                let trumps = Suit::ALL[rng.gen_range(0..4)];
+                let ruffing = if trumps == led_suit { Cards::EMPTY } else { some_of(beliefs.unseen.in_suit(trumps), || rng.gen_bool(0.6)) };
+                let after = [rng.gen_bool(0.7), rng.gen_bool(0.7)];
+                let chances = beliefs.beating(led, following, ruffing, after);
+                let splits = every_split(&beliefs);
+                let log_z = log_sum_exp(splits.iter().map(|s| s.1));
+                let state = |hand: Cards, after: bool| {
+                    if !after {
+                        0
+                    } else if !(hand & following).is_empty() {
+                        1
+                    } else if (hand & led).is_empty() && !(hand & ruffing).is_empty() {
+                        2
+                    } else {
+                        0
+                    }
+                };
+                let mut counted = [[0.0; 3]; 3];
+                for (first, log_w) in &splits {
+                    let second = beliefs.unseen - *first;
+                    counted[state(*first, after[0])][state(second, after[1])] += (log_w - log_z).exp();
+                }
+                let total: f64 = chances.iter().flatten().sum();
+                assert!((total - 1.0).abs() < 1e-9, "the chances sum to {total}");
+                for (a, b) in chances.iter().flatten().zip(counted.iter().flatten()) {
+                    assert!((a - b).abs() < 1e-9, "{chances:?} against {counted:?}");
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked >= 100);
     }
 
     #[test]
