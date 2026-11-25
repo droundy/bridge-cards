@@ -76,6 +76,17 @@ pub(crate) enum Table {
     /// the trick so far, and whether a hidden hand plays after the player
     /// and, if so, whether one that does is known to be void in the suit led.
     Later,
+    /// The role, the play, and, for the hidden hands that play after the
+    /// player, whether one of them could win the trick, as [`Table::Later`]
+    /// says of the other hand in sight, but only as far as the auction and
+    /// the play show: for the later hidden opponents together, and for the
+    /// later hidden partner (a defender's partner; the declarer's side has
+    /// none, since the other hand of its own is in sight).  Each is: does not
+    /// play after the player, plays after and cannot beat the card and the
+    /// trick so far, could beat it by following suit, or could beat it by
+    /// ruffing, which is when it can be void in the suit led and may hold a
+    /// trump that beats it.  Following wins over ruffing when both could do it.
+    Later2,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     Trick1,
@@ -124,6 +135,7 @@ impl Table {
             Table::History => 4 * PLAYS * 5 * 4,
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
+            Table::Later2 => 4 * PLAYS * 4 * 4,
             Table::Bids => 4 * PLAYS * 16,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
             Table::Above1 | Table::Below1 => 4 * 125,
@@ -256,6 +268,10 @@ impl Table {
                 ["no", "cannot beat", "can beat"][index / 3 % 3],
                 ["no", "yes", "known void"][index % 3]
             ),
+            Table::Later2 => {
+                const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
+                format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
+            }
             Table::Bids => {
                 let bidders: Vec<&str> =
                     ["me", "left", "partner", "right"].into_iter().enumerate().filter(|(k, _)| ((index % 16) >> k) & 1 == 1).map(|(_, s)| s).collect();
@@ -404,6 +420,11 @@ pub(crate) const V2_BIG: Shape = Shape { name: "v2-big", tables: V2_LATER_TRUMPS
 pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
     v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
 
+/// [`V2_TRUMPS_HISTORY`] and [`Table::Later2`], to see whether it pays to say
+/// whether a hidden hand that plays after the player could win the trick.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2: Shape =
+    v2_and("v2-trumps-history-later2", v2_tables_and!(Table::Trumps, Table::History, Table::Later2));
+
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
     &V1,
@@ -421,6 +442,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_LATER_TRUMPS_HISTORY,
     &V2_TRUMPS_HISTORY_DEEP,
     &V2_BIG,
+    &V2_TRUMPS_HISTORY_LATER2,
 ];
 
 impl Shape {
@@ -658,6 +680,11 @@ pub(crate) struct View {
     /// The suits that a hidden hand that plays to this trick after the
     /// player is known to be void in.
     hidden_later_void: Cards,
+    /// For each of the two hidden hands, the first after the player first (as
+    /// `shown` has them): whether it plays to this trick after the player,
+    /// and whether it is the player's partner.
+    hidden_after: [bool; 2],
+    hidden_partner: [bool; 2],
 }
 
 impl View {
@@ -779,11 +806,10 @@ impl View {
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
-        let mut shown = || {
-            let hidden_seat = hidden_seats.next().unwrap();
+        let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
+        let shown = hidden_order.map(|hidden_seat| {
             Shown::new(game, convention, hidden_seat, played[hidden_seat], shown_out[hidden_seat], hidden)
-        };
-        let shown = [shown(), shown()];
+        });
         // Seats by how far clockwise from the player they are.
         let from_me = |s: Seat| (s as usize + 4 - seat as usize) % 4;
         let mut history = [(0, 0); 4];
@@ -825,6 +851,8 @@ impl View {
             other_later: later.contains(&in_sight),
             hidden_later: !hidden_later.is_empty(),
             hidden_later_void: hidden_later.iter().fold(Cards::EMPTY, |void, &s| void + shown_out[s]),
+            hidden_after: hidden_order.map(|s| later.contains(&s)),
+            hidden_partner: hidden_order.map(|s| s == seat + 2),
         })
     }
 
@@ -844,6 +872,54 @@ impl View {
             Some(lead) if !self.mine.in_suit(lead).is_empty() => self.mine.in_suit(lead),
             _ => self.mine,
         }
+    }
+
+    /// What [`Table::Later2`] says of playing `card`: 4 times the opponents'
+    /// value and then the partner's.  Of the cards that a later hidden hand
+    /// could hold (it may have a card of a suit if the auction and the play
+    /// leave it room for one) those that beat the card and the trick so far
+    /// are the ones that could win; they win by following suit if one is of
+    /// the suit led, and otherwise by ruffing if the hand can be void in the
+    /// suit led.
+    fn later2(&self, card: Card) -> usize {
+        let led = self.lead.unwrap_or(card.suit());
+        let top = match self.winning {
+            Some(winning) if !beats(self.trump, card, winning) => winning,
+            _ => card,
+        };
+        let mut beating = Cards::higher_than(top);
+        if let Some(trump) = self.trump.filter(|&trump| trump != top.suit()) {
+            beating += Cards::ALL.in_suit(trump);
+        }
+        let beating = beating & self.hidden;
+        let following = Cards::ALL.in_suit(led);
+        // The opponents together, and then the partner: the value of the
+        // hand that could do the most, where beating by following goes before
+        // beating by ruffing, then not beating, then not playing.
+        let mut values = [0, 0];
+        for k in 0..2 {
+            if !self.hidden_after[k] {
+                continue;
+            }
+            let holdable = Suit::ALL
+                .into_iter()
+                .filter(|&suit| self.shown[k].length[suit as usize].1 > 0)
+                .fold(Cards::EMPTY, |cards, suit| cards + Cards::ALL.in_suit(suit));
+            let could = beating & holdable;
+            let value = if !(could & following).is_empty() {
+                2
+            } else if self.shown[k].length[led as usize].0 == 0 && !(could - following).is_empty() {
+                3
+            } else {
+                1
+            };
+            let side = &mut values[self.hidden_partner[k] as usize];
+            let rank = |value: usize| [0, 1, 3, 2][value];
+            if rank(value) > rank(*side) {
+                *side = value;
+            }
+        }
+        values[0] * 4 + values[1]
     }
 
     /// The entries of the tables of `shape`, laid end to end, that playing
@@ -938,6 +1014,7 @@ impl View {
             Table::History => ((role * PLAYS + play) * 5 + first) * 4 + rounds,
             Table::Trumps => play * 4 * 4 * 4 * 2 + trumps_index,
             Table::Later => (role * PLAYS + play) * 9 + later,
+            Table::Later2 => (role * PLAYS + play) * 16 + self.later2(card),
             Table::Bids => (role * PLAYS + play) * 16 + self.bid_by[suit as usize],
             Table::Trick1 => ((role * 4 + place) * 4 + how) * 4 + trick,
             Table::Above1 => place * 125 + above3,
@@ -1317,6 +1394,71 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// [`View::later2`] found card by card, and the soundness of what it says:
+    /// when a later hidden hand really holds a card that it may play and
+    /// that beats the trick so far, the table says that it could win.
+    #[test]
+    fn later2_is_what_a_search_of_the_cards_finds() {
+        let (mut checked, mut winners) = (0, 0);
+        for game in some_games() {
+            let Some(view) = View::new(&game, &game.system.convention()) else {
+                continue;
+            };
+            let seat = game.lead.unwrap() + game.played.len() % 4;
+            let in_sight = if Some(seat) == game.dummy() { seat + 2 } else { game.dummy().unwrap() };
+            let hidden_seats: Vec<Seat> = (1..4).map(|n| seat + n).filter(|&s| s != in_sight).collect();
+            for card in view.legal() {
+                let led = view.lead.unwrap_or(card.suit());
+                let top = match view.winning {
+                    Some(winning) if !beats(view.trump, card, winning) => winning,
+                    _ => card,
+                };
+                let mut expected = [0; 2];
+                for k in 0..2 {
+                    if !view.hidden_after[k] {
+                        continue;
+                    }
+                    let (mut follows, mut ruffs) = (false, false);
+                    for other in view.hidden {
+                        let room = view.shown[k].length[other.suit() as usize].1 > 0;
+                        if room && beats(view.trump, other, top) {
+                            if other.suit() == led {
+                                follows = true;
+                            } else if view.shown[k].length[led as usize].0 == 0 {
+                                ruffs = true;
+                            }
+                        }
+                    }
+                    let value = if follows {
+                        2
+                    } else if ruffs {
+                        3
+                    } else {
+                        1
+                    };
+                    let side = view.hidden_partner[k] as usize;
+                    let rank = |value: usize| [0, 1, 3, 2][value];
+                    if rank(value) > rank(expected[side]) {
+                        expected[side] = value;
+                    }
+                }
+                assert_eq!(view.later2(card), expected[0] * 4 + expected[1]);
+                // What the hands really hold can be done.
+                for (k, &hidden_seat) in hidden_seats.iter().enumerate() {
+                    let hand = game.hands[hidden_seat];
+                    let legal = if hand.in_suit(led).is_empty() { hand } else { hand.in_suit(led) };
+                    let side = expected[view.hidden_partner[k] as usize];
+                    if view.hidden_after[k] && legal.into_iter().any(|c| beats(view.trump, c, top)) {
+                        winners += 1;
+                        assert!(side >= 2, "{side} for a hidden hand that can win: {}", serde_json::to_string(&game).unwrap());
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 100 && winners > 10, "{checked} cards, {winners} that a hidden hand could beat");
     }
 
     #[test]
