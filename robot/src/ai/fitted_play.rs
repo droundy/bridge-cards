@@ -76,6 +76,17 @@ pub(crate) enum Table {
     /// the trick so far, and whether a hidden hand plays after the player
     /// and, if so, whether one that does is known to be void in the suit led.
     Later,
+    /// The role, the play, and, for the hidden hands that play after the
+    /// player, whether one of them could win the trick, as [`Table::Later`]
+    /// says of the other hand in sight, but only as far as the auction and
+    /// the play show: for the later hidden opponents together, and for the
+    /// later hidden partner (a defender's partner; the declarer's side has
+    /// none, since the other hand of its own is in sight).  Each is: does not
+    /// play after the player, plays after and cannot beat the card and the
+    /// trick so far, could beat it by following suit, or could beat it by
+    /// ruffing, which is when it can be void in the suit led and may hold a
+    /// trump that beats it.  Following wins over ruffing when both could do it.
+    Later2,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     /// The place, and whether each of the three cards just above is the
@@ -133,6 +144,7 @@ impl Table {
             Table::History => 4 * PLAYS * 5 * 4,
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
+            Table::Later2 => 4 * PLAYS * 4 * 4,
             Table::Bids => 4 * PLAYS * 16,
             Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
@@ -266,6 +278,10 @@ impl Table {
                 ["no", "cannot beat", "can beat"][index / 3 % 3],
                 ["no", "yes", "known void"][index % 3]
             ),
+            Table::Later2 => {
+                const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
+                format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
+            }
             Table::Bids => {
                 let bidders: Vec<&str> =
                     ["me", "left", "partner", "right"].into_iter().enumerate().filter(|(k, _)| ((index % 16) >> k) & 1 == 1).map(|(_, s)| s).collect();
@@ -301,14 +317,12 @@ pub(crate) struct Shape {
     /// What a model file calls it.
     pub(crate) name: &'static str,
     pub(crate) tables: &'static [Table],
-    /// How many units the first hidden layer has: each table entry feeds
-    /// them as well as the score, so that the model can weigh combinations
-    /// of the facts of different tables.
-    pub(crate) hidden: usize,
-    /// How many units the second hidden layer has (0 for none): each takes
-    /// all the units of the first, so that the model can weigh combinations
-    /// of combinations.
-    pub(crate) second: usize,
+    /// How many units each hidden layer has, the first first: each table
+    /// entry feeds the first as well as the score, so that the model can
+    /// weigh combinations of the facts of different tables, and each later
+    /// layer takes all the units of the one before, so that it can weigh
+    /// combinations of those.
+    pub(crate) layers: &'static [usize],
 }
 
 /// The first shape, of the model trained by self-play from round 0.
@@ -327,8 +341,7 @@ pub(crate) const V1: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
-    hidden: 16,
-    second: 8,
+    layers: &[16, 8],
 };
 
 /// [`V1`] without the entries that no card looks up: the same facts, and
@@ -349,17 +362,16 @@ pub(crate) const V2: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
-    hidden: 16,
-    second: 8,
+    layers: &[16, 8],
 };
 
 /// [`V2`] with hidden layers twice as wide, to see whether its width is what
 /// limits it.
-pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, hidden: 32, second: 16 };
+pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16] };
 
 /// [`V2`] and more tables, to see whether they pay.
 const fn v2_and(name: &'static str, tables: &'static [Table]) -> Shape {
-    Shape { name, tables, hidden: 16, second: 8 }
+    Shape { name, tables, layers: &[16, 8] }
 }
 
 /// The tables of [`V2`] and then `$table`s.
@@ -397,6 +409,31 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 /// [`V2`] and both [`Table::Later`] and [`Table::Trumps`], the two that paid
 /// in the second screen.
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
+/// [`V2_TRUMPS`] with hidden layers twice as wide, to see whether its width
+/// is what stops training from going further.
+pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16] };
+/// [`V2_TRUMPS`] and [`Table::History`].
+pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_tables_and!(Table::Trumps, Table::History));
+/// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
+pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
+    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16] };
+/// [`V2_TRUMPS_HISTORY`] with a third hidden layer, to see whether depth
+/// pays where width did not.  A model of two layers grows into it with the
+/// third passing on the second, so that it starts by playing as it did.
+pub(crate) const V2_TRUMPS_HISTORY_DEEP: Shape =
+    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8] };
+/// Every table that does not read the calls, and layers that are wider and
+/// one deeper, to be trained for far longer than the screens: a model of
+/// two layers grows into it playing as it did (see [`Model::grown_to`]).
+pub(crate) const V2_BIG: Shape = Shape { name: "v2-big", tables: V2_LATER_TRUMPS_HISTORY.tables, layers: &[64, 32, 16] };
+/// [`V2_TRUMPS_HISTORY`] and [`Table::Later`].
+pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
+    v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
+
+/// [`V2_TRUMPS_HISTORY`] and [`Table::Later2`], to see whether it pays to say
+/// whether a hidden hand that plays after the player could win the trick.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2: Shape =
+    v2_and("v2-trumps-history-later2", v2_tables_and!(Table::Trumps, Table::History, Table::Later2));
 
 /// [`V2_TRUMPS`] reading the player's beliefs about where the hidden cards
 /// lie: [`Table::AboveSplit`] and [`Table::BelowSplit`] in place of
@@ -422,8 +459,25 @@ pub(crate) const V2_TRUMPS_BELIEFS: Shape = v2_and(
 );
 
 /// Every shape there is.
-pub(crate) const SHAPES: &[&Shape] =
-    &[&V1, &V2, &V2_WIDE, &V2_HISTORY, &V2_TRUMPS, &V2_LATER, &V2_BIDS, &V2_LATER_HISTORY, &V2_LATER_TRUMPS, &V2_TRUMPS_BELIEFS];
+pub(crate) const SHAPES: &[&Shape] = &[
+    &V1,
+    &V2,
+    &V2_WIDE,
+    &V2_HISTORY,
+    &V2_TRUMPS,
+    &V2_LATER,
+    &V2_BIDS,
+    &V2_LATER_HISTORY,
+    &V2_LATER_TRUMPS,
+    &V2_TRUMPS_WIDE,
+    &V2_TRUMPS_HISTORY,
+    &V2_TRUMPS_HISTORY_WIDE,
+    &V2_LATER_TRUMPS_HISTORY,
+    &V2_TRUMPS_HISTORY_DEEP,
+    &V2_BIG,
+    &V2_TRUMPS_HISTORY_LATER2,
+    &V2_TRUMPS_BELIEFS,
+];
 
 impl Shape {
     /// The shape called `name`, if there is one.
@@ -451,7 +505,7 @@ impl Shape {
 
     /// How many weights a model of this shape has.
     pub(crate) fn size(&self) -> usize {
-        Network::size(self.entries(), self.hidden, self.second)
+        Network::size(self.entries(), self.layers)
     }
 }
 
@@ -465,7 +519,7 @@ pub(crate) struct Model {
 impl Model {
     /// The model of `shape` with `params`, such as one written out before.
     pub(crate) fn with_params(shape: &'static Shape, params: Vec<f64>) -> Model {
-        let network = Network::with_params(shape.entries(), shape.hidden, shape.second, params);
+        let network = Network::with_params(shape.entries(), shape.layers, params);
         Model { shape, network }
     }
 
@@ -473,7 +527,7 @@ impl Model {
     /// [`Network::new`]).
     #[cfg(test)]
     pub(crate) fn new(shape: &'static Shape, seed: u64) -> Model {
-        let network = Network::new(shape.entries(), shape.hidden, shape.second, seed);
+        let network = Network::new(shape.entries(), shape.layers, seed);
         Model { shape, network }
     }
 
@@ -511,16 +565,16 @@ impl Model {
     /// did until it learns more (see [`Network::grown`]): each of its tables
     /// becomes the same table of `shape`, wherever that is, the tables that
     /// it lacks start adding nothing, and so do the units of layers that are
-    /// wider.  A model of [`V1`] is first laid out as one of [`V2`].  `None`
-    /// if `shape` lacks one of its tables, or has a narrower layer, or a
-    /// second layer where it has none or none where it has one.
+    /// wider or added after its last (see [`crate::ai::fitting::grows`]).  A
+    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if `shape`
+    /// lacks one of its tables, or its layers cannot grow into those of
+    /// `shape`.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
         if self.shape == &V1 {
             return self.without_room().grown_to(shape);
         }
-        let (hidden, second) = (self.shape.hidden, self.shape.second);
-        if shape.hidden < hidden || shape.second < second || (shape.second == 0) != (second == 0) {
+        if !crate::ai::fitting::grows(self.shape.layers, shape.layers) {
             return None;
         }
         // Where each table starts among the entries of `shape`.
@@ -561,7 +615,7 @@ impl Model {
                 }
             }
         }
-        let mut network = self.network.grown(&moved, shape.entries(), shape.hidden, shape.second, 11);
+        let mut network = self.network.grown(&moved, shape.entries(), shape.layers, 11);
         for (from, to) in copies {
             network.copy_entry(from, to);
         }
@@ -694,6 +748,11 @@ pub(crate) struct View {
     /// The suits that a hidden hand that plays to this trick after the
     /// player is known to be void in.
     hidden_later_void: Cards,
+    /// For each of the two hidden hands, the first after the player first (as
+    /// `shown` has them): whether it plays to this trick after the player,
+    /// and whether it is the player's partner.
+    hidden_after: [bool; 2],
+    hidden_partner: [bool; 2],
     /// What the player believes of where the hidden cards lie, when
     /// [`LOCATIONS`] is set.
     #[cfg(test)]
@@ -887,11 +946,10 @@ impl View {
             Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle }))
         })();
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
-        let mut shown = || {
-            let hidden_seat = hidden_seats.next().unwrap();
+        let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
+        let shown = hidden_order.map(|hidden_seat| {
             Shown::new(game, convention, hidden_seat, played[hidden_seat], shown_out[hidden_seat], hidden)
-        };
-        let shown = [shown(), shown()];
+        });
         // Seats by how far clockwise from the player they are.
         let from_me = |s: Seat| (s as usize + 4 - seat as usize) % 4;
         let mut history = [(0, 0); 4];
@@ -933,6 +991,8 @@ impl View {
             other_later: later.contains(&in_sight),
             hidden_later: !hidden_later.is_empty(),
             hidden_later_void: hidden_later.iter().fold(Cards::EMPTY, |void, &s| void + shown_out[s]),
+            hidden_after: hidden_order.map(|s| later.contains(&s)),
+            hidden_partner: hidden_order.map(|s| s == seat + 2),
             #[cfg(test)]
             beliefs,
         })
@@ -954,6 +1014,54 @@ impl View {
             Some(lead) if !self.mine.in_suit(lead).is_empty() => self.mine.in_suit(lead),
             _ => self.mine,
         }
+    }
+
+    /// What [`Table::Later2`] says of playing `card`: 4 times the opponents'
+    /// value and then the partner's.  Of the cards that a later hidden hand
+    /// could hold (it may have a card of a suit if the auction and the play
+    /// leave it room for one) those that beat the card and the trick so far
+    /// are the ones that could win; they win by following suit if one is of
+    /// the suit led, and otherwise by ruffing if the hand can be void in the
+    /// suit led.
+    fn later2(&self, card: Card) -> usize {
+        let led = self.lead.unwrap_or(card.suit());
+        let top = match self.winning {
+            Some(winning) if !beats(self.trump, card, winning) => winning,
+            _ => card,
+        };
+        let mut beating = Cards::higher_than(top);
+        if let Some(trump) = self.trump.filter(|&trump| trump != top.suit()) {
+            beating += Cards::ALL.in_suit(trump);
+        }
+        let beating = beating & self.hidden;
+        let following = Cards::ALL.in_suit(led);
+        // The opponents together, and then the partner: the value of the
+        // hand that could do the most, where beating by following goes before
+        // beating by ruffing, then not beating, then not playing.
+        let mut values = [0, 0];
+        for k in 0..2 {
+            if !self.hidden_after[k] {
+                continue;
+            }
+            let holdable = Suit::ALL
+                .into_iter()
+                .filter(|&suit| self.shown[k].length[suit as usize].1 > 0)
+                .fold(Cards::EMPTY, |cards, suit| cards + Cards::ALL.in_suit(suit));
+            let could = beating & holdable;
+            let value = if !(could & following).is_empty() {
+                2
+            } else if self.shown[k].length[led as usize].0 == 0 && !(could - following).is_empty() {
+                3
+            } else {
+                1
+            };
+            let side = &mut values[self.hidden_partner[k] as usize];
+            let rank = |value: usize| [0, 1, 3, 2][value];
+            if rank(value) > rank(*side) {
+                *side = value;
+            }
+        }
+        values[0] * 4 + values[1]
     }
 
     /// The entries of the tables of `shape`, laid end to end, that playing
@@ -1048,6 +1156,7 @@ impl View {
             Table::History => ((role * PLAYS + play) * 5 + first) * 4 + rounds,
             Table::Trumps => play * 4 * 4 * 4 * 2 + trumps_index,
             Table::Later => (role * PLAYS + play) * 9 + later,
+            Table::Later2 => (role * PLAYS + play) * 16 + self.later2(card),
             Table::Bids => (role * PLAYS + play) * 16 + self.bid_by[suit as usize],
             Table::Trick1 => ((role * 4 + place) * 4 + how) * 4 + trick,
             Table::Above1 => place * 125 + above3,
@@ -1398,7 +1507,7 @@ fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
 #[cfg(test)]
 pub(crate) fn random_model(seed: u64) -> Model {
     use rand::{Rng, SeedableRng};
-    const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut model = Model::new(&SMALL, 3);
     for p in &mut model.network.params {
@@ -1475,6 +1584,71 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// [`View::later2`] found card by card, and the soundness of what it says:
+    /// when a later hidden hand really holds a card that it may play and
+    /// that beats the trick so far, the table says that it could win.
+    #[test]
+    fn later2_is_what_a_search_of_the_cards_finds() {
+        let (mut checked, mut winners) = (0, 0);
+        for game in some_games() {
+            let Some(view) = View::new(&game, &game.system.convention()) else {
+                continue;
+            };
+            let seat = game.lead.unwrap() + game.played.len() % 4;
+            let in_sight = if Some(seat) == game.dummy() { seat + 2 } else { game.dummy().unwrap() };
+            let hidden_seats: Vec<Seat> = (1..4).map(|n| seat + n).filter(|&s| s != in_sight).collect();
+            for card in view.legal() {
+                let led = view.lead.unwrap_or(card.suit());
+                let top = match view.winning {
+                    Some(winning) if !beats(view.trump, card, winning) => winning,
+                    _ => card,
+                };
+                let mut expected = [0; 2];
+                for k in 0..2 {
+                    if !view.hidden_after[k] {
+                        continue;
+                    }
+                    let (mut follows, mut ruffs) = (false, false);
+                    for other in view.hidden {
+                        let room = view.shown[k].length[other.suit() as usize].1 > 0;
+                        if room && beats(view.trump, other, top) {
+                            if other.suit() == led {
+                                follows = true;
+                            } else if view.shown[k].length[led as usize].0 == 0 {
+                                ruffs = true;
+                            }
+                        }
+                    }
+                    let value = if follows {
+                        2
+                    } else if ruffs {
+                        3
+                    } else {
+                        1
+                    };
+                    let side = view.hidden_partner[k] as usize;
+                    let rank = |value: usize| [0, 1, 3, 2][value];
+                    if rank(value) > rank(expected[side]) {
+                        expected[side] = value;
+                    }
+                }
+                assert_eq!(view.later2(card), expected[0] * 4 + expected[1]);
+                // What the hands really hold can be done.
+                for (k, &hidden_seat) in hidden_seats.iter().enumerate() {
+                    let hand = game.hands[hidden_seat];
+                    let legal = if hand.in_suit(led).is_empty() { hand } else { hand.in_suit(led) };
+                    let side = expected[view.hidden_partner[k] as usize];
+                    if view.hidden_after[k] && legal.into_iter().any(|c| beats(view.trump, c, top)) {
+                        winners += 1;
+                        assert!(side >= 2, "{side} for a hidden hand that can win: {}", serde_json::to_string(&game).unwrap());
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 100 && winners > 10, "{checked} cards, {winners} that a hidden hand could beat");
     }
 
     #[test]
@@ -1666,16 +1840,15 @@ mod tests {
                 Table::SecondLength,
                 Table::FirstPoints,
             ],
-            hidden: 20,
-            second: 11,
+            layers: &[20, 11],
         };
         let shapes: Vec<&'static Shape> = SHAPES.iter().copied().filter(|shape| !shape.reads_beliefs()).collect();
         let mut grown: Vec<Model> = shapes.iter().filter_map(|&shape| old.grown_to(shape)).collect();
         assert_eq!(grown.len(), shapes.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
         // Nor can a shape that lacks a table, or has narrower layers.
-        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, hidden: 16, second: 8 };
-        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, hidden: 12, second: 8 };
+        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8] };
+        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8] };
         assert!(new.grown_to(&FEWER).is_none() && new.grown_to(&NARROWER).is_none());
         let more = grown.last().unwrap();
         let mut gradient = vec![0.0; more.network.params.len()];
@@ -1693,7 +1866,7 @@ mod tests {
         }
         // The output weights of the new units of the last layer come last,
         // and some of the time those units are active, so that they learn.
-        let new_outputs = &gradient[gradient.len() - (MORE.second - V2.second)..];
+        let new_outputs = &gradient[gradient.len() - (MORE.layers[1] - V2.layers[1])..];
         assert!(new_outputs.iter().all(|&g| g > 0.0), "{new_outputs:?}");
     }
 
@@ -1839,13 +2012,14 @@ mod tests {
             debug_assert!(used.iter().all(|&e| (start..start + table.size()).contains(&e)));
             start += table.size();
         }
-        let (mut first, mut second) = (vec![0usize; model.shape.hidden], vec![0usize; model.shape.second]);
+        let mut counts: Vec<Vec<usize>> = model.shape.layers.iter().map(|&width| vec![0; width]).collect();
         let mut cards = 0;
         for s in &test {
             for (entries, _) in &s.choice {
-                let (a, b) = network.active_units(entries);
-                for (count, on) in first.iter_mut().zip(a).chain(second.iter_mut().zip(b)) {
-                    *count += on as usize;
+                for (layer, active) in counts.iter_mut().zip(network.active_units(entries)) {
+                    for (count, on) in layer.iter_mut().zip(active) {
+                        *count += on as usize;
+                    }
                 }
                 cards += 1;
             }
@@ -1853,8 +2027,9 @@ mod tests {
         let share = |counts: &[usize]| {
             counts.iter().map(|&c| format!("{:.0}%", 100.0 * c as f64 / cards as f64)).collect::<Vec<_>>().join(" ")
         };
-        println!("how often each unit of the first layer is active: {}", share(&first));
-        println!("and of the second: {}", share(&second));
+        for (layer, counts) in counts.iter().enumerate() {
+            println!("how often each unit of layer {} is active: {}", layer + 1, share(counts));
+        }
     }
 
     /// Writes the play model file `PLAY_MODEL_FILE` again to `PLAY_MODEL_OUT`
@@ -1950,7 +2125,7 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        const SMALL: Shape = Shape { name: "small", tables: V1.tables, hidden: 4, second: 3 };
+        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
         let mut weights = Model::new(&SMALL, 3);
         for p in &mut weights.network.params {
             *p = rng.gen_range(-1.0..1.0);
@@ -4339,7 +4514,7 @@ mod tests {
     fn make_play_model_file() {
         let shape = shape_of("PLAY_SHAPE");
         let read = |path: &str| {
-            let network = Network::read(path, shape.entries(), shape.hidden, shape.second);
+            let network = Network::read(path, shape.entries(), shape.layers);
             Model { shape, network }
         };
         let weights = read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
@@ -4382,7 +4557,7 @@ mod tests {
                 .strip_suffix(".txt")
                 .and_then(|stem| SHAPES.iter().filter(|s| stem.ends_with(&format!("-{}", s.name))).max_by_key(|s| s.name.len()));
             let shape = named.copied().unwrap_or_else(|| shape_of("PLAY_SHAPE"));
-            Model { shape, network: Network::read(path, shape.entries(), shape.hidden, shape.second) }
+            Model { shape, network: Network::read(path, shape.entries(), shape.layers) }
         }
     }
 

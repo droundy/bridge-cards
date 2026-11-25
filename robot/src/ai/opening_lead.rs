@@ -928,11 +928,11 @@ mod tests {
                 mean_tricks(&test_leads, |lead| likely_opening_leads(&lead.auction, lead.hand)[0]),
             );
             let penalties = [0.0, 0.0001, 0.001, 0.01];
-            let (penalty, held_out) = fitting::cross_validate(&leads, &|| fitting::Network::new(size, 0, 0, 0), &penalties, steps);
+            let (penalty, held_out) = fitting::cross_validate(&leads, &|| fitting::Network::new(size, &[], 0), &penalties, steps);
             for (penalty, tricks) in held_out {
                 println!("  penalty {penalty}: {tricks:.4} tricks held out");
             }
-            let weights = fitting::fit(&leads.iter().collect::<Vec<_>>(), fitting::Network::new(size, 0, 0, 0), penalty, steps);
+            let weights = fitting::fit(&leads.iter().collect::<Vec<_>>(), fitting::Network::new(size, &[], 0), penalty, steps);
             let test_choices = tuple_choices(&test_leads);
             println!(
                 "  best penalty {penalty}: {:.4} tricks on the test leads",

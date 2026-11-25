@@ -139,7 +139,7 @@ impl Reader<'_> {
         let [n, entries, hidden, second, round, learners, league] = [0; 7].map(|_| self.number());
         assert_eq!(
             (n, entries, hidden, second),
-            (V1.size(), V1.entries(), V1.hidden, V1.second),
+            (V1.size(), V1.entries(), V1.layers[0], V1.layers[1]),
             "{path} is a play model of another shape than v1"
         );
         let best = Model::with_params(&V1, self.floats(n));
