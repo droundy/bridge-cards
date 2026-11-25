@@ -695,6 +695,65 @@ pub(crate) const V2_TRUMPS_HISTORY_LATER3_KNOTS: Shape =
 pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN_ODDS: Shape =
     v2_and("v2-trumps-history-later2-run-odds", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::RunOdds));
 
+/// A leaner [`V2_TRUMPS_HISTORY_LATER2`]: without [`Table::FirstPoints`],
+/// [`Table::SecondPoints`] and [`Table::Below`], whose 1536 entries (about a
+/// quarter of its weights) the corpus fits found worth no more than their
+/// noise when left out.
+pub(crate) const V2_LEAN: Shape = v2_and(
+    "v2-lean",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+    ],
+);
+
+/// [`V2_LEAN`] and [`Table::RunPlan`].
+pub(crate) const V2_LEAN_RUN_PLAN: Shape = v2_and(
+    "v2-lean-run-plan",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+        Table::RunPlan,
+    ],
+);
+
+/// [`V2_LEAN`] and [`Table::RunOdds`].
+pub(crate) const V2_LEAN_RUN_ODDS: Shape = v2_and(
+    "v2-lean-run-odds",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+        Table::RunOdds,
+    ],
+);
+
 /// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::RunPlan`].
 pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN_PLAN: Shape =
     v2_and("v2-trumps-history-later2-run-plan", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::RunPlan));
@@ -742,6 +801,9 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_LATER2_RUN_ODDS,
     &V2_TRUMPS_HISTORY_LATER2_RUN_SURE,
     &V2_TRUMPS_HISTORY_LATER2_RUN_PLAN,
+    &V2_LEAN,
+    &V2_LEAN_RUN_PLAN,
+    &V2_LEAN_RUN_ODDS,
 ];
 
 impl Shape {
@@ -831,9 +893,10 @@ impl Model {
     /// becomes the same table of `shape`, wherever that is, the tables that
     /// it lacks start adding nothing, and so do the units of layers that are
     /// wider or added after its last (see [`crate::ai::fitting::grows`]).  A
-    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if `shape`
-    /// lacks one of its tables, or its layers cannot grow into those of
-    /// `shape`.
+    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if its
+    /// layers cannot grow into those of `shape`.  A table that `shape` has no
+    /// place for is dropped first, with its entries' weights, which changes
+    /// the scores (see [`Model::without_tables`]).
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
         if self.shape == &V1 {
@@ -841,6 +904,21 @@ impl Model {
         }
         if !crate::ai::fitting::grows(self.shape.layers, shape.layers) {
             return None;
+        }
+        let kept = |table: Table| {
+            let becomes = match table {
+                Table::Above => Some(Table::AboveSplit),
+                Table::Below => Some(Table::BelowSplit),
+                Table::Later2 => Some(Table::Later3),
+                _ => None,
+            };
+            shape.tables.contains(&table)
+                || becomes.is_some_and(|t| shape.tables.contains(&t))
+                || (table == Table::Later2 || table == Table::Later3) && shape.tables.contains(&Table::Later3Knots)
+        };
+        if self.shape.tables.iter().any(|&t| !kept(t)) {
+            let dropped: Vec<Table> = self.shape.tables.iter().copied().filter(|&t| !kept(t)).collect();
+            return self.without_tables(&dropped).grown_to(shape);
         }
         // Where each table starts among the entries of `shape`.
         let starts: Vec<usize> = shape
@@ -904,6 +982,34 @@ impl Model {
             network.copy_entry(from, to, factor);
         }
         Some(Model { shape, network })
+    }
+
+    /// This model without the tables `dropped`: a model of the shape of its
+    /// other tables and the same layers, whose cards' scores lose what those
+    /// tables added.  The shape is made for the purpose, and lives until the
+    /// program ends.
+    #[cfg(test)]
+    pub(crate) fn without_tables(&self, dropped: &[Table]) -> Model {
+        let tables: Vec<Table> = self.shape.tables.iter().copied().filter(|t| !dropped.contains(t)).collect();
+        let shape: &'static Shape = Box::leak(Box::new(Shape {
+            name: Box::leak(format!("{} without {dropped:?}", self.shape.name).into_boxed_str()),
+            tables: Box::leak(tables.into_boxed_slice()),
+            layers: self.shape.layers,
+        }));
+        let mut moved = Vec::with_capacity(self.shape.entries());
+        let mut next = 0;
+        for &table in self.shape.tables {
+            for _ in 0..table.size() {
+                if dropped.contains(&table) {
+                    moved.push(None);
+                } else {
+                    moved.push(Some(next));
+                    next += 1;
+                }
+            }
+        }
+        let params = self.network.with_entries_moved(&self.network.params, &moved, shape.entries());
+        Model { shape, network: Network::with_params(shape.entries(), shape.layers, params) }
     }
 
     /// Where each entry of [`V1`] is in [`V2`], if it is there.
@@ -7732,6 +7838,48 @@ mod tests {
             }
         }
         assert!(compared > 1000, "only {compared}");
+    }
+
+    #[test]
+    fn a_model_without_tables_scores_without_them() {
+        let mut rng = StdRng::seed_from_u64(18);
+        let mut full = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
+        full.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
+        let lean = full.grown_to(&V2_LEAN).unwrap();
+        let dropped = [Table::Below, Table::FirstPoints, Table::SecondPoints];
+        let mut compared = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(55, 6) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        // The full model's score with the dropped tables' entries left out.
+                        let entries = full.entries(&view, card);
+                        let kept: Vec<usize> = entries.one.iter().copied().filter(|&e| !dropped_entry(&full, e, &dropped)).collect();
+                        let a = full.network.score(&kept);
+                        let b = lean.score(&view, card);
+                        assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 300, "only {compared}");
+    }
+
+    /// Whether `entry` of the model's tables laid end to end is in one of `dropped`.
+    fn dropped_entry(model: &Model, entry: usize, dropped: &[Table]) -> bool {
+        let mut start = 0;
+        for &table in model.shape.tables {
+            if entry < start + table.size() {
+                return dropped.contains(&table);
+            }
+            start += table.size();
+        }
+        false
     }
 
     #[test]
