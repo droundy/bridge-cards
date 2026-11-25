@@ -7776,6 +7776,85 @@ mod tests {
         }
     }
 
+    /// What the missed runs cost: on `PLAY_POSITIONS` positions of `PLAY_TEST`,
+    /// as in [`cashing_the_runs`], the tricks that the player's side takes in
+    /// all, when the model `PLAY_MODEL` plays every seat (a, greedy) and when,
+    /// for up to [`RUN_MOST`] tricks or until the run is broken, each play of
+    /// the player's side is the legal card with the longest median run by
+    /// [`Table::RunPlan`] (b, ties by the model's score) or by the search on
+    /// the true hands (c, a ceiling that cheats), the model playing on from
+    /// there, and every opponent by the model throughout.  A line a position
+    /// to the file `PLAY_OUT`: the number, the role, P, a, b and c.
+    #[test]
+    #[ignore]
+    fn what_the_missed_runs_cost() {
+        use std::io::Write;
+        let _ = LOCATIONS.set(read_locations(&std::env::var("PLAY_SELF_LOCATIONS").expect("PLAY_SELF_LOCATIONS")));
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let lines: Vec<String> = std::fs::read_to_string(std::env::var("PLAY_TEST").expect("PLAY_TEST")).unwrap().lines().map(String::from).collect();
+        let wanted = number("PLAY_POSITIONS", 2000).min(lines.len());
+        let mut out = std::fs::File::create(std::env::var("PLAY_OUT").expect("PLAY_OUT")).unwrap();
+        let median = |odds: &[f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter().position(|&p| { sum += p; sum >= 0.5 }).unwrap()
+        };
+        // The longest run in the true deal after `card`.
+        let truth = |view: &View, card: Card| {
+            let seen = view.beliefs.as_ref().unwrap();
+            let place = view.place;
+            let holdings = [view.mine - Cards::singleton(card), view.other, seen.truth & view.hidden, view.hidden - (seen.truth & view.hidden)];
+            let mut hands: [Cards; 4] = std::array::from_fn(|k| holdings[view.order[k]]);
+            let mut played: Vec<(usize, Card)> = view.trick.iter().flatten().enumerate().map(|(i, &c)| ((i + 4 - place) % 4, c)).collect();
+            played.push((0, card));
+            let mut search = RunSearch { trump: view.trump, nodes: 0 };
+            search.trick(&mut hands, (4 - place) % 4, &mut played, RUN_MOST)
+        };
+        // 0: the model all the way, 1: the run line by RunPlan, 2: by the truth.
+        let play = |game: &GameState<()>, convention: &Convention, line: usize| {
+            let side = game.hand_playing().unwrap() as usize % 2;
+            let mut g = crate::ai::playout::copy_of(game);
+            let (mut active, mut run) = (line > 0, 0);
+            while !g.hand_done {
+                let Some(view) = View::new(&g, convention) else { break };
+                let ours = g.hand_playing().unwrap() as usize % 2 == side;
+                let card = if active && ours {
+                    view.legal()
+                        .map(|c| {
+                            let value = if line == 1 { median(&view.run_plan(c)) } else { truth(&view, c) };
+                            (value, model.score(&view, c), c)
+                        })
+                        .max_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)))
+                        .unwrap()
+                        .2
+                } else {
+                    view.best(&model)
+                };
+                let before = [g.ns_tricks, g.ew_tricks];
+                g.play(card);
+                let after = [g.ns_tricks, g.ew_tricks];
+                if active && after != before {
+                    if after[side] > before[side] {
+                        run += 1;
+                        active = run < RUN_MOST;
+                    } else {
+                        active = false;
+                    }
+                }
+            }
+            [g.ns_tricks, g.ew_tricks][side]
+        };
+        for n in 0..wanted {
+            let line = &lines[n * lines.len() / wanted];
+            let json: serde_json::Value = serde_json::from_str(line).unwrap();
+            let game: GameState<()> = serde_json::from_str(json["situation"].as_str().unwrap()).unwrap();
+            let convention = game.system.convention();
+            let view = View::new(&game, &convention).unwrap();
+            let p = view.legal().map(|c| median(&view.run_plan(c))).max().unwrap();
+            let [a, b, c] = [0, 1, 2].map(|line| play(&game, &convention, line));
+            writeln!(out, "{n}\t{}\t{p}\t{a}\t{b}\t{c}", view.role).unwrap();
+        }
+    }
+
     /// Shows the positions `PLAY_AT` (numbers as [`cashing_the_runs`] writes them
     /// with the same `PLAY_POSITIONS`): the four hands as they truly are, then
     /// the playout of the model `PLAY_MODEL`, greedy in every seat, from the
