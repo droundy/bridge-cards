@@ -11,6 +11,7 @@
 use super::fitting::Network;
 #[cfg(test)]
 mod model_file;
+mod suit_play;
 use super::Convention;
 use crate::{Bid, GameState, Seat, Seated};
 use bridge_deck::{Card, Cards, Suit};
@@ -87,6 +88,16 @@ pub(crate) enum Table {
     /// ruffing, which is when it can be void in the suit led and may hold a
     /// trump that beats it.  Following wins over ruffing when both could do it.
     Later2,
+    /// The role, the play, and what a small search of the card's suit says
+    /// of it (see [`suit_play`]): played out from now as though at notrump,
+    /// for each way that the hidden cards of the suit could be split between
+    /// the hidden hands, by what the auction and the play show, how many
+    /// fewer tricks the player's side takes in the suit after this card than
+    /// after the best card of the suit (0, 1, 2, or 3 or more), at the worst
+    /// split and at the best.  A lead is compared with the other leads of
+    /// its suit, a discard by what it costs its own suit against the
+    /// cheapest discard, and a ruff is always 0.
+    SuitPlay,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
     Trick1,
@@ -136,6 +147,7 @@ impl Table {
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
             Table::Later2 => 4 * PLAYS * 4 * 4,
+            Table::SuitPlay => 4 * PLAYS * 4 * 4,
             Table::Bids => 4 * PLAYS * 16,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
             Table::Above1 | Table::Below1 => 4 * 125,
@@ -271,6 +283,9 @@ impl Table {
             Table::Later2 => {
                 const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
                 format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
+            }
+            Table::SuitPlay => {
+                format!("{}, tricks fewer at the worst split: {}, at the best: {}", role_play(index / 16), index / 4 % 4, index % 4)
             }
             Table::Bids => {
                 let bidders: Vec<&str> =
@@ -430,6 +445,11 @@ pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
 pub(crate) const V2_TRUMPS_HISTORY_LATER2: Shape =
     v2_and("v2-trumps-history-later2", v2_tables_and!(Table::Trumps, Table::History, Table::Later2));
 
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::SuitPlay`], to see whether a
+/// small search of the card's suit pays.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_SUIT_PLAY: Shape =
+    v2_and("v2-trumps-history-later2-suit-play", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::SuitPlay));
+
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
     &V1,
@@ -448,6 +468,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_DEEP,
     &V2_BIG,
     &V2_TRUMPS_HISTORY_LATER2,
+    &V2_TRUMPS_HISTORY_LATER2_SUIT_PLAY,
 ];
 
 impl Shape {
@@ -690,6 +711,13 @@ pub(crate) struct View {
     /// and whether it is the player's partner.
     hidden_after: [bool; 2],
     hidden_partner: [bool; 2],
+    /// How many cards each hand holds, counting clockwise from the player,
+    /// and the cards played to this trick before the player, in order.
+    sizes: [usize; 4],
+    trick: [Option<Card>; 3],
+    /// What [`Table::SuitPlay`] says of each card, by its offset, worked out
+    /// the first time that it is asked for.
+    suit_play: std::cell::OnceCell<[u8; 64]>,
 }
 
 impl View {
@@ -858,6 +886,9 @@ impl View {
             hidden_later_void: hidden_later.iter().fold(Cards::EMPTY, |void, &s| void + shown_out[s]),
             hidden_after: hidden_order.map(|s| later.contains(&s)),
             hidden_partner: hidden_order.map(|s| s == seat + 2),
+            sizes: std::array::from_fn(|n| hands[seat + n].len()),
+            trick: std::array::from_fn(|i| trick.get(i).copied()),
+            suit_play: std::cell::OnceCell::new(),
         })
     }
 
@@ -929,6 +960,114 @@ impl View {
 
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
+    /// What [`Table::SuitPlay`] says of playing `card`: 4 times how many
+    /// fewer tricks at the worst split, and then at the best.
+    fn suit_play(&self, card: Card) -> usize {
+        usize::from(self.suit_play.get_or_init(|| self.suit_plays())[card.suit() as usize * 16 + card.rank() as usize])
+    }
+
+    /// [`View::suit_play`] of every legal card, by its offset.
+    fn suit_plays(&self) -> [u8; 64] {
+        use suit_play::{Hands, Search};
+        let ranks = |cards: Cards, suit: Suit| cards.in_suit(suit).fold(0u16, |bits, c| bits | 1 << (c.rank() - 2));
+        // Where the other hand in sight sits, counting clockwise from the
+        // player, and so the two hidden hands, the first after the player
+        // first.
+        let other_at = [2, 2, 1, 3][self.role];
+        let hidden_at: Vec<usize> = (1..4).filter(|&n| n != other_at).collect();
+        // The tricks of the player's side in `suit` at the worst and the
+        // best split of its hidden cards, from `start` with the hands then.
+        let extremes = |suit: Suit, search: &mut Search, start: &mut dyn FnMut(&mut Search, Hands) -> u8| {
+            let hidden = ranks(self.hidden, suit);
+            let k = hidden.count_ones() as usize;
+            let bounds: Vec<(usize, usize)> = (0..2)
+                .map(|h| {
+                    let (least, most) = self.shown[h].length[suit as usize];
+                    (least, most.min(self.sizes[hidden_at[h]]))
+                })
+                .collect();
+            let mut hands: Hands = [0; 4];
+            hands[0] = ranks(self.mine, suit);
+            hands[other_at] = ranks(self.other, suit);
+            let (mut worst, mut best) = (u8::MAX, 0);
+            let mut any = false;
+            for fits in [true, false] {
+                let mut first = hidden;
+                loop {
+                    let n = first.count_ones() as usize;
+                    if !fits || ((bounds[0].0..=bounds[0].1).contains(&n) && (bounds[1].0..=bounds[1].1).contains(&(k - n))) {
+                        hands[hidden_at[0]] = first;
+                        hands[hidden_at[1]] = hidden & !first;
+                        let value = start(search, hands);
+                        (worst, best) = (worst.min(value), best.max(value));
+                        any = true;
+                    }
+                    if first == 0 {
+                        break;
+                    }
+                    first = (first - 1) & hidden;
+                }
+                if any {
+                    break;
+                }
+            }
+            (worst, best)
+        };
+        let legal: Vec<Card> = self.legal().collect();
+        let mut values = [0u8; 64];
+        // The tricks at the worst and best split after each card, or for a
+        // discard what it costs its suit, for the cards that are compared.
+        let mut after: Vec<(Card, (u8, u8))> = Vec::new();
+        let mut searches: [Search; 4] = Default::default();
+        for &card in &legal {
+            let suit = card.suit();
+            let rank = card.rank() as u16 - 2;
+            let search = &mut searches[suit as usize];
+            match self.lead {
+                Some(led) if led != suit => {
+                    if self.trump == Some(suit) {
+                        continue;
+                    }
+                    // A discard: what the suit is worth with the card, less
+                    // what it is worth without, led by the player.
+                    let with = extremes(suit, search, &mut |s, hands| s.led_by(hands, 0));
+                    let without = extremes(suit, search, &mut |s, mut hands| {
+                        hands[0] &= !(1 << rank);
+                        s.led_by(hands, 0)
+                    });
+                    after.push((card, (u8::MAX - (with.0 - without.0.min(with.0)), u8::MAX - (with.1 - without.1.min(with.1)))));
+                }
+                _ => {
+                    // Played to the trick: what went before, then this card.
+                    let mut played = [(0, None); 4];
+                    for (i, before) in self.trick.iter().take(self.place).enumerate() {
+                        let before = before.unwrap();
+                        let hand = 4 - self.place + i;
+                        played[i] = (hand, (before.suit() == suit).then(|| before.rank() as u16 - 2));
+                    }
+                    let place = self.place;
+                    let leader = (4 - place) % 4;
+                    let value = extremes(suit, search, &mut |s, mut hands| {
+                        hands[0] &= !(1 << rank);
+                        let mut played = played;
+                        played[place] = (0, Some(rank));
+                        s.within(hands, leader, &mut played, place + 1)
+                    });
+                    after.push((card, value));
+                }
+            }
+        }
+        // Each card against the best of those it is compared with: the
+        // cards of its suit, or every discard.
+        for &(card, (worst, best)) in &after {
+            let discard = self.lead.is_some_and(|led| led != card.suit());
+            let alike = after.iter().filter(|(c, _)| if discard { c.suit() != self.lead.unwrap() } else { c.suit() == card.suit() });
+            let (top_worst, top_best) = alike.fold((0, 0), |(w, b), &(_, (cw, cb))| (w.max(cw), b.max(cb)));
+            values[card.suit() as usize * 16 + card.rank() as usize] = 4 * (top_worst - worst).min(3) + (top_best - best).min(3);
+        }
+        values
+    }
+
     pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {
         let suit = card.suit();
         let (role, place) = (self.role, self.place);
@@ -1020,6 +1159,7 @@ impl View {
             Table::Trumps => play * 4 * 4 * 4 * 2 + trumps_index,
             Table::Later => (role * PLAYS + play) * 9 + later,
             Table::Later2 => (role * PLAYS + play) * 16 + self.later2(card),
+            Table::SuitPlay => (role * PLAYS + play) * 16 + self.suit_play(card),
             Table::Bids => (role * PLAYS + play) * 16 + self.bid_by[suit as usize],
             Table::Trick1 => ((role * 4 + place) * 4 + how) * 4 + trick,
             Table::Above1 => place * 125 + above3,
@@ -1404,6 +1544,38 @@ mod tests {
     /// [`View::later2`] found card by card, and the soundness of what it says:
     /// when a later hidden hand really holds a card that it may play and
     /// that beats the trick so far, the table says that it could win.
+    /// Of the cards that SuitPlay compares, the best at the worst split and
+    /// the best at the best split are each 0 fewer, and a search of a view
+    /// takes little time.
+    #[test]
+    fn suit_play_gives_the_best_cards_nothing_fewer() {
+        let started = std::time::Instant::now();
+        let mut views = 0;
+        for game in some_games() {
+            let convention = game.system.convention();
+            let Some(view) = View::new(&game, &convention) else { continue };
+            views += 1;
+            let legal: Vec<Card> = view.legal().collect();
+            let discard = |c: &Card| view.lead.is_some_and(|led| led != c.suit());
+            for &card in &legal {
+                if discard(&card) && view.trump == Some(card.suit()) {
+                    assert_eq!(view.suit_play(card), 0);
+                    continue;
+                }
+                let alike: Vec<usize> = legal
+                    .iter()
+                    .filter(|c| {
+                        !(discard(c) && view.trump == Some(c.suit()))
+                            && if discard(&card) { discard(c) } else { c.suit() == card.suit() }
+                    })
+                    .map(|&c| view.suit_play(c))
+                    .collect();
+                assert!(alike.iter().any(|v| v / 4 == 0) && alike.iter().any(|v| v % 4 == 0), "{alike:?}");
+            }
+        }
+        println!("{views} views, {:.0} µs a view", started.elapsed().as_secs_f64() * 1e6 / views as f64);
+    }
+
     #[test]
     fn later2_is_what_a_search_of_the_cards_finds() {
         let (mut checked, mut winners) = (0, 0);
@@ -1686,7 +1858,7 @@ mod tests {
 
     /// The tables that a shape written out by [`shape_spec`] can name: every
     /// one but those of [`V1`].
-    const NAMED_TABLES: [Table; 16] = [
+    const NAMED_TABLES: [Table; 17] = [
         Table::Trick,
         Table::Above,
         Table::Below,
@@ -1702,6 +1874,7 @@ mod tests {
         Table::Trumps,
         Table::Later,
         Table::Later2,
+        Table::SuitPlay,
         Table::Bids,
     ];
 
