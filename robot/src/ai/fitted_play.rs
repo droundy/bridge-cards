@@ -144,10 +144,11 @@ pub(crate) enum Table {
     RunOdds,
     /// [`Table::RunOdds`] with transport and ruffs: the role, the play, and
     /// the chance of each run, 0 to 4 or more.  After the trick in progress,
-    /// the side plays its suits one after another in a plan chosen by the
-    /// expected run (trumps first, to draw them, or last, to ruff with them,
-    /// and the side suits strongest first), carrying from suit to suit which
-    /// of its hands is on lead and the trumps that each hand holds.  In a
+    /// the side plays its suits one after another, choosing each next suit
+    /// by the mean run that it leads to, knowing what the state says (the run
+    /// so far, the hand on lead, the trumps) and not how the suits lie, and
+    /// carrying from suit to suit which of its hands is on lead and the
+    /// trumps that each hand and each opponent holds.  In a
     /// suit it leads from the hand on lead, which needs a card of it (so a
     /// suit can be blocked), cashes while its best card is safe and the lead
     /// goes to the hand that wins, and when it cannot cash it ruffs in the
@@ -1188,14 +1189,112 @@ fn plan_step(mut hands: [u16; 4], mut state: RunState, side: [usize; 2], opponen
     state
 }
 
-/// Adds `chance` of `state` to `states`, with the chance of the same state
-/// if it is there.
+/// The top card of a trick, as (whether it is a trump, its rank, its hand).
 #[cfg(test)]
-fn add_state(states: &mut Vec<(RunState, f64)>, state: RunState, chance: f64) {
-    match states.iter_mut().find(|(s, _)| *s == state) {
-        Some(found) => found.1 += chance,
-        None => states.push((state, chance)),
+type TrickTop = Option<(bool, u8, usize)>;
+
+/// Plays out the rest of a trick whose top card so far is `top`, by the
+/// hands `later`, which hold `hands` of the suit led (as rank bits, by the
+/// four hands); `side` is the player's side, `trump_led` says whether the
+/// suit led is trumps, and `ruffs` whether a hand with none of the suit led
+/// would ruff above any trump so far.  Each hand knows where the suit's cards
+/// lie: a hand whose side is not winning plays the cheapest card that beats
+/// the trick and every later opponent's best, or else the cheapest that
+/// beats the trick, or else its lowest; a hand whose side is winning keeps
+/// its lowest unless a later opponent can beat the trick, and then plays the
+/// cheapest card above them; a hand with none of the suit ruffs if it can
+/// and its side is not winning, or is winning with a card that a later
+/// opponent can beat.  Gives the top card at the end, the hands'
+/// cards of the suit led after the trick, and which hands ruffed.
+#[cfg(test)]
+fn play_out_trick(hands: [u16; 4], mut top: TrickTop, later: &[usize], side: [usize; 2], trump_led: bool, ruffs: impl Fn(usize) -> bool) -> (TrickTop, [u16; 4], [u8; 4]) {
+    let mut after = hands;
+    let mut ruffed = [0u8; 4];
+    // The cards above `rank` in `bits`, and the cheapest of them.
+    let cheapest_above = |bits: u16, rank: u8| {
+        let above = bits & !((2u16 << rank) - 1);
+        (above != 0).then(|| above.trailing_zeros() as u8)
+    };
+    for (i, &h) in later.iter().enumerate() {
+        let ours = side.contains(&h);
+        let winning = top.is_some_and(|(_, _, w)| side.contains(&w) == ours);
+        // A trump on a trick of another suit cannot be beaten by following.
+        let ruffed_trick = top.is_some_and(|(t, _, _)| t && !trump_led);
+        let threat = later[i + 1..].iter().filter(|&&o| side.contains(&o) != ours).map(|&o| top_rank(hands[o])).max().unwrap_or(0);
+        let holding = hands[h];
+        if holding == 0 {
+            let threatened = !ruffed_trick && threat > top.map_or(0, |t| t.1);
+            if (!winning || threatened) && !ruffed_trick && !trump_led && ruffs(h) {
+                top = Some((true, 15, h));
+                ruffed[h] = 1;
+            }
+            continue;
+        }
+        let top_rank_now = top.map_or(0, |t| t.1);
+        let card = if ruffed_trick {
+            None
+        } else if winning {
+            if top_rank_now > threat { None } else { cheapest_above(holding, threat) }
+        } else {
+            cheapest_above(holding, top_rank_now.max(threat)).or_else(|| cheapest_above(holding, top_rank_now))
+        };
+        match card {
+            Some(rank) => {
+                after[h] &= !(1 << rank);
+                top = Some((trump_led, rank, h));
+            }
+            None => after[h] = without_lowest(after[h]),
+        }
     }
+    (top, after, ruffed)
+}
+
+/// The chances of each run from `state` on, with the suits of `remaining`
+/// (as bits by suit) still to play, each suit's ways of lying `ways`: the
+/// side plays next the suit that gives the most tricks in a row in the mean,
+/// which it chooses knowing all that the state says (the run so far, the
+/// hand on lead, the trumps) and nothing of how the suits lie.  `known`
+/// keeps what has been worked out.
+#[cfg(test)]
+fn best_rest(
+    state: RunState,
+    remaining: u8,
+    ways: &[Vec<SuitSplit>; 4],
+    side: [usize; 2],
+    opponents: [usize; 2],
+    trump: Option<Suit>,
+    known: &mut Vec<((RunState, u8), [f64; RUN_MOST + 1])>,
+) -> [f64; RUN_MOST + 1] {
+    let mut runs = [0.0; RUN_MOST + 1];
+    if state.run as usize >= RUN_MOST || remaining == 0 {
+        runs[(state.run as usize).min(RUN_MOST)] = 1.0;
+        return runs;
+    }
+    if let Some((_, found)) = known.iter().find(|(k, _)| *k == (state, remaining)) {
+        return *found;
+    }
+    let mean = |runs: &[f64; RUN_MOST + 1]| runs.iter().enumerate().map(|(k, p)| k as f64 * p).sum::<f64>();
+    let mut best: Option<[f64; RUN_MOST + 1]> = None;
+    for suit in Suit::ALL {
+        if remaining & 1 << suit as usize == 0 {
+            continue;
+        }
+        let mut these = [0.0; RUN_MOST + 1];
+        for &(hands, q) in &ways[suit as usize] {
+            let next = plan_step(hands, state, side, opponents, Some(suit) == trump, trump.is_some());
+            // A suit that takes nothing is left, and the run goes on by the others.
+            let after = best_rest(next, remaining & !(1 << suit as usize), ways, side, opponents, trump, known);
+            for (t, a) in these.iter_mut().zip(after) {
+                *t += q * a;
+            }
+        }
+        if best.is_none_or(|b| mean(&these) > mean(&b)) {
+            best = Some(these);
+        }
+    }
+    let best = best.unwrap();
+    known.push(((state, remaining), best));
+    best
 }
 
 /// The chances of runs of 0 to [`RUN_MOST`] tricks of two independent
@@ -1833,14 +1932,21 @@ impl View {
         legal.into_iter().zip(losses).collect()
     }
 
-    /// What [`Table::Run`] says of playing `card`: the median, over the
-    /// ways that the hidden cards could lie by the player's beliefs (or the
-    /// true way, as [`ORACLE`] says), of the tricks in a row that the player's
-    /// side takes from this trick on, found by [`RunSearch`] in each, at
-    /// most [`RUN_MOST`].  With an even number of ways it is the lower of the
-    /// middle two.
+    /// What [`Table::Run`] says of playing `card`: the median of
+    /// [`View::run_runs`], the lower of the middle two for an even number.
     #[cfg(test)]
     fn run_median(&self, card: Card) -> usize {
+        let runs = self.run_runs(card);
+        runs[(runs.len() - 1) / 2].0
+    }
+
+    /// The runs of [`Table::Run`] after playing `card`, sorted: over the ways
+    /// that the hidden cards could lie by the player's beliefs (or the
+    /// true way, as [`ORACLE`] says), the tricks in a row that the player's
+    /// side takes from this trick on, found by [`RunSearch`] in each, at most
+    /// [`RUN_MOST`], each with whether the search gave up.
+    #[cfg(test)]
+    fn run_runs(&self, card: Card) -> Vec<(usize, bool)> {
         let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
         let place = self.place;
         let leader = (4 - place) % 4;
@@ -1870,7 +1976,7 @@ impl View {
                 })
                 .collect()
         });
-        let mut runs = Vec::with_capacity(deals.len());
+        let mut runs: Vec<(usize, bool)> = Vec::with_capacity(deals.len());
         let mut search = RunSearch { trump: self.trump, nodes: 0 };
         for &first in deals {
             let holdings = [self.mine - Cards::singleton(card), self.other, first, self.hidden - first];
@@ -1878,10 +1984,11 @@ impl View {
             let mut played: Vec<(usize, Card)> = self.trick.iter().flatten().enumerate().map(|(i, &c)| ((i + 4 - place) % 4, c)).collect();
             played.push((0, card));
             search.nodes = 0;
-            runs.push(search.trick(&mut hands, leader, &mut played, RUN_MOST));
+            let run = search.trick(&mut hands, leader, &mut played, RUN_MOST);
+            runs.push((run, search.nodes > RUN_NODES));
         }
         runs.sort_unstable();
-        runs[(runs.len() - 1) / 2]
+        runs
     }
 
     /// The ways that each suit's cards could lie among the four hands, with
@@ -2046,35 +2153,14 @@ impl View {
                 let states = if trump == Some(led) { [trump_state(hands[2], above), trump_state(hands[3], above)] } else { *states };
                 // Each later hand plays: to win the trick if its side is not
                 // winning and it can, else its lowest of the suit led.
-                let mut top = top;
-                let mut after = hands;
-                for &h in &later {
-                    let ours_winning = top.is_some_and(|(_, _, w)| ours.contains(&w) == ours.contains(&h));
-                    let holding = hands[h];
-                    if holding != 0 {
-                        // No card of the suit led beats a trump.
-                        let beating = match top {
-                            Some((true, _, _)) => 0,
-                            Some((false, r, _)) => holding & !((2u16 << r) - 1),
-                            None => holding,
-                        };
-                        if !ours_winning && beating != 0 {
-                            let cheapest = beating.trailing_zeros() as u8;
-                            after[h] &= !(1 << cheapest);
-                            top = Some((false, cheapest, h));
-                        } else {
-                            after[h] = without_lowest(after[h]);
+                let ruffs = |h: usize| {
+                    trump.is_some_and(|t| t != led)
+                        && match h {
+                            2 | 3 => states[h - 2] == 2,
+                            _ => trump_state((if h == 0 { self.mine } else { self.other }).in_suit(trump.unwrap()).fold(0u16, |b, c| b | 1 << c.rank()), above) == 2,
                         }
-                    } else if !ours_winning && trump.is_some_and(|t| t != led) {
-                        let state = match h {
-                            2 | 3 => states[h - 2],
-                            _ => trump_state((if h == 0 { self.mine } else { self.other }).in_suit(trump.unwrap()).fold(0u16, |b, c| b | 1 << c.rank()), above),
-                        };
-                        if state == 2 {
-                            top = Some((true, 15, h));
-                        }
-                    }
-                }
+                };
+                let (top, after, _) = play_out_trick(hands, top, &later, ours, trump == Some(led), ruffs);
                 let won = top.is_some_and(|(_, _, w)| ours.contains(&w));
                 let (runs, fewest) = if won {
                     let rest = *kept.get_or_insert_with(|| rest(states, Some(trump_splits)));
@@ -2176,103 +2262,50 @@ impl View {
                 groups
             }
         };
-        // The side suits, strongest first: by how many of the top cards still
-        // out the hands in sight of the side hold.
-        let in_sight_side = self.mine - Cards::singleton(card) + if partner == 1 { self.other } else { Cards::EMPTY };
-        let strength = |suit: Suit| {
-            let mut out: Vec<Card> = (self.left - Cards::singleton(card)).in_suit(suit).collect();
-            out.sort_by_key(|c| std::cmp::Reverse(c.rank()));
-            out.iter().take_while(|c| in_sight_side.contains(**c)).count()
-        };
-        let mut side_suits: Vec<Suit> = Suit::ALL.into_iter().filter(|&s| s != led && Some(s) != trump).collect();
-        side_suits.sort_by_key(|&s| std::cmp::Reverse(strength(s)));
-        let plans: Vec<Vec<Suit>> = match trump.filter(|&t| t != led) {
-            None => vec![side_suits.clone()],
-            Some(t) => vec![std::iter::once(t).chain(side_suits.iter().copied()).collect(), side_suits.iter().copied().chain(std::iter::once(t)).collect()],
-        };
+        // The suits still to play after the suit led.
+        let rest_mask = Suit::ALL.iter().filter(|&&s| s != led).fold(0u8, |mask, &s| mask | 1 << s as usize);
         let led_total: f64 = splits[led as usize].iter().map(|s| s.1).sum();
-        let mut best: Option<([f64; RUN_MOST + 1], f64)> = None;
-        for plan in &plans {
-            let mut odds = [0.0; RUN_MOST + 1];
-            for (key, group_chance, trump_splits) in &groups {
-                // The states after the trick in progress and the rest of its
-                // suit, over the ways that the suit led lies.
-                let mut states: Vec<(RunState, f64)> = Vec::new();
-                for &(holdings, chance) in &splits[led as usize] {
-                    let hands = without_card(led, holdings);
-                    let key = if trump == Some(led) { trump_key(&hands) } else { *key };
-                    let mut top = top;
-                    let mut after = hands;
-                    let mut used = [0u8; 4];
-                    for &h in &later {
-                        let ours_winning = top.is_some_and(|(_, _, w)| side.contains(&w) == side.contains(&h));
-                        let holding = hands[h];
-                        if holding != 0 {
-                            let beating = match top {
-                                Some((true, _, _)) => 0,
-                                Some((false, r, _)) => holding & !((2u16 << r) - 1),
-                                None => holding,
-                            };
-                            if !ours_winning && beating != 0 {
-                                let cheapest = beating.trailing_zeros() as u8;
-                                after[h] &= !(1 << cheapest);
-                                top = Some((false, cheapest, h));
-                            } else {
-                                after[h] = without_lowest(after[h]);
-                            }
-                        } else if !ours_winning && trump.is_some_and(|t| t != led) && key[h].0 {
-                            top = Some((true, 15, h));
-                            used[h] = 1;
-                        }
-                    }
-                    let weight = chance / led_total;
-                    match top {
-                        Some((_, _, w)) if side.contains(&w) => {
-                            let counts = |h: usize| key[h].1.saturating_sub(used[h]);
-                            let start = RunState {
-                                run: 1,
-                                lead: u8::from(w != 0),
-                                ours: side.map(counts),
-                                ruffed: [used[side[0]], used[side[1]]],
-                                theirs: opponents.map(counts),
-                            };
-                            let state = plan_step(after, start, side, opponents, trump == Some(led), trump.is_some());
-                            add_state(&mut states, state, weight);
-                        }
-                        _ => odds[0] += group_chance * weight,
-                    }
-                }
-                // Then each suit of the plan, over its ways of lying.
-                for &suit in plan {
-                    let ways: Vec<SuitSplit> = if Some(suit) == trump {
-                        let total: f64 = trump_splits.iter().map(|s| s.1).sum();
-                        trump_splits.iter().map(|&(h, c)| (h, c / total)).collect()
-                    } else {
-                        let total: f64 = splits[suit as usize].iter().map(|s| s.1).sum();
-                        splits[suit as usize].iter().map(|&(h, c)| (without_card(suit, h), c / total)).collect()
-                    };
-                    let mut next = Vec::new();
-                    for &(state, p) in &states {
-                        if state.run as usize >= RUN_MOST {
-                            add_state(&mut next, state, p);
-                            continue;
-                        }
-                        for &(hands, q) in &ways {
-                            add_state(&mut next, plan_step(hands, state, side, opponents, Some(suit) == trump, trump.is_some()), p * q);
-                        }
-                    }
-                    states = next;
-                }
-                for (state, p) in states {
-                    odds[state.run as usize] += group_chance * p;
-                }
+        // Each suit's ways of lying, their chances summing to 1, the card
+        // played leaving the player's hand.
+        let side_ways: [Vec<SuitSplit>; 4] = Suit::ALL.map(|suit| {
+            let total: f64 = splits[suit as usize].iter().map(|s| s.1).sum();
+            splits[suit as usize].iter().map(|&(h, c)| (without_card(suit, h), c / total)).collect()
+        });
+        let mut odds = [0.0; RUN_MOST + 1];
+        for (key, group_chance, trump_splits) in &groups {
+            let mut ways = side_ways.clone();
+            if let Some(t) = trump.filter(|&t| t != led) {
+                let total: f64 = trump_splits.iter().map(|s| s.1).sum();
+                ways[t as usize] = trump_splits.iter().map(|&(h, c)| (h, c / total)).collect();
             }
-            let mean: f64 = odds.iter().enumerate().map(|(k, p)| k as f64 * p).sum();
-            if best.is_none_or(|(_, m)| mean > m) {
-                best = Some((odds, mean));
+            let mut known: Vec<((RunState, u8), [f64; RUN_MOST + 1])> = Vec::new();
+            for &(holdings, chance) in &splits[led as usize] {
+                let hands = without_card(led, holdings);
+                let key = if trump == Some(led) { trump_key(&hands) } else { *key };
+                let ruffs = |h: usize| trump.is_some_and(|t| t != led) && key[h].0;
+                let (top, after, used) = play_out_trick(hands, top, &later, side, trump == Some(led), ruffs);
+                let weight = group_chance * chance / led_total;
+                match top {
+                    Some((_, _, w)) if side.contains(&w) => {
+                        let counts = |h: usize| key[h].1.saturating_sub(used[h]);
+                        let start = RunState {
+                            run: 1,
+                            lead: u8::from(w != 0),
+                            ours: side.map(counts),
+                            ruffed: [used[side[0]], used[side[1]]],
+                            theirs: opponents.map(counts),
+                        };
+                        let state = plan_step(after, start, side, opponents, trump == Some(led), trump.is_some());
+                        let runs = best_rest(state, rest_mask, &ways, side, opponents, trump, &mut known);
+                        for (o, r) in odds.iter_mut().zip(runs) {
+                            *o += weight * r;
+                        }
+                    }
+                    _ => odds[0] += weight,
+                }
             }
         }
-        best.unwrap().0
+        odds
     }
 
     /// The entries of the tables of `shape`, laid end to end, that playing
@@ -7469,6 +7502,148 @@ mod tests {
             plan_time / cards as u32
         );
         println!("rows Run's median, columns RunOdds': {table:?}");
+    }
+
+    /// Whether [`View::run_splits`], the beliefs' chances of each card and
+    /// the deals that [`Table::Run`] makes agree on where each free card is.
+    #[test]
+    #[ignore]
+    fn the_splits_and_the_deals_put_the_cards_alike() {
+        let _ = LOCATIONS.set(match std::env::var("PLAY_SELF_LOCATIONS") {
+            Ok(path) => read_locations(&path),
+            Err(_) => (crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()),
+        });
+        let mut rng = StdRng::seed_from_u64(24);
+        let (mut worst_splits, mut worst_deals, mut views) = (0.0f64, 0.0f64, 0);
+        for game in crate::ai::opening_lead::candidates::opening_leads(61, 10) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention).filter(|v| v.beliefs.is_some()) {
+                    let seen = view.beliefs.as_ref().unwrap();
+                    let beliefs = seen.beliefs.as_ref().unwrap();
+                    let chances = beliefs.chances();
+                    let splits = view.run_splits(seen);
+                    let n = 400;
+                    let deals: Vec<Cards> = (0..n).map(|_| beliefs.deal(&mut rng)).collect();
+                    for c in seen.free {
+                        // The chance of the card in the player's first hidden hand, three ways.
+                        let by_chances = if seen.swapped { 1.0 - chances.card[crate::ai::locations::index(c)] } else { chances.card[crate::ai::locations::index(c)] };
+                        let suit = &splits[c.suit() as usize];
+                        let total: f64 = suit.iter().map(|s| s.1).sum();
+                        let by_splits = suit.iter().filter(|s| s.0[2] & 1 << c.rank() != 0).map(|s| s.1).sum::<f64>() / total;
+                        let by_deals = deals.iter().filter(|d| d.contains(c) != seen.swapped).count() as f64 / n as f64;
+                        let free_in_suit = seen.free.in_suit(c.suit()).len();
+                        if free_in_suit <= RUN_ODDS_MOST_FREE {
+                            worst_splits = worst_splits.max((by_splits - by_chances).abs());
+                        }
+                        worst_deals = worst_deals.max((by_deals - by_chances).abs());
+                        if (by_deals - by_chances).abs() > 0.15 || (free_in_suit <= RUN_ODDS_MOST_FREE && (by_splits - by_chances).abs() > 0.02) {
+                            println!("{c} (of {free_in_suit} free in its suit), swapped {}: chances {by_chances:.3}, splits {by_splits:.3}, deals {by_deals:.3}", seen.swapped);
+                        }
+                    }
+                    views += 1;
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        println!("{views} views: the splits differ from the chances by at most {worst_splits:.4}, the deals by at most {worst_deals:.4}");
+    }
+
+    /// Prints cards where the median of [`Table::RunPlan`] and that of
+    /// [`Table::Run`] differ, `PLAY_SHOW` (6) of each kind (RunPlan longer, Run
+    /// longer), at most one a game, with the hands (the hidden ones as they
+    /// truly are, which neither reads), Run's runs and RunPlan's and RunOdds'
+    /// chances, and how often each kind happens.
+    #[test]
+    #[ignore]
+    fn show_run_disagreements() {
+        let _ = LOCATIONS.set(match std::env::var("PLAY_SELF_LOCATIONS") {
+            Ok(path) => read_locations(&path),
+            Err(_) => (crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()),
+        });
+        let show = number("PLAY_SHOW", 6);
+        let mut rng = StdRng::seed_from_u64(23);
+        let (mut plan_longer, mut run_longer, mut cards) = (0, 0, 0);
+        let mut by_gap = [[0usize; RUN_MOST + 1]; 2];
+        let (mut shown_plan, mut shown_run) = (0, 0);
+        let median = |odds: &[f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter()
+                .position(|&p| {
+                    sum += p;
+                    sum >= 0.5
+                })
+                .unwrap()
+        };
+        let odds_text = |odds: &[f64; RUN_MOST + 1]| odds.iter().map(|p| format!("{p:.2}")).collect::<Vec<_>>().join(" ");
+        for game in crate::ai::opening_lead::candidates::opening_leads(61, number("PLAY_GAMES", 40)) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            let mut shown_this_game = false;
+            while !game.hand_done {
+                if let (Some(a), Some(b)) = (View::new(&game, &convention), View::new(&game, &convention)) {
+                    if a.beliefs.is_some() {
+                        for card in a.legal() {
+                            let plan = a.run_plan(card);
+                            let runs = b.run_runs(card);
+                            let (p, r) = (median(&plan), runs[(runs.len() - 1) / 2].0);
+                            cards += 1;
+                            if p == r {
+                                continue;
+                            }
+                            let plan_is_longer = p > r;
+                            if plan_is_longer {
+                                plan_longer += 1;
+                            } else {
+                                run_longer += 1;
+                            }
+                            by_gap[usize::from(!plan_is_longer)][p.abs_diff(r)] += 1;
+                            let shown = if plan_is_longer { &mut shown_plan } else { &mut shown_run };
+                            if *shown >= show || shown_this_game {
+                                continue;
+                            }
+                            *shown += 1;
+                            shown_this_game = true;
+                            let seat = game.hand_playing().unwrap();
+                            let names = ["me", "LHO", "partner", "RHO"];
+                            let dummy = game.dummy().unwrap();
+                            println!(
+                                "\n{} wins: RunPlan {p}, Run {r}.  {} {:?}, the player is {} ({seat:?}), dummy {dummy:?}, tricks done {}, trick so far {:?}, plays {card}",
+                                if plan_is_longer { "RunPlan" } else { "Run" },
+                                game.highest_contract_bid().map_or("?".to_string(), |b| format!("{b:?}")),
+                                a.trump,
+                                ["declarer", "dummy", "defender (LHO of declarer)", "defender (RHO of declarer)"][a.role],
+                                game.tricks.len(),
+                                a.trick.iter().flatten().map(|c| c.to_string()).collect::<Vec<_>>(),
+                            );
+                            for (n, name) in names.iter().enumerate() {
+                                let s = seat + n;
+                                let hidden = n != 0 && s != dummy && !(seat == dummy && n == 2);
+                                println!("    {name:<8}{} {}", if hidden { "(hidden)" } else { "        " }, game.hands[s]);
+                            }
+                            let gave_up = runs.iter().filter(|r| r.1).count();
+                            println!(
+                                "    Run's runs: {:?}{}",
+                                runs.iter().map(|r| r.0).collect::<Vec<_>>(),
+                                if gave_up > 0 { format!(" ({gave_up} searches gave up)") } else { String::new() }
+                            );
+                            println!("    RunPlan's chances of 0..4+: {}", odds_text(&plan));
+                            println!("    RunOdds' chances of 0..4+: {}", odds_text(&a.run_odds(card).0));
+                        }
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        println!(
+            "\n{cards} cards: RunPlan longer for {plan_longer} ({:.1}%), Run longer for {run_longer} ({:.1}%)",
+            100.0 * plan_longer as f64 / cards as f64,
+            100.0 * run_longer as f64 / cards as f64
+        );
+        println!("by how much longer (1, 2, 3, 4): RunPlan {:?}, Run {:?}", &by_gap[0][1..], &by_gap[1][1..]);
     }
 
     #[test]
