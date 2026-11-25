@@ -59,7 +59,7 @@ one, or sits under a hidden honour.
 | `Trumps` | 1,280 | play, how many trumps the player has (0–3+), how many the other visible hand has, how many are hidden (0, 1–2, 3–4, 5+), whether the contract is notrump: drawing trumps, ruffing and overruffing | helped; in every shape since |
 | `History` | 800 | role, play, who first led this suit this hand (nobody, the player, or which other seat) and in how many tricks it has been led: returning partner's suit, not helping declarer's, seeing a ruff coming | **+0.041 ± 0.008** tricks a deal on top of `Trumps`; in the best shape |
 | `Later` | 360 | role, play; whether the other visible hand plays after the player and could beat the trick; whether a hidden hand plays after and is known void in the suit led | helped on top of plain `v2`, but **+0.008 ± 0.012** (zero) on top of `Trumps` and `History` |
-| `Later2` | 640 | role, play; for the hidden hands still to play in the trick, separately for opponents and partner: not after me, can't beat, could beat by following, could beat by ruffing ("could" by the cards unseen, the suits shown out of, and the lengths the auction showed) | **screen running**, ends about 19:40 on 2026-11-24 |
+| `Later2` | 640 | role, play; for the hidden hands still to play in the trick, separately for opponents and partner: not after me, can't beat, could beat by following, could beat by ruffing ("could" by the cards unseen, the suits shown out of, and the lengths the auction showed) | **+0.023 ± 0.007** on top of `Trumps` and `History`, all four runs positive; in `v2-big` |
 | `Bids` | 640 | role, play, and which seats bid this card's suit | **not used**: it reads the calls, which the rule forbids |
 
 ### Tables that use card-location beliefs (branch `join-beliefs`)
@@ -73,7 +73,7 @@ each costs about 4× in training time.
 | Table | Entries | What it says | Result |
 |---|---|---|---|
 | `AboveSplit` / `BelowSplit` | 500 each | `Above`/`Below` with "hidden" split into "first hidden hand" and "second", each way weighted by its chance | **+0.008 ± 0.005** (zero) after 10,000 rounds; Pure's two runs still to come |
-| `Later3` | 640 | `Later2` with "could" replaced by the chance that the hand does: each of the 16 joint states weighted by its exact probability | built; screened only if the true-deal test or `Later2` pays |
+| `Later3` | 640 | `Later2` with "could" replaced by the chance that the hand does: each of the 16 joint states weighted by its exact probability | built; to be screened against `Later2`, now that `Later2` paid |
 | `Later3Knots` | 1,280 | `Later3` with each chance on a scale that can bend at ½ (a tent at ½ and a ramp to 1) | built; tested against `Later3` only if `Later3` pays |
 
 Setting the beliefs to the true deal (`PLAY_SELF_ORACLE=1`) gives the
@@ -103,8 +103,8 @@ experiment starts from model #3 and not from scratch.
 | `v2-trumps-wide`, `v2-trumps-history-wide` | as above | 32, 16 | width didn't help (−0.02) |
 | `v2-trumps-history-deep` | base + `Trumps` + `History` | 16, 8, 8 | +0.011 ± 0.008 at 10,000 rounds; may need longer |
 | `v2-later-trumps-history` | + `Later` | 16, 8 | `Later` adds nothing here |
-| `v2-trumps-history-later2` | + `Later2` | 16, 8 | screen running |
-| `v2-big` | base + `Trumps` + `History` + `Later` | 64, 32, 16 | the long run, starting soon, grown from the best averaged model |
+| `v2-trumps-history-later2` | + `Later2` | 16, 8 | +0.023 ± 0.007 over `v2-trumps-history` |
+| `v2-big` | base + `Later` + `Trumps` + `History` + `Later2` | 64, 32, 16 | the long run, starting soon, grown from the best averaged model |
 | `v2-trumps-beliefs` (on `join-beliefs`) | `Trumps` shape with `AboveSplit`/`BelowSplit` | 16, 8 | zero so far |
 | `v2-later`, `v2-history`, `v2-later-history`, `v2-later-trumps`, `v2-bids` | earlier screens | 16, 8 | superseded |
 
