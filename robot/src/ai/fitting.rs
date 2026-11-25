@@ -15,7 +15,37 @@ use rand::{Rng, SeedableRng};
 /// For each choice, each candidate's entries and its value to the one who
 /// chooses, the more the better.
 #[cfg(test)]
-pub(crate) type Choices = Vec<Vec<(Vec<usize>, f64)>>;
+pub(crate) type Choices<E = Vec<usize>> = Vec<Vec<(E, f64)>>;
+
+/// What a candidate looks up in a network's tables: a list of entries, or
+/// [`Entries`] with some of them weighted.
+#[cfg(test)]
+pub(crate) trait Lookups: Sync {
+    /// The score of a candidate that looks these up.
+    fn score_in(&self, network: &Network) -> f64;
+    /// Adds `coefficient` times the gradient of that score to `gradient`.
+    fn add_gradient_in(&self, network: &Network, coefficient: f64, gradient: &mut [f64]);
+}
+
+#[cfg(test)]
+impl Lookups for Vec<usize> {
+    fn score_in(&self, network: &Network) -> f64 {
+        network.score(self)
+    }
+    fn add_gradient_in(&self, network: &Network, coefficient: f64, gradient: &mut [f64]) {
+        network.add_gradient(self, coefficient, gradient);
+    }
+}
+
+#[cfg(test)]
+impl Lookups for Entries {
+    fn score_in(&self, network: &Network) -> f64 {
+        network.score_of(self)
+    }
+    fn add_gradient_in(&self, network: &Network, coefficient: f64, gradient: &mut [f64]) {
+        network.add_gradient_of(self, coefficient, gradient);
+    }
+}
 
 /// The entries of a network's tables that a candidate looks up: entries
 /// that are there, and entries that are there with a chance, such as those
@@ -342,8 +372,8 @@ impl Network {
 
     /// Which of `candidates` it scores highest.
     #[cfg(test)]
-    pub(crate) fn choice(&self, candidates: &[(Vec<usize>, f64)]) -> usize {
-        let scores: Vec<f64> = candidates.iter().map(|(e, _)| self.score(e)).collect();
+    pub(crate) fn choice<E: Lookups>(&self, candidates: &[(E, f64)]) -> usize {
+        let scores: Vec<f64> = candidates.iter().map(|(e, _)| e.score_in(self)).collect();
         let mut best = 0;
         for (i, &score) in scores.iter().enumerate() {
             if score > scores[best] {
@@ -362,7 +392,7 @@ impl Network {
 
     /// The mean value of the candidate it chooses, over `choices`.
     #[cfg(test)]
-    pub(crate) fn mean_value(&self, choices: &[&Vec<(Vec<usize>, f64)>]) -> f64 {
+    pub(crate) fn mean_value<E: Lookups>(&self, choices: &[&Vec<(E, f64)>]) -> f64 {
         let total: f64 = choices.iter().map(|c| c[self.choice(c)].1).sum();
         total / choices.len() as f64
     }
@@ -453,8 +483,8 @@ impl Adam {
 /// `network` fitted to `choices` by `steps` steps of Adam, with a step that
 /// shrinks to nothing, less `penalty` times the squares of the parameters.
 #[cfg(test)]
-pub(crate) fn fit(
-    choices: &[&Vec<(Vec<usize>, f64)>],
+pub(crate) fn fit<E: Lookups>(
+    choices: &[&Vec<(E, f64)>],
     mut network: Network,
     penalty: f64,
     steps: usize,
@@ -463,14 +493,14 @@ pub(crate) fn fit(
     for step in 1..=steps {
         let mut gradient: Vec<f64> = network.params.iter().map(|w| -penalty * w).collect();
         for candidates in choices {
-            let scores: Vec<f64> = candidates.iter().map(|(e, _)| network.score(e)).collect();
+            let scores: Vec<f64> = candidates.iter().map(|(e, _)| e.score_in(&network)).collect();
             let most = scores.iter().copied().fold(f64::MIN, f64::max);
             let odds: Vec<f64> = scores.iter().map(|s| (s - most).exp()).collect();
             let sum: f64 = odds.iter().sum();
             let mean: f64 = odds.iter().zip(*candidates).map(|(p, c)| p * c.1).sum::<f64>() / sum;
             for ((entries, value), p) in candidates.iter().zip(&odds) {
                 let g = p / sum * (value - mean) / choices.len() as f64;
-                network.add_gradient(entries, g, &mut gradient);
+                entries.add_gradient_in(&network, g, &mut gradient);
             }
         }
         let rate = 0.05 * (1.0 - (step as f64 - 1.0) / steps as f64);
@@ -484,8 +514,8 @@ pub(crate) fn fit(
 /// running at once, with the mean value held out that each gives.  The
 /// choice `i` is in fold `i % 5`.
 #[cfg(test)]
-pub(crate) fn cross_validate(
-    choices: &Choices,
+pub(crate) fn cross_validate<E: Lookups>(
+    choices: &Choices<E>,
     start: &(dyn Fn() -> Network + Sync),
     penalties: &[f64],
     steps: usize,
@@ -496,7 +526,7 @@ pub(crate) fn cross_validate(
             let folds: Vec<_> = (0..5)
                 .map(|fold| {
                     scope.spawn(move || {
-                        let split = |held: bool| -> Vec<&Vec<(Vec<usize>, f64)>> {
+                        let split = |held: bool| -> Vec<&Vec<(E, f64)>> {
                             choices
                                 .iter()
                                 .enumerate()
