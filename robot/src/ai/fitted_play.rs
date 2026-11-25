@@ -893,10 +893,9 @@ impl Model {
     /// becomes the same table of `shape`, wherever that is, the tables that
     /// it lacks start adding nothing, and so do the units of layers that are
     /// wider or added after its last (see [`crate::ai::fitting::grows`]).  A
-    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if its
-    /// layers cannot grow into those of `shape`.  A table that `shape` has no
-    /// place for is dropped first, with its entries' weights, which changes
-    /// the scores (see [`Model::without_tables`]).
+    /// model of [`V1`] is first laid out as one of [`V2`].  `None` if `shape`
+    /// lacks one of its tables, or its layers cannot grow into those of
+    /// `shape`.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
         if self.shape == &V1 {
@@ -917,8 +916,7 @@ impl Model {
                 || (table == Table::Later2 || table == Table::Later3) && shape.tables.contains(&Table::Later3Knots)
         };
         if self.shape.tables.iter().any(|&t| !kept(t)) {
-            let dropped: Vec<Table> = self.shape.tables.iter().copied().filter(|&t| !kept(t)).collect();
-            return self.without_tables(&dropped).grown_to(shape);
+            return None;
         }
         // Where each table starts among the entries of `shape`.
         let starts: Vec<usize> = shape
@@ -982,6 +980,33 @@ impl Model {
             network.copy_entry(from, to, factor);
         }
         Some(Model { shape, network })
+    }
+
+    /// This model grown into one of `shape` (see [`Model::grown_to`]), after
+    /// dropping the tables that `shape` has no place for, with their entries'
+    /// weights (see [`Model::without_tables`]), so that its cards' scores lose
+    /// what those tables added.
+    #[cfg(test)]
+    pub(crate) fn reshaped_to(&self, shape: &'static Shape) -> Option<Model> {
+        let model = if self.shape == &V1 { self.without_room() } else { self.clone() };
+        let dropped: Vec<Table> = model
+            .shape
+            .tables
+            .iter()
+            .copied()
+            .filter(|&t| {
+                let becomes = match t {
+                    Table::Above => Some(Table::AboveSplit),
+                    Table::Below => Some(Table::BelowSplit),
+                    Table::Later2 => Some(Table::Later3),
+                    _ => None,
+                };
+                !shape.tables.contains(&t)
+                    && !becomes.is_some_and(|b| shape.tables.contains(&b))
+                    && !((t == Table::Later2 || t == Table::Later3) && shape.tables.contains(&Table::Later3Knots))
+            })
+            .collect();
+        if dropped.is_empty() { model.grown_to(shape) } else { model.without_tables(&dropped).grown_to(shape) }
     }
 
     /// This model without the tables `dropped`: a model of the shape of its
@@ -3490,7 +3515,12 @@ mod tests {
             ],
             layers: &[20, 11],
         };
-        let shapes: Vec<&'static Shape> = SHAPES.iter().copied().filter(|shape| !shape.reads_beliefs()).collect();
+        // The shapes with every table of v2 (the lean ones drop some).
+        let shapes: Vec<&'static Shape> = SHAPES
+            .iter()
+            .copied()
+            .filter(|shape| !shape.reads_beliefs() && (shape == &&V1 || V2.tables.iter().all(|t| shape.tables.contains(t))))
+            .collect();
         let mut grown: Vec<Model> = shapes.iter().filter_map(|&shape| old.grown_to(shape)).collect();
         assert_eq!(grown.len(), shapes.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
@@ -5579,7 +5609,7 @@ mod tests {
         // The learners that the file lacks take the shapes in turn.
         while learners.len() < population {
             let shape = shapes[learners.len() % shapes.len()];
-            let grown = start.get(learners.len() % start.len().max(1)).and_then(|start| start.grown_to(shape));
+            let grown = start.get(learners.len() % start.len().max(1)).and_then(|start| start.reshaped_to(shape));
             warmups.push(if grown.is_some() { 20 } else { 0 });
             let model = grown.unwrap_or_else(|| Model::new(shape, 11 + learners.len() as u64));
             adams.push(fitting::Adam::new(model.network.params.len()));
@@ -7845,7 +7875,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(18);
         let mut full = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
         full.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
-        let lean = full.grown_to(&V2_LEAN).unwrap();
+        assert!(full.grown_to(&V2_LEAN).is_none(), "growing never drops a table");
+        let lean = full.reshaped_to(&V2_LEAN).unwrap();
         let dropped = [Table::Below, Table::FirstPoints, Table::SecondPoints];
         let mut compared = 0;
         for game in crate::ai::opening_lead::candidates::opening_leads(55, 6) {
