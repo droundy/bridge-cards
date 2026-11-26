@@ -2324,7 +2324,7 @@ mod tests {
     #[ignore]
     fn match_the_leads() {
         use crate::ai::opening_lead::candidates::{current_weights, lead_by, opening_leads};
-        use crate::ai::opening_lead::{with_facts, Auction};
+        use crate::ai::opening_lead::Auction;
         let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
         let count = number("PLAY_MATCH_DEALS", 6000);
         let seed = number("PLAY_MATCH_SEED", 41) as u64;
@@ -2341,7 +2341,7 @@ mod tests {
         let (notrump_a, suit_a) = current_weights();
         let games = opening_leads(seed, count);
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let results = std::sync::Mutex::new(vec![[0.0; 3]; games.len()]);
+        let results = std::sync::Mutex::new(vec![[0.0; 5]; games.len()]);
         let same = std::sync::atomic::AtomicUsize::new(0);
         let learners = std::slice::from_ref(&model);
         let players = [Player::Learning(0); 4];
@@ -2362,12 +2362,14 @@ mod tests {
                         let card_b = lead_by(&auction, hand, false, &weights_b[0], &weights_b[1]);
                         same.fetch_add(usize::from(card_a == card_b), std::sync::atomic::Ordering::Relaxed);
                         let mut rng = StdRng::seed_from_u64(seed * 1_000_003 + i as u64);
-                        let mut totals = [0.0; 3];
+                        let mut totals = [0.0; 5];
                         for _ in 0..playouts {
                             let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
                             let luck = rng.r#gen();
-                            for (total, (card, facts)) in totals.iter_mut().zip([(card_a, true), (card_b, false), (card_a, false)]) {
-                                let tricks = with_facts(facts, || playout_at(game, card, convention, learners, players, temperature, &qualities, luck));
+                            // A, B, C, D (defenders read the facts) and E (the declarer's side does).
+                            let sides = [(card_a, [true, true]), (card_b, [false, false]), (card_a, [false, false]), (card_a, [true, false]), (card_a, [false, true])];
+                            for (total, (card, facts)) in totals.iter_mut().zip(sides) {
+                                let tricks = playout_at_sided(game, card, convention, learners, players, temperature, &qualities, luck, Some(facts));
                                 *total += tricks[leader as usize % 2] as f64 / playouts as f64;
                             }
                         }
@@ -2377,23 +2379,25 @@ mod tests {
             }
         });
         let results = results.into_inner().unwrap();
-        let stats = |f: &dyn Fn(&[f64; 3]) -> f64| {
+        let stats = |f: &dyn Fn(&[f64; 5]) -> f64| {
             let values: Vec<f64> = results.iter().map(f).collect();
             let n = values.len() as f64;
             let mean = values.iter().sum::<f64>() / n;
             (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
         };
-        let (a, b, c) = (stats(&|r| r[0]), stats(&|r| r[1]), stats(&|r| r[2]));
+        let means: Vec<(f64, f64)> = (0..5).map(|k| stats(&|r| r[k])).collect();
         println!(
-            "{} deals, the leader's side's tricks: A (conventional, facts) {:.3}, B (unconstrained, no facts) {:.3}, C (conventional, no facts) {:.3}; A and B lead the same card in {:.1}%",
+            "{} deals, the leader's side's tricks: A (conventional, facts) {:.3}, B (unconstrained, no facts) {:.3}, C (conventional, no facts) {:.3}, D (facts for the defenders only) {:.3}, E (facts for the declarer's side only) {:.3}; A and B lead the same card in {:.1}%",
             results.len(),
-            a.0,
-            b.0,
-            c.0,
+            means[0].0,
+            means[1].0,
+            means[2].0,
+            means[3].0,
+            means[4].0,
             100.0 * same.load(std::sync::atomic::Ordering::Relaxed) as f64 / results.len() as f64,
         );
-        for (name, f) in [("A-B", (|r: &[f64; 3]| r[0] - r[1]) as fn(&[f64; 3]) -> f64), ("C-B", |r| r[2] - r[1]), ("A-C", |r| r[0] - r[2])] {
-            let (mean, error) = stats(&f);
+        for (name, x, y) in [("A-B", 0, 1), ("C-B", 2, 1), ("A-C", 0, 2), ("D-C (the defence reads its leads)", 3, 2), ("C-E (the declarer reads them)", 2, 4)] {
+            let (mean, error) = stats(&|r| r[x] - r[y]);
             println!("{name}: {mean:+.3} ({error:.3})");
         }
     }
@@ -2872,6 +2876,27 @@ mod tests {
         qualities: &[[f64; 4]; 13],
         seed: u64,
     ) -> [usize; 2] {
+        playout_at_sided(game, card, convention, learners, players, temperature, qualities, seed, None)
+    }
+
+    /// [`playout_at`] with the opening lead's facts (see
+    /// [`crate::ai::opening_lead::lead_facts`]) known to one side only, or to
+    /// both or neither: `facts` is, for the players of the side that leads
+    /// the opening lead and for the others, whether each reads the facts
+    /// when it chooses a card.  With `None` the facts are as the thread has them.
+    #[expect(clippy::too_many_arguments, reason = "a playout's settings, all at hand where it is called")]
+    fn playout_at_sided(
+        game: &GameState<()>,
+        card: Card,
+        convention: &Convention,
+        learners: &[Model],
+        players: [Player; 4],
+        temperature: f64,
+        qualities: &[[f64; 4]; 13],
+        seed: u64,
+        facts: Option<[bool; 2]>,
+    ) -> [usize; 2] {
+        let leaders = game.turn().map_or(0, |leader| leader as usize % 2);
         let mut game = crate::ai::playout::copy_of(game);
         let mut rng = StdRng::seed_from_u64(seed);
         game.play(card);
@@ -2886,11 +2911,19 @@ mod tests {
                     continue;
                 }
             };
-            let Some(view) = View::new(&game, convention) else {
+            let choose = || {
+                let view = View::new(&game, convention)?;
+                let quality = qualities[game.tricks.len().min(12)][seat as usize];
+                Some(card_at_quality(&game, &view, model, temperature, quality))
+            };
+            let chosen = match facts {
+                None => choose(),
+                Some(facts) => crate::ai::opening_lead::with_facts(facts[usize::from(chooser(&game, seat) as usize % 2 != leaders)], choose),
+            };
+            let Some(chosen) = chosen else {
                 break;
             };
-            let quality = qualities[game.tricks.len().min(12)][seat as usize];
-            game.play(card_at_quality(&game, &view, model, temperature, quality));
+            game.play(chosen);
         }
         [game.ns_tricks, game.ew_tricks]
     }
