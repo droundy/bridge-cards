@@ -366,7 +366,7 @@ fn opening_lead_hands() -> Vec<(Auction, Cards)> {
         .collect()
 }
 
-/// The lead that the 35 fitted features score highest, which is the lead
+/// The lead that the 39 fitted features score highest, which is the lead
 /// the robot's order of opening leads puts first.
 #[scaling::bench(group = "opening lead", baseline)]
 fn fitted_features(leads: &Vec<(Auction, Cards)>) -> Vec<Card> {
