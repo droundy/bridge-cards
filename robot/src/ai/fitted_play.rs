@@ -589,7 +589,11 @@ struct Shown {
 impl Shown {
     /// What the auction of `game` (read by `convention`) and the play show of
     /// the hand of `seat`, which has `played`, has shown out of the suits of
-    /// `shown_out`, and holds some of `hidden`.
+    /// `shown_out`, and holds some of `hidden`; and, if `seat` made it, what
+    /// the opening `lead` shows (see [`super::opening_lead::lead_facts`]): a
+    /// fourth-best lead raises the fewest cards that the hand was dealt of its
+    /// suit to four, and one more for each lower card of the suit that it has
+    /// played since, as the auction's bounds would.
     fn new<C>(
         game: &GameState<C>,
         convention: &Convention,
@@ -597,10 +601,16 @@ impl Shown {
         played: Cards,
         shown_out: Cards,
         hidden: Cards,
+        lead: Option<super::opening_lead::LeadFact>,
     ) -> Shown {
         let first = (seat as usize + 4 - game.dealer as usize) % 4;
         let offset = (game.bids.len() + 4 - first) % 4;
-        let (min, max) = convention.shown_bounds(&game.bids, offset);
+        let (mut min, max) = convention.shown_bounds(&game.bids, offset);
+        if let Some(lead) = lead.filter(|lead| lead.leader == seat && lead.shows == super::opening_lead::LeadShows::FourthBest) {
+            let suit = lead.card.suit();
+            let lower = played.in_suit(suit).filter(|c| c.rank() < lead.card.rank()).count();
+            min.length[suit] = min.length[suit].max(4 + lower as u8);
+        }
         let length = Suit::ALL.map(|suit| {
             if !shown_out.in_suit(suit).is_empty() {
                 return (0, 0);
@@ -690,6 +700,9 @@ pub(crate) struct View {
     /// and whether it is the player's partner.
     hidden_after: [bool; 2],
     hidden_partner: [bool; 2],
+    /// For each of the two hidden hands, the cards that the opening lead
+    /// shows it cannot hold (see [`super::opening_lead::lead_facts`]).
+    cannot_hold: [Cards; 2],
 }
 
 impl View {
@@ -812,8 +825,33 @@ impl View {
         let in_sight = if seat == dummy { declarer } else { dummy };
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
+        let lead = super::opening_lead::lead_facts(game);
+        let mut cannot_hold = [Cards::EMPTY; 2];
+        if let Some(lead) = lead {
+            use super::opening_lead::LeadShows;
+            let above = Cards::higher_than(lead.card) & hidden;
+            if let Some(k) = hidden_order.iter().position(|&s| s == lead.leader) {
+                match lead.shows {
+                    // The leader held no higher card of partner's suit.
+                    LeadShows::Highest => cannot_hold[k] += above,
+                    // The leader held exactly three higher cards: once it has
+                    // played them it holds none, and while it needs all the
+                    // hidden ones the other hand holds none.
+                    LeadShows::FourthBest => {
+                        let played_above = (played[lead.leader] & Cards::higher_than(lead.card)).len();
+                        let need = 3usize.saturating_sub(played_above);
+                        if need == 0 {
+                            cannot_hold[k] += above;
+                        }
+                        if need >= above.len() {
+                            cannot_hold[1 - k] += above;
+                        }
+                    }
+                }
+            }
+        }
         let shown = hidden_order.map(|hidden_seat| {
-            Shown::new(game, convention, hidden_seat, played[hidden_seat], shown_out[hidden_seat], hidden)
+            Shown::new(game, convention, hidden_seat, played[hidden_seat], shown_out[hidden_seat], hidden, lead)
         });
         // Seats by how far clockwise from the player they are.
         let from_me = |s: Seat| (s as usize + 4 - seat as usize) % 4;
@@ -858,6 +896,7 @@ impl View {
             hidden_later_void: hidden_later.iter().fold(Cards::EMPTY, |void, &s| void + shown_out[s]),
             hidden_after: hidden_order.map(|s| later.contains(&s)),
             hidden_partner: hidden_order.map(|s| s == seat + 2),
+            cannot_hold,
         })
     }
 
@@ -910,7 +949,7 @@ impl View {
                 .into_iter()
                 .filter(|&suit| self.shown[k].length[suit as usize].1 > 0)
                 .fold(Cards::EMPTY, |cards, suit| cards + Cards::ALL.in_suit(suit));
-            let could = beating & holdable;
+            let could = beating & (holdable - self.cannot_hold[k]);
             let value = if !(could & following).is_empty() {
                 2
             } else if self.shown[k].length[led as usize].0 == 0 && !(could - following).is_empty() {
@@ -1404,6 +1443,26 @@ mod tests {
     /// [`View::later2`] found card by card, and the soundness of what it says:
     /// when a later hidden hand really holds a card that it may play and
     /// that beats the trick so far, the table says that it could win.
+    /// After a fourth-best opening lead, the next player sees the leader as
+    /// holding at least the three cards of the suit above it.
+    #[test]
+    fn a_fourth_best_lead_shows_three_cards_above_it() {
+        use crate::ai::opening_lead::{candidates::opening_leads, lead_facts, likely_opening_leads, Auction, LeadShows};
+        let mut seen = 0;
+        for mut game in opening_leads(5, 80) {
+            let hand = game.hands[game.turn().unwrap()];
+            game.play(likely_opening_leads(&Auction::new(&game).unwrap(), hand)[0]);
+            let Some(lead) = lead_facts(&game).filter(|lead| lead.shows == LeadShows::FourthBest) else { continue };
+            let convention = game.system.convention();
+            // The dummy is next: its hidden hands are the leader's partner,
+            // then the leader.
+            let view = View::new(&game, &convention).unwrap();
+            assert!(view.shown[1].length[lead.card.suit() as usize].0 >= 3, "{:?}", view.shown[1].length);
+            seen += 1;
+        }
+        assert!(seen > 0);
+    }
+
     #[test]
     fn later2_is_what_a_search_of_the_cards_finds() {
         let (mut checked, mut winners) = (0, 0);
@@ -1427,7 +1486,7 @@ mod tests {
                     }
                     let (mut follows, mut ruffs) = (false, false);
                     for other in view.hidden {
-                        let room = view.shown[k].length[other.suit() as usize].1 > 0;
+                        let room = view.shown[k].length[other.suit() as usize].1 > 0 && !view.cannot_hold[k].contains(other);
                         if room && beats(view.trump, other, top) {
                             if other.suit() == led {
                                 follows = true;
@@ -2553,8 +2612,9 @@ mod tests {
             assert_eq!(run[legal.iter().position(|&c| c == played).unwrap()], coldest);
             assert!((chances.iter().sum::<f64>() - 1.0).abs() < 1e-9);
             let likeliest = (0..chances.len()).max_by(|&a, &b| chances[a].total_cmp(&chances[b])).unwrap();
+            // (Two runs can be equally likely, so compare their chances.)
             let first = card_at_quality(game, &view, &model, 0.3, 0.0);
-            assert_eq!(run[legal.iter().position(|&c| c == first).unwrap()], likeliest);
+            assert_eq!(chances[run[legal.iter().position(|&c| c == first).unwrap()]], chances[likeliest]);
             // Many draws play each card about as often as its share.
             let n = 4000;
             let mut played = vec![0usize; legal.len()];

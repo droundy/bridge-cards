@@ -80,7 +80,19 @@ impl Generator {
             game.tricks.clear();
             let cards_before = 4 * (13 - tricks_left) + wanted.1;
             for _ in 0..cards_before {
-                let legal: Vec<Card> = game.could_be_played().collect();
+                let mut legal: Vec<Card> = game.could_be_played().collect();
+                // The opening lead keeps the lead conventions, so that what
+                // it shows is true (see `lead_facts`).
+                if game.tricks.is_empty() && game.played.is_empty() {
+                    if let Some(auction) = crate::ai::opening_lead::Auction::new(game) {
+                        let hand = game.hands[game.turn().unwrap()];
+                        let allowed: Vec<Card> =
+                            legal.iter().copied().filter(|&c| crate::ai::opening_lead::lead_allowed(&auction, hand, c)).collect();
+                        if !allowed.is_empty() {
+                            legal = allowed;
+                        }
+                    }
+                }
                 game.play(legal[rng.gen_range(0..legal.len())]);
             }
             // There has to be something to choose.

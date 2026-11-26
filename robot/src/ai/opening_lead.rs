@@ -400,11 +400,90 @@ pub(crate) fn likely_opening_leads(auction: &Auction, hand: Cards) -> Vec<Card> 
     } else {
         &NOTRUMP_WEIGHTS
     };
-    let mut leads: Vec<(f64, Card)> = hand
+    let allowed: Cards = hand.filter(|&card| lead_allowed(auction, hand, card)).fold(Cards::EMPTY, Cards::insert);
+    // Every hand has a suit of four or more, so some lead is always allowed;
+    // the whole hand is only a guard.
+    let candidates = if allowed.is_empty() { hand } else { allowed };
+    let mut leads: Vec<(f64, Card)> = candidates
         .map(|card| (lead_score(auction, hand, card, weights), card))
         .collect();
     leads.sort_by(|a, b| b.0.total_cmp(&a.0));
     leads.into_iter().map(|(_, card)| card).collect()
+}
+
+/// Whether the opening lead of `card` from `hand` keeps the partnership's
+/// lead conventions.  In partner's suit (one that partner's calls showed at
+/// least four cards of, by the tables' bounds), in any contract, the lead is
+/// the highest card of the suit.  Against notrump, in any other suit, it is
+/// an ace, king or queen, or the fourth-highest card of a suit of four or
+/// more, so that a jack or lower is always fourth best.  Against a suit
+/// contract any other lead is allowed.
+pub(crate) fn lead_allowed(auction: &Auction, hand: Cards, card: Card) -> bool {
+    let suit = hand.in_suit(card.suit());
+    if partners_suit(auction.shown[PARTNER].suits[card.suit() as usize].length.0) {
+        return suit.max() == Some(card);
+    }
+    auction.trump.is_some() || card.rank() >= 12 || fourth_highest(suit) == Some(card)
+}
+
+/// Whether partner's fewest cards of a suit, as the auction showed them, make
+/// it partner's suit for the lead conventions.
+fn partners_suit(least: u8) -> bool {
+    least >= 4
+}
+
+/// The fourth-highest of `cards`, if there are four.
+fn fourth_highest(cards: Cards) -> Option<Card> {
+    let mut cards: Vec<Card> = cards.collect();
+    cards.sort_by_key(|card| std::cmp::Reverse(card.rank()));
+    cards.get(3).copied()
+}
+
+/// What an opening lead shows by the lead conventions (see
+/// [`lead_allowed`]), which the defenders and the declarer both know.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LeadShows {
+    /// Fourth best: the leader held exactly three cards of the suit above
+    /// the one led, and so at least four, and one more for each lower card
+    /// of the suit that they play later.
+    FourthBest,
+    /// The highest of partner's suit: the leader held none above it.
+    Highest,
+}
+
+/// The opening lead and what it shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LeadFact {
+    pub(crate) leader: Seat,
+    pub(crate) card: Card,
+    pub(crate) shows: LeadShows,
+}
+
+/// What the opening lead of `game` shows by the lead conventions, if it has
+/// been made and shows anything (an ace, king or queen against notrump
+/// outside partner's suit, and any lead against a suit contract outside it,
+/// show nothing).  It reads only the game: the first card of the play, the
+/// contract and what partner's calls showed, so that every player and every
+/// robot can know it.  `None` for a game that does not keep its tricks once
+/// the first one is over.
+pub(crate) fn lead_facts<C>(game: &GameState<C>) -> Option<LeadFact> {
+    let leader = game.dummy()? + 3;
+    let card = match game.tricks.first() {
+        Some(&(seat, cards)) if seat == leader => cards[0],
+        Some(_) => return None,
+        None if game.ns_tricks + game.ew_tricks == 0 => *game.played.first()?,
+        None => return None,
+    };
+    let bounds = Unseen::shown(game, game.system.table(), leader);
+    let (trump, _, _) = contract(&game.bids);
+    let shows = if partners_suit(bounds[PARTNER].0.length[card.suit()]) {
+        LeadShows::Highest
+    } else if trump.is_none() && card.rank() <= 11 {
+        LeadShows::FourthBest
+    } else {
+        return None;
+    };
+    Some(LeadFact { leader, card, shows })
 }
 
 /// Other ways of ordering the opening leads, beside [`likely_opening_leads`],
@@ -590,6 +669,64 @@ mod tests {
     use bridge_solver::DoubleDummy;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// An auction that showed nothing, but partner's fewest hearts.
+    fn auction_with(trump: Option<Suit>, partners_hearts: u8) -> Auction {
+        let open = HandShown { suits: [SuitShown { length: (0, 13), points: (0, 10) }; 4], points: (0, 37) };
+        let mut partner = open;
+        partner.suits[Suit::Hearts as usize].length.0 = partners_hearts;
+        Auction::from_shown(trump, 3, false, [open, partner, open])
+    }
+
+    fn allowed(auction: &Auction, hand: Cards) -> Cards {
+        hand.filter(|&card| lead_allowed(auction, hand, card)).fold(Cards::EMPTY, Cards::insert)
+    }
+
+    #[test]
+    fn the_lead_conventions_allow_what_they_say() {
+        let hand: Cards = "♠KJ852♥852♦AQ3♣74".parse().unwrap();
+        let card = |text: &str| -> Cards { text.parse().unwrap() };
+        // At notrump: honours, and fourth best from four or more.
+        assert_eq!(allowed(&auction_with(None, 0), hand), card("♠K5♦AQ"));
+        // In partner's suit, the highest, in any contract.
+        assert_eq!(allowed(&auction_with(None, 4), hand), card("♠K5♥8♦AQ"));
+        let in_suit = allowed(&auction_with(Some(Suit::Spades), 4), hand);
+        assert_eq!(in_suit, hand - card("♥52"));
+        // The robot leads only what the conventions allow.
+        let auction = auction_with(None, 0);
+        assert!(likely_opening_leads(&auction, hand).iter().all(|&c| lead_allowed(&auction, hand, c)));
+    }
+
+    /// The robot's leads keep the conventions, and what lead_facts says that
+    /// they show is true of the leader's hand.
+    #[test]
+    fn a_lead_shows_what_lead_facts_says() {
+        let (mut fourth, mut highest) = (0, 0);
+        for mut game in opening_leads(5, 80) {
+            let leader = game.turn().unwrap();
+            let hand = game.hands[leader];
+            let auction = Auction::new(&game).unwrap();
+            let lead = likely_opening_leads(&auction, hand)[0];
+            assert!(lead_allowed(&auction, hand, lead));
+            assert_eq!(lead_facts(&game), None, "before the lead");
+            game.play(lead);
+            let suit = hand.in_suit(lead.suit());
+            let above = suit.filter(|c| c.rank() > lead.rank()).count();
+            match lead_facts(&game) {
+                Some(LeadFact { shows: LeadShows::FourthBest, leader: l, card }) => {
+                    assert_eq!((l, card), (leader, lead));
+                    assert!(auction.trump.is_none() && above == 3 && suit.len() >= 4, "{lead} from {hand}");
+                    fourth += 1;
+                }
+                Some(LeadFact { shows: LeadShows::Highest, card, .. }) => {
+                    assert_eq!((card, above), (lead, 0), "{lead} from {hand}");
+                    highest += 1;
+                }
+                None => assert!(auction.trump.is_some() || lead.rank() >= 12, "{lead} from {hand}"),
+            }
+        }
+        assert!(fourth > 0 && highest > 0, "{fourth} fourth best, {highest} in partner's suit");
+    }
 
     #[test]
     fn the_ensemble_leads_one_of_the_likeliest_leads() {
