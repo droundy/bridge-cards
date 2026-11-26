@@ -5465,7 +5465,7 @@ mod tests {
             average.network.write(&path);
         }
         let reference = read_model(&std::env::var("PLAY_SELF_REFERENCE").expect("PLAY_SELF_REFERENCE"));
-        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(17, number("PLAY_SELF_TOURNAMENT", 200))
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(number("PLAY_SEED", 17) as u64, number("PLAY_SELF_TOURNAMENT", 200))
             .iter()
             .map(|game| serde_json::to_string(game).unwrap())
             .collect();
@@ -5489,6 +5489,16 @@ mod tests {
             (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
         };
         let of_average = gains(&average);
+        if let Ok(path) = std::env::var("PLAY_ALSO") {
+            // Other models, comma-separated, on the same deals.
+            for path in path.split(',') {
+                let values = gains(&read_model(path));
+                let n = values.len() as f64;
+                let mean = values.iter().sum::<f64>() / n;
+                let error = (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt();
+                println!("also {path}: against the reference {mean:+.3} ({error:.3}) tricks a deal more");
+            }
+        }
         let mut of_snapshots = vec![0.0; deals.len()];
         for snapshot in &snapshots {
             for (total, gain) in of_snapshots.iter_mut().zip(gains(snapshot)) {
