@@ -365,6 +365,13 @@ struct Room {
 #[with_template("[%" "%]" "room.html")]
 impl<'a> DisplayAs<HTML> for Room {}
 
+impl Room {
+    /// The path that sits at random at a new table.
+    fn new_table(&self) -> String {
+        axum_server::path(&[&random_name(), "random"])
+    }
+}
+
 struct Player<'a> {
     seat: Seat,
     game: &'a GameState<WsSender>,
@@ -409,5 +416,10 @@ impl TableToJoin {
             names: game.names.clone(),
             bids: game.bids.clone(),
         }
+    }
+    /// The path to `page` of this table, such as `random` or a seat.  It is
+    /// absolute, since the home page is shown at any path that names nothing.
+    fn link(&self, page: &str) -> String {
+        axum_server::path(&[&self.table, page])
     }
 }
