@@ -3719,7 +3719,7 @@ mod tests {
                     let started = std::time::Instant::now();
                     let (ways, scaled) = (split.trim_end_matches('s'), split.ends_with('s'));
                     // The fit that each group's situations belong to.
-                    let (way, count): (fn(&Situation) -> usize, usize) = match ways {
+                    let (way, count): (Kind, usize) = match ways {
                         "1" => (|_| 0, 1),
                         "2" => (|s| s.group / 2, 2),
                         "4" => (|s| s.group, 4),
@@ -3758,7 +3758,7 @@ mod tests {
                         None => println!(),
                     }
                     // By group, by role, and by role and contract.
-                    let kinds: [(&[&str], fn(&Situation) -> usize); 3] =
+                    let kinds: [(&[&str], Kind); 3] =
                         [(&GROUPS, |s| s.group), (&ROLES_ALONE, |s| s.role / 2), (&ROLES, |s| s.role)];
                     let kinds = kinds.into_iter().flat_map(|(names, kind)| names.iter().enumerate().map(move |(g, name)| (name, g, kind)));
                     for (name, g, kind) in kinds {
@@ -4268,6 +4268,9 @@ mod tests {
     /// The kinds of situation that [`screen_play_shapes`] reports apart: who
     /// plays, the declarer's side or the defence, and in what contract.
     const GROUPS: [&str; 4] = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
+
+    /// Which of a list of kinds of situation (such as [`GROUPS`]) one is in.
+    type Kind = fn(&Situation) -> usize;
 
     /// The roles, which [`screen_play_shapes`] reports apart as well.
     const ROLES_ALONE: [&str; 4] = ["own hand", "dummy", "left defender", "right defender"];
