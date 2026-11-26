@@ -5292,7 +5292,8 @@ mod tests {
     /// number (taken again in turn if it has fewer, or its game's model if it
     /// has none), grown into the learner's shape (see [`Model::grown_to`]),
     /// or from nothing if it cannot be; with `#K` after the file's name,
-    /// every learner starts from its learner K (from 1).  A learner
+    /// every learner starts from its learner K (from 1), and with `#K,L,...`
+    /// the learners start from its learners K, L, ... in turn.  A learner
     /// with no state of Adam (see `make_play_model_file`) starts with steps
     /// that grow from nothing over 20 rounds, so that its weights are not
     /// jolted while Adam learns their scale.
@@ -5585,8 +5586,12 @@ mod tests {
         // Or the models of a file, which the learners grow from.
         let mut start = Vec::new();
         if let Ok(path) = std::env::var("PLAY_SELF_START") {
+            // After a `#`, the learners to start from, comma-separated.
             let (path, only) = match path.split_once('#') {
-                Some((file, learner)) => (file.to_string(), Some(learner.parse::<usize>().expect("a learner's number after #"))),
+                Some((file, learners)) => (
+                    file.to_string(),
+                    Some(learners.split(',').map(|l| l.trim().parse::<usize>().expect("a learner's number after #")).collect::<Vec<_>>()),
+                ),
                 None => (path, None),
             };
             let file = model_file::ModelFile::read(&path);
@@ -5598,9 +5603,13 @@ mod tests {
                 file.round
             );
             start = file.learners.into_iter().map(|learner| learner.model).collect();
-            if let Some(learner) = only {
-                start = vec![start.swap_remove(learner - 1)];
-                println!("every learner starts from its learner {learner}");
+            if let Some(chosen) = only {
+                start = chosen.iter().map(|&l| start[l - 1].clone()).collect();
+                if chosen.len() == 1 {
+                    println!("every learner starts from its learner {}", chosen[0]);
+                } else {
+                    println!("the learners start from its learners {chosen:?} in turn");
+                }
             }
             if start.is_empty() {
                 start.push(file.best);
