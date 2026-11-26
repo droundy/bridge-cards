@@ -27,7 +27,7 @@
 
 #[cfg(test)]
 use super::fitted_play::{play_likelihood_above, Model};
-use super::opening_lead::{likely_opening_leads, Auction, Unseen};
+use super::opening_lead::{lead_facts, likely_opening_leads, Auction, LeadShows, Unseen};
 use super::{CallMatcher, Convention, PlayAI, RandomPlay};
 use crate::{Bid, BiddingSystem, GameState, Seat};
 use bridge_deck::{Card, Cards, HandValuation, Suit};
@@ -67,6 +67,11 @@ pub(crate) struct Hidden {
     bids: Vec<Bid>,
     /// Where in the auction each hand made its calls.
     calls: [Vec<usize>; 2],
+    /// What the opening lead shows of a hidden hand that made it (see
+    /// [`lead_facts`]): which of the two hands, the cards of the suit above
+    /// the card led, and how many of them it held (three for a fourth best,
+    /// none for the highest of partner's suit).
+    lead: Option<(usize, Cards, usize)>,
 }
 
 impl Hidden {
@@ -89,6 +94,14 @@ impl Hidden {
         };
         let hands = |seats: [Seat; 2]| seats.map(|seat| game.hands[seat]);
         let [first, second] = hands(seats);
+        let lead = lead_facts(game).and_then(|fact| {
+            let k = seats.iter().position(|&s| s == fact.leader)?;
+            let held = match fact.shows {
+                LeadShows::FourthBest => 3,
+                LeadShows::Highest => 0,
+            };
+            Some((k, Cards::higher_than(fact.card), held))
+        });
         Some(Hidden {
             seats,
             sizes: [first.len(), second.len()],
@@ -102,7 +115,20 @@ impl Hidden {
                     .filter(|&i| game.dealer + i == seat)
                     .collect()
             }),
+            lead,
         })
+    }
+
+    /// 1 if the hand that made the opening lead, as `deal` has it with what it
+    /// has played since, did not hold what the lead shows (see
+    /// [`lead_facts`]), and 0 if it did or no hidden hand led: a lead that
+    /// breaks the conventions counts as one more call that the robot would
+    /// not have made, since people do not always lead by them either.
+    pub(crate) fn lead_missed(&self, deal: &[Cards; 2]) -> usize {
+        match self.lead {
+            Some((k, above, held)) => usize::from(((deal[k] + self.played[k]) & above).len() != held),
+            None => 0,
+        }
     }
 
     /// The seats of the two hands.
@@ -136,7 +162,7 @@ impl Hidden {
         count: usize,
     ) -> Vec<[Cards; 2]> {
         let replay = self.replay(convention);
-        closest(deals, count, |deal| replay.calls_missed(deal))
+        closest(deals, count, |deal| replay.calls_missed(deal) + self.lead_missed(deal))
     }
 
     /// An ensemble of `count` deals, or fewer if the cards cannot be dealt.
@@ -211,9 +237,14 @@ impl Hidden {
                 Some(&((false, worst), _)) if closest.len() >= count => most.max(worst),
                 _ => usize::MAX,
             };
-            let Some(missed) = replay.calls_missed_by(&hands, limit) else {
+            let lead_missed = self.lead_missed(&deal);
+            if lead_missed > limit {
+                continue;
+            }
+            let Some(missed) = replay.calls_missed_by(&hands, limit - lead_missed) else {
                 continue;
             };
+            let missed = missed + lead_missed;
             let key = (!fits, missed);
             if closest.len() < count || closest.last().is_some_and(|&(worst, _)| key < worst) {
                 let at = closest.partition_point(|&(other, _)| other <= key);
@@ -258,7 +289,7 @@ impl Hidden {
         while dealt.tried < BUDGET && dealt.deals.len() < count {
             dealt.tried += 1;
             let deal = proposer.deal(rng);
-            if self.fit_the_bidding(&deal) {
+            if self.fit_the_bidding(&deal) && (self.lead_missed(&deal) == 0 || rng.gen_bool(MISS)) {
                 dealt.deals.push(deal);
             }
         }
@@ -333,10 +364,10 @@ impl Hidden {
         // still moved toward those that miss fewer.
         let of_the_auction = |deal: &[Cards; 2]| match auction {
             Some((replay, miss)) => {
-                let missed = replay.calls_missed_by(&replay.hands(deal), usize::MAX).unwrap_or(0);
+                let missed = replay.calls_missed_by(&replay.hands(deal), usize::MAX).unwrap_or(0) + self.lead_missed(deal);
                 miss.max(WALK_MISS).powi(missed as i32)
             }
-            None => 1.0,
+            None => WALK_MISS.powi(self.lead_missed(deal) as i32),
         };
         // The chance of the play of a deal, or 0 once it is under `floor`.
         let of_the_play = |deal: [Cards; 2], floor: f64| {
@@ -505,9 +536,14 @@ impl Hidden {
             if !self.fit_the_bounds(&hands) {
                 continue;
             }
-            let Some(missed) = replay.calls_missed_by(&hands, most) else {
+            let lead_missed = self.lead_missed(&deal);
+            if lead_missed > most {
+                continue;
+            }
+            let Some(missed) = replay.calls_missed_by(&hands, most - lead_missed) else {
                 continue;
             };
+            let missed = missed + lead_missed;
             if missed == 0 {
                 dealt.exact += 1;
             }
@@ -580,7 +616,9 @@ impl Hidden {
         let mut last = None;
         for _ in 0..ATTEMPTS {
             let hands = self.deal(rng)?;
-            if self.fit_the_bidding(&hands) {
+            // A deal against the opening lead's conventions is taken only by
+            // the chance of a miss.
+            if self.fit_the_bidding(&hands) && (self.lead_missed(&hands) == 0 || rng.gen_bool(MISS)) {
                 return Some((hands, true));
             }
             last = Some(hands);
@@ -1221,6 +1259,58 @@ impl PlayAI for EnsemblePlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a robot's opening lead, a hidden leader as the true deal has it
+    /// holds what the lead shows, a deal that moves its higher cards of the
+    /// suit to the other hand does not, and the ensembles keep the lead's
+    /// facts in all but a few deals.
+    #[test]
+    fn the_ensembles_hold_what_the_lead_shows() {
+        use super::super::opening_lead::candidates::opening_leads;
+        let mut rng = StdRng::seed_from_u64(31);
+        let (mut checked, mut broken, mut drawn, mut off) = (0, 0, 0, 0);
+        for mut game in opening_leads(9, 120) {
+            let leader = game.turn().unwrap();
+            let auction = Auction::new(&game).unwrap();
+            let lead = likely_opening_leads(&auction, game.hands[leader])[0];
+            game.play(lead);
+            if lead_facts(&game).is_none() {
+                continue;
+            }
+            let convention = convention_of(game.system);
+            let hidden = Hidden::new(&game, convention).unwrap();
+            let Some(k) = hidden.seats.iter().position(|&s| s == leader) else {
+                continue;
+            };
+            let truth = hidden.seats.map(|s| game.hands[s]);
+            assert_eq!(hidden.lead_missed(&truth), 0, "the robot's lead keeps the conventions");
+            checked += 1;
+            // The leader's higher cards of the suit, given to the other hand
+            // for as many of its cards of other suits.
+            let above = truth[k] & Cards::higher_than(lead);
+            let others = truth[1 - k] - truth[1 - k].in_suit(lead.suit());
+            if !above.is_empty() && others.len() >= above.len() {
+                let mut back = others;
+                let back = back.pick_rng(&mut rng, above.len()).unwrap();
+                let moved = {
+                    let mut deal = truth;
+                    deal[k] = deal[k] - above + back;
+                    deal[1 - k] = deal[1 - k] - back + above;
+                    deal
+                };
+                assert_eq!(hidden.lead_missed(&moved), 1, "{lead}: {above} moved");
+                broken += 1;
+            }
+            let replay = hidden.replay(convention);
+            for deal in hidden.posterior(&mut rng, 20, &replay, MISS).deals {
+                drawn += 1;
+                off += hidden.lead_missed(&deal);
+            }
+        }
+        assert!(checked > 10 && broken > 5, "{checked} leads checked, {broken} broken");
+        // A deal against the lead is drawn at a tenth of the chance, and padded only when too few keep it.
+        assert!((off as f64) < 0.2 * drawn as f64, "{off} of {drawn} deals break the lead");
+    }
     use crate::situations::Generator;
     use crate::{Bid, Seated};
     use std::str::FromStr;

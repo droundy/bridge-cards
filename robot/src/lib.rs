@@ -343,6 +343,29 @@ impl<C> GameState<C> {
                 hands[place(other)] += rest;
                 unknown -= rest;
             }
+            // What a robot's opening lead shows places the higher cards of
+            // its suit (see `lead_facts`); a person may not keep the
+            // conventions, so their lead places nothing.
+            let lead = crate::ai::opening_lead::lead_facts(self).filter(|lead| self.names[lead.leader].not_human());
+            if let Some(lead) = lead {
+                if let Some(i) = hidden.iter().position(|&seat| seat == lead.leader) {
+                    use crate::ai::opening_lead::LeadShows;
+                    let (leader, other) = (place(lead.leader), place(hidden[1 - i]));
+                    let above = unknown & Cards::higher_than(lead.card);
+                    let gone = self.original_hands[lead.leader] - self.hands[lead.leader];
+                    let need = match lead.shows {
+                        LeadShows::Highest => 0,
+                        LeadShows::FourthBest => 3usize.saturating_sub((gone & Cards::higher_than(lead.card)).len()),
+                    };
+                    if need == 0 {
+                        hands[other] += above;
+                        unknown -= above;
+                    } else if need >= above.len() {
+                        hands[leader] += above;
+                        unknown -= above;
+                    }
+                }
+            }
             Some(bridge_solver::Starting { hands, unknown })
         } else {
             Some(bridge_solver::Starting { hands, unknown })
