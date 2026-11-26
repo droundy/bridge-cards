@@ -3688,6 +3688,15 @@ mod tests {
     /// than the first fit's they are, with the standard error of that paired
     /// difference.  Writes each fit's weights to `PLAY_WEIGHTS_DIR`, if that
     /// is set, as `SHAPE-PENALTY.txt`.
+    ///
+    /// `PLAY_SPLITS` (comma-separated, `1` or, with `PLAY_SPLIT=1`, `4`) says
+    /// how each shape and penalty is fitted: `1` is one fit of every
+    /// situation, `4` one fit for each of the four groups and `2` one for
+    /// declarer and one for the defence, each tested on its own situations.
+    /// A trailing `s` scales each fit's penalty by N/N_g, the situations in
+    /// all over those it is fitted to, which is the same prior as the one
+    /// fit's: the penalty is on the mean loss, so as a prior its precision
+    /// grows with the situations fitted.
     #[test]
     #[ignore]
     fn screen_play_shapes() {
@@ -3703,66 +3712,72 @@ mod tests {
         for shape in shapes {
             let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), shape);
             let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), shape);
-            let split = var("PLAY_SPLIT", "0") == "1";
+            let splits = var("PLAY_SPLITS", if var("PLAY_SPLIT", "0") == "1" { "4" } else { "1" });
             for &penalty in &penalties {
-                let started = std::time::Instant::now();
-                // One fit of every situation, or with PLAY_SPLIT=1 one for
-                // each of the groups, each tested on its own group.
-                let fits: Vec<Network> = if split {
-                    (0..GROUPS.len())
-                        .map(|g| {
-                            let choices: Vec<_> = train.iter().filter(|s| s.group == g).map(|s| &s.choice).collect();
+                for split in splits.split(',').map(str::trim) {
+                    let started = std::time::Instant::now();
+                    let (ways, scaled) = (split.trim_end_matches('s'), split.ends_with('s'));
+                    // The fit that each group's situations belong to.
+                    let way: fn(usize) -> usize = match ways {
+                        "1" => |_| 0,
+                        "2" => |g| g / 2,
+                        "4" => |g| g,
+                        _ => panic!("PLAY_SPLITS: {split} is not 1, 2 or 4 with or without s"),
+                    };
+                    let fits: Vec<Network> = (0..ways.parse().unwrap())
+                        .map(|f| {
+                            let choices: Vec<_> = train.iter().filter(|s| way(s.group) == f).map(|s| &s.choice).collect();
+                            let penalty = if scaled { penalty * train.len() as f64 / choices.len() as f64 } else { penalty };
                             fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)
                         })
-                        .collect()
-                } else {
-                    let choices: Vec<_> = train.iter().map(|s| &s.choice).collect();
-                    vec![fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)]
-                };
-                let network = &fits[0];
-                let losses: Vec<f64> = test
-                    .iter()
-                    .map(|s| {
-                        let network = &fits[if split { s.group } else { 0 }];
-                        let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
-                        best - s.choice[network.choice(&s.choice)].1
-                    })
-                    .collect();
-                let (mean, spread) = error(&losses);
-                print!(
-                    "{:<11} penalty {penalty:<6} {} weights, {:.0} s: loses {mean:.4} ({spread:.4}) tricks a play",
-                    shape.name,
-                    shape.size(),
-                    started.elapsed().as_secs_f64()
-                );
-                match &first {
-                    Some(first) => {
-                        let more: Vec<f64> = losses.iter().zip(first).map(|(a, b)| a - b).collect();
-                        let (mean, spread) = error(&more);
-                        println!(", {mean:+.4} ({spread:.4}) more than the first");
-                    }
-                    None => println!(),
-                }
-                for (g, name) in GROUPS.iter().enumerate() {
-                    let at: Vec<usize> = (0..test.len()).filter(|&i| test[i].group == g).collect();
-                    let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
-                    let (mean, spread) = error(&these);
-                    print!("    {name:<17} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                        .collect();
+                    let network = &fits[0];
+                    let losses: Vec<f64> = test
+                        .iter()
+                        .map(|s| {
+                            let network = &fits[way(s.group)];
+                            let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                            best - s.choice[network.choice(&s.choice)].1
+                        })
+                        .collect();
+                    let (mean, spread) = error(&losses);
+                    print!(
+                        "{:<11} split {split:<2} penalty {penalty:<6} {} weights, {:.0} s: loses {mean:.4} ({spread:.4}) tricks a play",
+                        shape.name,
+                        shape.size(),
+                        started.elapsed().as_secs_f64()
+                    );
                     match &first {
                         Some(first) => {
-                            let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
+                            let more: Vec<f64> = losses.iter().zip(first).map(|(a, b)| a - b).collect();
                             let (mean, spread) = error(&more);
                             println!(", {mean:+.4} ({spread:.4}) more than the first");
                         }
                         None => println!(),
                     }
-                }
-                if first.is_none() {
-                    first = Some(losses);
-                }
-                if let Ok(directory) = std::env::var("PLAY_WEIGHTS_DIR") {
-                    std::fs::create_dir_all(&directory).unwrap();
-                    network.write(&format!("{directory}/{}-{penalty}.txt", shape.name));
+                    for (g, name) in GROUPS.iter().enumerate() {
+                        let at: Vec<usize> = (0..test.len()).filter(|&i| test[i].group == g).collect();
+                        let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
+                        let (mean, spread) = error(&these);
+                        print!("    {name:<17} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                        match &first {
+                            Some(first) => {
+                                let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
+                                let (mean, spread) = error(&more);
+                                println!(", {mean:+.4} ({spread:.4}) more than the first");
+                            }
+                            None => println!(),
+                        }
+                    }
+                    if first.is_none() {
+                        first = Some(losses);
+                    }
+                    if let Ok(directory) = std::env::var("PLAY_WEIGHTS_DIR") {
+                        std::fs::create_dir_all(&directory).unwrap();
+                        // A split fit writes its first group's weights.
+                        let split = if split == "1" { String::new() } else { format!("-split{split}") };
+                        network.write(&format!("{directory}/{}-{penalty}{split}.txt", shape.name));
+                    }
                 }
             }
         }
