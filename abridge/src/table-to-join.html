@@ -1,6 +1,6 @@
 [% use Seat::*; %]
 <div id="tables" class="tabletosit">
-    <h1><a href="[% self.table %]/random">[% self.table as HTML %]</a></h1>
+    <h1><a href="[% self.link("random") %]">[% self.table as HTML %]</a></h1>
     <table class="bidhistory">
     <tr>[% let who = self.dealer; %]
         <th>[% who.name() %]</th>
@@ -20,7 +20,7 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <a href="[% self.table %]/north">Sit</a> [%
+            %] <a href="[% self.link("north") %]">Sit</a> [%
         }
         } %]
 </div></td></tr>
@@ -30,7 +30,7 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <a href="[% self.table %]/west">Sit</a> [%
+            %] <a href="[% self.link("west") %]">Sit</a> [%
         }
      } %]
     </div></td>
@@ -41,7 +41,7 @@
                 %]<span class="name">[% name %]</span>[%
             }
             PlayerName::None | PlayerName::Robot(_) => {
-                %] <a href="[% self.table %]/east">Sit</a> [%
+                %] <a href="[% self.link("east") %]">Sit</a> [%
             }
          } %]
         </div></td>
@@ -52,7 +52,7 @@
             %]<span class="name">[% name %]</span>[%
         }
         PlayerName::None | PlayerName::Robot(_) => {
-            %] <a href="[% self.table %]/south">Sit</a> [%
+            %] <a href="[% self.link("south") %]">Sit</a> [%
         }
      } %]
 </div></td>

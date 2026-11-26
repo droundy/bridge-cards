@@ -66,20 +66,28 @@ impl<T: DisplayAs<HTML> + Sync> IntoResponse for Page<T> {
     }
 }
 
-/// Redirect (temporarily) to a path on this site, in which `segments` are
-/// percent-encoded, since a table's name can be anything.  No segments are
-/// the home page.
-fn redirect_to(segments: &[&str]) -> Response {
+/// The path on this site to `segments`, each percent-encoded, since a table's
+/// name can be anything.  No segments are the home page.  Every link to a
+/// table is written by this, so that a name such as `javascript:alert(1)//`
+/// or `who? me#1` is a path on this site and not a script or a query.
+pub(crate) fn path(segments: &[&str]) -> String {
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-    let mut uri = String::new();
+    let mut path = String::new();
     for s in segments {
-        uri.push('/');
-        uri.extend(utf8_percent_encode(s, NON_ALPHANUMERIC));
+        path.push('/');
+        path.extend(utf8_percent_encode(s, NON_ALPHANUMERIC));
     }
-    if uri.is_empty() {
-        uri.push('/');
+    if path.is_empty() {
+        path.push('/');
     }
-    let location = HeaderValue::try_from(uri).expect("a percent-encoded path is a valid header");
+    path
+}
+
+/// Redirect (temporarily) to the path on this site to `segments` (see
+/// [`path`]).
+fn redirect_to(segments: &[&str]) -> Response {
+    let location =
+        HeaderValue::try_from(path(segments)).expect("a percent-encoded path is a valid header");
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(header::LOCATION, location)],

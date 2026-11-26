@@ -160,6 +160,70 @@ async fn random_seats_redirect_to_a_free_seat() {
         .starts_with("/caf%C3%A9%20%2B%20x/"));
 }
 
+/// An attribute's value as a browser reads it, with the escapes that
+/// `display-as` writes undone.
+fn unescape(value: &str) -> String {
+    [
+        ("&#x2f;", "/"),
+        ("&#x27;", "'"),
+        ("&quot;", "\""),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&amp;", "&"),
+    ]
+    .iter()
+    .fold(value.to_string(), |value, (escaped, c)| {
+        value.replace(escaped, c)
+    })
+}
+
+/// Every link on a page, as a browser reads it.
+fn links(body: &str) -> Vec<String> {
+    body.split("href=\"")
+        .skip(1)
+        .map(|rest| unescape(rest.split('"').next().unwrap()))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_home_page_links_to_every_table_whatever_its_name() {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let (addr, app) = serve().await;
+    // A name that would make a link run a script, and names with characters
+    // that end a path or start a query, a fragment or an escape.
+    let names = ["javascript:alert(1)//", "50% off", "who? me#1", "a/b"];
+    let encoded = |name| utf8_percent_encode(name, NON_ALPHANUMERIC).to_string();
+    for name in names {
+        let path = format!("/{}/north", encoded(name));
+        let (head, _) = get(addr, &path).await;
+        assert!(head.starts_with("HTTP/1.1 200"), "{path}: {head}");
+    }
+    // The home page is shown at any path that names nothing, so its links
+    // must not depend on where it is.
+    for page in ["/", "/no/such/page/here"] {
+        let (_, body) = get(addr, page).await;
+        let links = links(&body);
+        for link in &links {
+            assert!(link.starts_with('/'), "{page} links to {link}");
+        }
+        for name in names {
+            for to in ["random", "west", "east", "south"] {
+                let link = format!("/{}/{to}", encoded(name));
+                assert!(links.contains(&link), "{page} has no link {link}");
+            }
+        }
+    }
+    // A seat's link takes that seat at that table.
+    for name in names {
+        get(addr, &format!("/{}/west", encoded(name))).await;
+        let game = Arc::clone(&app.tables.get(name).expect("no such table"));
+        assert!(matches!(
+            game.read().await.names[Seat::West],
+            PlayerName::Human(_)
+        ));
+    }
+}
+
 #[tokio::test]
 async fn a_full_table_sends_a_random_sitter_home() {
     let (addr, _app) = serve().await;
