@@ -73,6 +73,31 @@ pub(crate) struct Beliefs {
     /// Whether the first hand's points are counted, for ψ; without them
     /// every card counts as no points and the sums are far quicker.
     pub(crate) points: bool,
+    /// What an opening lead showed, if anything (see [`Block`]).
+    pub(crate) block: Option<Block>,
+}
+
+/// The chance that the beliefs give, when an opening lead is made, to its
+/// breaking the conventions: the splits that break them together have this
+/// chance then, and what is played later moves it as it moves any chance.
+/// The robots always keep the conventions, and this keeps a lead that does
+/// not from leaving no split at all.
+pub(crate) const LEAD_MISS: f64 = 1e-3;
+
+/// A potential on how many cards of a rank block the first hand holds: the
+/// cards of one suit above the card that opened the play, of which the lead
+/// shows how many the leader held (see `opening_lead::lead_facts`).  It
+/// weighs a split by e<sup>potential[m]</sup>, `m` being how many of the
+/// block's unseen cards the first hand holds (those known to be there with
+/// them): 0 for the count the lead shows, and for the others one value that
+/// gives them together the chance [`LEAD_MISS`] when the lead is made.  The block is the highest cards of
+/// its suit, which come first in the order that a suit's cards are summed
+/// over ([`Beliefs::chain`]), so that the count of the cards summed over
+/// so far, once they are summed over, is the count in the block.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Block {
+    pub(crate) cards: Cards,
+    pub(crate) potential: [f64; COUNTS],
 }
 
 /// The chances that a [`Beliefs`] gives.
@@ -108,32 +133,47 @@ impl Joint {
     /// 2<sup>n</sup>, whose bit `t` says whether card `t` is in the first
     /// hidden hand.
     pub(crate) fn of(&self, cards: &[Card]) -> Vec<f64> {
-        let Some(first) = cards.first() else {
+        let Some(&lowest) = cards.first() else {
             return vec![1.0];
         };
-        let (free, forward, context, backward) = &self.suits[first.suit() as usize];
-        let backward = backward.get_or_init(|| self.beliefs.backward(first.suit(), forward, context));
-        let start = free.iter().position(|f| f.0 == *first).expect("a free card");
+        let suit = lowest.suit();
+        let (free, forward, context, backward) = &self.suits[suit as usize];
+        let backward = backward.get_or_init(|| self.beliefs.backward(suit, forward, context));
         let n = cards.len();
+        // The suit's cards are summed over from the highest down (see
+        // `Beliefs::chain`), so the cards come there in the reverse order,
+        // and bit `t` is for the card at `n - 1 - t` of them.
+        let highest = cards[n - 1];
+        let start = free.iter().position(|f| f.0 == highest).expect("a free card");
         assert!(
-            cards.iter().enumerate().all(|(t, &c)| free.get(start + t).is_some_and(|f| f.0 == c)),
+            cards.iter().rev().enumerate().all(|(t, &c)| free.get(start + t).is_some_and(|f| f.0 == c)),
             "cards that are free and next to each other"
         );
+        // Where the cards straddle the end of a block, its weight goes in
+        // here, by the count of the first hand's cards in it.
+        let block = self.beliefs.block_of(suit).filter(|(b, _)| start < *b && *b < start + n);
         let (before, after) = (&forward[start], &backward[start + n]);
         (0..1usize << n)
             .map(|bits| {
-                let (mut w, mut k_more, mut p_more) = (1.0, 0, 0);
+                let (mut w, mut k_more, mut p_more, mut in_block) = (1.0, 0, 0, 0);
                 for (t, &(_, weight, points)) in free[start..start + n].iter().enumerate() {
-                    if bits & (1 << t) != 0 {
+                    if bits & (1 << (n - 1 - t)) != 0 {
                         w *= weight;
                         k_more += 1;
                         p_more += points;
+                        if block.as_ref().is_some_and(|(b, _)| start + t < *b) {
+                            in_block += 1;
+                        }
                     }
                 }
                 let mut sum = 0.0;
                 for k in 0..before.counts {
+                    let weight = block.as_ref().map_or(1.0, |(_, weight)| weight(k + in_block));
+                    if weight == 0.0 {
+                        continue;
+                    }
                     for p in 0..before.points {
-                        sum += before.get(k, p) * after.get(k + k_more, p + p_more);
+                        sum += weight * before.get(k, p) * after.get(k + k_more, p + p_more);
                     }
                 }
                 if sum > 0.0 {
@@ -252,7 +292,26 @@ impl Beliefs {
     /// Vacant places: every split of the `unseen` cards that gives the first
     /// hand `first_size` of them equally likely.
     pub(crate) fn vacant(unseen: Cards, first_size: usize) -> Beliefs {
-        Beliefs { unseen, in_first: Cards::EMPTY, in_second: Cards::EMPTY, first_size, parameters: Parameters::default(), points: true }
+        Beliefs { unseen, in_first: Cards::EMPTY, in_second: Cards::EMPTY, first_size, parameters: Parameters::default(), points: true, block: None }
+    }
+
+    /// The free cards of `suit` in the order that they are summed over: the
+    /// highest first, so that a [`Block`] comes first.
+    fn chain(&self, suit: Suit) -> Vec<Card> {
+        let mut cards: Vec<Card> = self.free().in_suit(suit).collect();
+        cards.reverse();
+        cards
+    }
+
+    /// For `suit`, how many of its free cards are in the block, which are the
+    /// first of [`Beliefs::chain`], and the block's weight of each count of
+    /// the first hand's cards among those (with the block's cards known to be
+    /// in the first hand): `None` when the suit has no block.
+    fn block_of(&self, suit: Suit) -> Option<(usize, impl Fn(usize) -> f64 + '_)> {
+        let block = self.block.as_ref().filter(|b| b.cards.in_suit(suit) == b.cards && !b.cards.is_empty())?;
+        let free = (self.free() & block.cards).len();
+        let known = (self.in_first & block.cards).len();
+        Some((free, move |k: usize| block.potential.get(k + known).map_or(0.0, |&v| v.exp())))
     }
 
     /// The high card points of `card`, or 0 if the beliefs leave points out.
@@ -295,10 +354,27 @@ impl Beliefs {
     /// after none, the first, and so on, by how many the first hand holds
     /// and their points.
     fn forward(&self, suit: Suit) -> Vec<Poly> {
+        let block = self.block_of(suit);
+        let weigh = |forward: &mut Vec<Poly>| {
+            if let Some((b, weight)) = &block {
+                if forward.len() == b + 1 {
+                    let last = forward.last_mut().unwrap();
+                    for k in 0..last.counts {
+                        let w = weight(k);
+                        for p in 0..last.points {
+                            *last.at(k, p) *= w;
+                        }
+                    }
+                    *last = last.clone().normalized();
+                }
+            }
+        };
         let mut forward = vec![Poly::one()];
-        for card in self.free().in_suit(suit) {
+        weigh(&mut forward);
+        for card in self.chain(suit) {
             let next = forward[forward.len() - 1].with_card(self.h(card).exp(), self.points_of(card));
             forward.push(next);
+            weigh(&mut forward);
         }
         forward
     }
@@ -372,7 +448,7 @@ impl Beliefs {
     /// that a card's chance is the sum over both of the splits that give it
     /// to the first.
     fn card_chances(&self, suit: Suit, forward: &[Poly], backward: &[Poly], log_z: f64) -> Vec<(Card, f64)> {
-        let cards: Vec<Card> = self.free().in_suit(suit).collect();
+        let cards = self.chain(suit);
         (0..cards.len())
             .map(|i| {
                 let (before, after) = (&forward[i], &backward[i + 1]);
@@ -393,7 +469,23 @@ impl Beliefs {
     /// the cards from it on with the suit's `context`, for the counts and
     /// points that the `forward` weights before it reach.
     fn backward(&self, suit: Suit, forward: &[Poly], context: &Poly) -> Vec<Poly> {
-        let cards: Vec<Card> = self.free().in_suit(suit).collect();
+        let cards = self.chain(suit);
+        let block = self.block_of(suit);
+        // The block's weight, at the end of the block, by the count of the
+        // first hand's cards that come before it.
+        let weigh = |poly: Poly, i: usize| match &block {
+            Some((b, weight)) if i == *b => {
+                let mut poly = poly;
+                for k in 0..poly.counts {
+                    let w = weight(k);
+                    for p in 0..poly.points {
+                        *poly.at(k, p) *= w;
+                    }
+                }
+                poly.normalized()
+            }
+            _ => poly,
+        };
         let m = cards.len();
         let known = self.in_first.in_suit(suit);
         let (known_length, known_points) = (known.len(), self.points_in(known));
@@ -407,7 +499,7 @@ impl Beliefs {
                 *top.at(k, p) = potential * context.get(k, p + known_points);
             }
         }
-        let mut backward = vec![top.normalized()];
+        let mut backward = vec![weigh(top.normalized(), m)];
         for i in (0..m).rev() {
             let after = &backward[backward.len() - 1];
             let (w, pts) = (self.h(cards[i]).exp(), self.points_of(cards[i]));
@@ -418,7 +510,7 @@ impl Beliefs {
                     *next.at(k, p) = after.get(k, p) + w * after.get(k + 1, p + pts);
                 }
             }
-            backward.push(next.normalized());
+            backward.push(weigh(next.normalized(), i));
         }
         backward.reverse();
         backward
@@ -491,7 +583,7 @@ impl Beliefs {
         let each = |s: usize, (forward, _): (Vec<Poly>, Poly), context: Poly| {
             let suit = Suit::ALL[s];
             let cards: Vec<(Card, f64, usize)> =
-                self.free().in_suit(suit).map(|card| (card, self.h(card).exp(), self.points_of(card))).collect();
+                self.chain(suit).into_iter().map(|card| (card, self.h(card).exp(), self.points_of(card))).collect();
             (cards, forward, context, std::sync::OnceLock::new())
         };
         Joint {
@@ -677,7 +769,8 @@ impl Beliefs {
         );
         let fields: f64 = (first - self.in_first).map(|card| self.h(card)).sum();
         let potentials: f64 = Suit::ALL.map(|suit| self.phi(suit, first.in_suit(suit).len())).iter().sum();
-        fields + potentials + self.psi(self.points_in(first))
+        let block = self.block.as_ref().map_or(0.0, |b| b.potential[(first & b.cards).len()]);
+        fields + potentials + self.psi(self.points_in(first)) + block
     }
 
     /// The log of the chance of the split that gives the first hand the
@@ -761,12 +854,25 @@ impl Beliefs {
     /// `count` of the free cards of `suit` with `points` among them, dealt
     /// with chances in proportion to e<sup>Σh</sup>.
     fn deal_in_suit(&self, suit: Suit, count: usize, points_wanted: usize, rng: &mut impl Rng) -> Cards {
-        let cards: Vec<Card> = self.free().in_suit(suit).collect();
+        let cards = self.chain(suit);
+        let block = self.block_of(suit);
         // The log weights of the subsets of the cards from `i` on, by their
-        // number and points.
+        // number and points, with the block's weight at the end of the block,
+        // where `count` less the number still to deal is the count in it.
         let n = cards.len();
         let mut rest = vec![[[f64::NEG_INFINITY; POINTS]; COUNTS]; n + 1];
         rest[n][0][0] = 0.0;
+        let weigh = |rest: &mut [[f64; POINTS]; COUNTS]| {
+            if let Some((_, weight)) = &block {
+                for (k, row) in rest.iter_mut().enumerate() {
+                    let w = if k <= count { weight(count - k).ln() } else { f64::NEG_INFINITY };
+                    row.iter_mut().for_each(|v| *v += w);
+                }
+            }
+        };
+        if block.as_ref().is_some_and(|(b, _)| *b == n) {
+            weigh(&mut rest[n]);
+        }
         for i in (0..n).rev() {
             for k in 0..COUNTS {
                 for p in 0..POINTS {
@@ -778,6 +884,9 @@ impl Beliefs {
                     };
                     rest[i][k][p] = log_sum_exp([without, with].into_iter());
                 }
+            }
+            if block.as_ref().is_some_and(|(b, _)| *b == i) {
+                weigh(&mut rest[i]);
             }
         }
         let (mut k, mut p) = (count, points_wanted);
@@ -1232,6 +1341,10 @@ impl Tracker {
             let p = if beliefs.points { points(card) } else { 0 };
             parameters.psi.rotate_left(p);
             parameters.psi[POINTS - p..].fill(0.0);
+            // And it holds one card fewer of a block that the card is in.
+            if let Some(block) = beliefs.block.as_mut().filter(|b| b.cards.contains(card)) {
+                block.potential.rotate_left(1);
+            }
         }
         parameters.h[index(card)] = 0.0;
         if let Some(led) = led.filter(|&led| led != suit && seat != dummy) {
@@ -1240,6 +1353,41 @@ impl Tracker {
                 beliefs.in_second += rest;
             } else {
                 beliefs.in_first += rest;
+            }
+        }
+
+        // What an opening lead shows by the conventions, exactly, in place of
+        // what the evidence would make of it.
+        if game.tricks.is_empty() && game.played.is_empty() && seat != dummy {
+            let mut led = super::playout::copy_of(game);
+            led.play(card);
+            if let Some(fact) = super::opening_lead::lead_facts(&led) {
+                let held = match fact.shows {
+                    super::opening_lead::LeadShows::FourthBest => 3,
+                    super::opening_lead::LeadShows::Highest => 0,
+                };
+                let cards = Cards::higher_than(card);
+                // The leader's cards of the block are all unseen, since the
+                // player sees the others; the first hand holds them, or the
+                // rest of the unseen ones.
+                let first_holds = if first { Some(held) } else { (beliefs.unseen & cards).len().checked_sub(held) };
+                // The splits that keep the conventions, and those that do not,
+                // which together have the chance LEAD_MISS.
+                let with = |keep: bool| {
+                    let potential = std::array::from_fn(|m| if (Some(m) == first_holds) == keep { 0.0 } else { f64::NEG_INFINITY });
+                    let mut weighed = beliefs.clone();
+                    weighed.block = Some(Block { cards, potential });
+                    weighed.log_normalization()
+                };
+                let (kept, broken) = (with(true), with(false));
+                let off = if kept == f64::NEG_INFINITY || broken == f64::NEG_INFINITY {
+                    0.0
+                } else {
+                    (LEAD_MISS / (1.0 - LEAD_MISS)).ln() + kept - broken
+                };
+                let potential = std::array::from_fn(|m| if Some(m) == first_holds && kept > f64::NEG_INFINITY { 0.0 } else { off });
+                beliefs.block = Some(Block { cards, potential });
+                return None;
             }
         }
 
@@ -1318,6 +1466,26 @@ mod tests {
         p.h.iter_mut().for_each(|h| *h = rng.gen_range(-2.0..2.0));
         p.phi.iter_mut().flatten().for_each(|phi| *phi = rng.gen_range(-1.5..1.5));
         p.psi.iter_mut().for_each(|psi| *psi = rng.gen_range(-1.0..1.0));
+        // Half the time, a block: the cards of a suit above some rank, with
+        // a potential on the first hand's count among them, soft, or hard
+        // with one count that can be met.
+        let suits: Vec<Suit> = Suit::ALL.into_iter().filter(|&s| beliefs.free().in_suit(s).len() >= 2).collect();
+        if !suits.is_empty() && rng.gen_bool(0.5) {
+            let suit = suits[rng.gen_range(0..suits.len())];
+            let free: Vec<Card> = beliefs.free().in_suit(suit).collect();
+            let below = free[rng.gen_range(0..free.len() - 1)];
+            let cards = Cards::higher_than(below);
+            let mut potential = [0.0; COUNTS];
+            if rng.gen_bool(0.5) {
+                potential.iter_mut().for_each(|v| *v = rng.gen_range(-2.0..2.0));
+            } else {
+                let known = (beliefs.in_first & cards).len();
+                let most = known + (beliefs.free() & cards).len().min(beliefs.wanted());
+                let allowed = rng.gen_range(known..=most);
+                potential.iter_mut().enumerate().for_each(|(m, v)| *v = if m == allowed { 0.0 } else { f64::NEG_INFINITY });
+            }
+            beliefs.block = Some(Block { cards, potential });
+        }
         beliefs
     }
 
@@ -1343,7 +1511,12 @@ mod tests {
                         length[suit as usize][first.in_suit(suit).len()] += chance;
                     }
                     points[first.high_card_points()] += chance;
-                    assert!((beliefs.log_likelihood(*first) - (log_w - log_z)).abs() < 1e-9);
+                    // A split that a hard block rules out has no weight either way.
+                    if *log_w == f64::NEG_INFINITY {
+                        assert_eq!(beliefs.log_likelihood(*first), f64::NEG_INFINITY);
+                    } else {
+                        assert!((beliefs.log_likelihood(*first) - (log_w - log_z)).abs() < 1e-9);
+                    }
                 }
                 let close = |a: &[f64], b: &[f64]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9);
                 assert!(close(&chances.card, &card), "{:?}\n{:?}", chances.card, card);
@@ -1627,6 +1800,41 @@ mod tests {
         let old: Vec<f64> = evidence.weights[..fields].iter().chain(&evidence.weights[FIELD_WEIGHTS..FIELD_WEIGHTS + lengths]).copied().collect();
         assert_eq!(Evidence::from_weights(&old).weights, evidence.without_the_dummy().weights);
         assert_eq!(Evidence::from_weights(&evidence.weights).weights, evidence.weights);
+    }
+
+    #[test]
+    fn the_beliefs_hold_what_the_opening_lead_shows() {
+        use crate::ai::opening_lead::{lead_facts, likely_opening_leads, Auction, LeadShows};
+        let prior = Prior::walls(5.0);
+        let (mut checked, mut fourth) = (0, 0);
+        for game in crate::ai::opening_lead::candidates::opening_leads(17, 120) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            let leader = game.turn().unwrap();
+            let lead = likely_opening_leads(&Auction::new(&game).unwrap(), game.hands[leader])[0];
+            let mut trackers = trackers(&game);
+            for tracker in &mut trackers {
+                tracker.start(&game, &convention, &prior);
+                tracker.observe(&game, lead, &Evidence::none());
+            }
+            game.play(lead);
+            let Some(fact) = lead_facts(&game) else { continue };
+            let held = if fact.shows == LeadShows::FourthBest { 3.0 } else { 0.0 };
+            fourth += usize::from(fact.shows == LeadShows::FourthBest);
+            for tracker in trackers.iter().filter(|t| t.first == leader || t.second == leader) {
+                let beliefs = &tracker.beliefs;
+                assert!(beliefs.block.is_some());
+                let chances = beliefs.chances();
+                // The leader's expected count among the cards above the lead.
+                let in_first: f64 = (beliefs.unseen & Cards::higher_than(lead)).map(|c| chances.card[index(c)]).sum();
+                let above = (beliefs.unseen & Cards::higher_than(lead)).len() as f64;
+                let leaders = if tracker.first == leader { in_first } else { above - in_first };
+                assert!((leaders - held).abs() < 0.05, "{lead}: {leaders} against {held}");
+                assert!(beliefs.log_likelihood(game.hands[tracker.first]).is_finite(), "the true deal is possible");
+                checked += 1;
+            }
+        }
+        assert!(checked > 20 && fourth > 0, "{checked} trackers, {fourth} fourth-best leads");
     }
 
     #[test]
