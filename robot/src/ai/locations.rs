@@ -1358,7 +1358,8 @@ impl Tracker {
 
         // What an opening lead shows by the conventions, exactly, in place of
         // what the evidence would make of it.
-        if game.tricks.is_empty() && game.played.is_empty() && seat != dummy {
+        // (`PLAY_LOC_NO_LEAD_FACTS` leaves them out, to see what they are worth.)
+        if game.tricks.is_empty() && game.played.is_empty() && seat != dummy && std::env::var_os("PLAY_LOC_NO_LEAD_FACTS").is_none() {
             let mut led = super::playout::copy_of(game);
             led.play(card);
             if let Some(fact) = super::opening_lead::lead_facts(&led) {
