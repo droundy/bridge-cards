@@ -2316,7 +2316,12 @@ mod tests {
     /// code, with the lead facts on; (B) leads of any card with the weights
     /// in the file `PLAY_LEAD_B_WEIGHTS` (a line each, for notrump and suit
     /// contracts, as `fit_lead_playouts` writes them), the facts off; (C) the
-    /// leads of A, the facts off.  Prints each table's tricks for the leader's
+    /// leads of A, the facts off; (D) A's leads, the facts known to the
+    /// defence only; (E) to the declarer's side only; (F) the fourth-best
+    /// convention alone (every suit at notrump, partner's included, by the
+    /// rule for the A, K, Q or fourth best) and (G) the convention for
+    /// partner's suit alone, each with A's weights and its own allowed leads
+    /// and facts, known to all.  Prints each table's tricks for the leader's
     /// side, and A−B (what the conventions are worth), C−B (what restricting the
     /// leads costs) and A−C (what the facts are worth), with their standard
     /// errors.
@@ -2324,7 +2329,7 @@ mod tests {
     #[ignore]
     fn match_the_leads() {
         use crate::ai::opening_lead::candidates::{current_weights, lead_by, opening_leads};
-        use crate::ai::opening_lead::Auction;
+        use crate::ai::opening_lead::{with_conventions, Auction};
         let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
         let count = number("PLAY_MATCH_DEALS", 6000);
         let seed = number("PLAY_MATCH_SEED", 41) as u64;
@@ -2341,7 +2346,7 @@ mod tests {
         let (notrump_a, suit_a) = current_weights();
         let games = opening_leads(seed, count);
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let results = std::sync::Mutex::new(vec![[0.0; 5]; games.len()]);
+        let results = std::sync::Mutex::new(vec![[0.0; 7]; games.len()]);
         let same = std::sync::atomic::AtomicUsize::new(0);
         let learners = std::slice::from_ref(&model);
         let players = [Player::Learning(0); 4];
@@ -2360,16 +2365,30 @@ mod tests {
                         let hand = game.hands[leader];
                         let card_a = lead_by(&auction, hand, true, &notrump_a, &suit_a);
                         let card_b = lead_by(&auction, hand, false, &weights_b[0], &weights_b[1]);
+                        // F: fourth best only, G: partner's suit only, led by A's weights.
+                        let card_f = with_conventions(false, true, || lead_by(&auction, hand, true, &notrump_a, &suit_a));
+                        let card_g = with_conventions(true, false, || lead_by(&auction, hand, true, &notrump_a, &suit_a));
                         same.fetch_add(usize::from(card_a == card_b), std::sync::atomic::Ordering::Relaxed);
                         let mut rng = StdRng::seed_from_u64(seed * 1_000_003 + i as u64);
-                        let mut totals = [0.0; 5];
+                        let mut totals = [0.0; 7];
                         for _ in 0..playouts {
                             let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
                             let luck = rng.r#gen();
-                            // A, B, C, D (defenders read the facts) and E (the declarer's side does).
-                            let sides = [(card_a, [true, true]), (card_b, [false, false]), (card_a, [false, false]), (card_a, [true, false]), (card_a, [false, true])];
-                            for (total, (card, facts)) in totals.iter_mut().zip(sides) {
-                                let tricks = playout_at_sided(game, card, convention, learners, players, temperature, &qualities, luck, Some(facts));
+                            // A, B, C, D (defenders read the facts), E (the declarer's side does),
+                            // F and G (each convention alone, the facts known to all).
+                            let sides = [
+                                (card_a, [true, true], (true, true)),
+                                (card_b, [false, false], (true, true)),
+                                (card_a, [false, false], (true, true)),
+                                (card_a, [true, false], (true, true)),
+                                (card_a, [false, true], (true, true)),
+                                (card_f, [true, true], (false, true)),
+                                (card_g, [true, true], (true, false)),
+                            ];
+                            for (total, (card, facts, rules)) in totals.iter_mut().zip(sides) {
+                                let tricks = with_conventions(rules.0, rules.1, || {
+                                    playout_at_sided(game, card, convention, learners, players, temperature, &qualities, luck, Some(facts))
+                                });
                                 *total += tricks[leader as usize % 2] as f64 / playouts as f64;
                             }
                         }
@@ -2379,24 +2398,26 @@ mod tests {
             }
         });
         let results = results.into_inner().unwrap();
-        let stats = |f: &dyn Fn(&[f64; 5]) -> f64| {
+        let stats = |f: &dyn Fn(&[f64; 7]) -> f64| {
             let values: Vec<f64> = results.iter().map(f).collect();
             let n = values.len() as f64;
             let mean = values.iter().sum::<f64>() / n;
             (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
         };
-        let means: Vec<(f64, f64)> = (0..5).map(|k| stats(&|r| r[k])).collect();
+        let means: Vec<(f64, f64)> = (0..7).map(|k| stats(&|r| r[k])).collect();
         println!(
-            "{} deals, the leader's side's tricks: A (conventional, facts) {:.3}, B (unconstrained, no facts) {:.3}, C (conventional, no facts) {:.3}, D (facts for the defenders only) {:.3}, E (facts for the declarer's side only) {:.3}; A and B lead the same card in {:.1}%",
+            "{} deals, the leader's side's tricks: A (conventional, facts) {:.3}, B (unconstrained, no facts) {:.3}, C (conventional, no facts) {:.3}, D (facts for the defenders only) {:.3}, E (facts for the declarer's side only) {:.3}, F (fourth best only) {:.3}, G (partner's suit only) {:.3}; A and B lead the same card in {:.1}%",
             results.len(),
             means[0].0,
             means[1].0,
             means[2].0,
             means[3].0,
             means[4].0,
+            means[5].0,
+            means[6].0,
             100.0 * same.load(std::sync::atomic::Ordering::Relaxed) as f64 / results.len() as f64,
         );
-        for (name, x, y) in [("A-B", 0, 1), ("C-B", 2, 1), ("A-C", 0, 2), ("D-C (the defence reads its leads)", 3, 2), ("C-E (the declarer reads them)", 2, 4)] {
+        for (name, x, y) in [("A-B", 0, 1), ("C-B", 2, 1), ("A-C", 0, 2), ("D-C (the defence reads its leads)", 3, 2), ("C-E (the declarer reads them)", 2, 4), ("F-B (fourth best alone)", 5, 1), ("G-B (partner's suit alone)", 6, 1)] {
             let (mean, error) = stats(&|r| r[x] - r[y]);
             println!("{name}: {mean:+.3} ({error:.3})");
         }

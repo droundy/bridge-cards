@@ -421,11 +421,44 @@ pub(crate) fn likely_opening_leads(auction: &Auction, hand: Cards) -> Vec<Card> 
 /// more, so that a jack or lower is always fourth best.  Against a suit
 /// contract any other lead is allowed.
 pub(crate) fn lead_allowed(auction: &Auction, hand: Cards, card: Card) -> bool {
+    let (partner_rule, fourth_rule) = conventions_on();
     let suit = hand.in_suit(card.suit());
-    if partners_suit(auction.shown[PARTNER].suits[card.suit() as usize].length.0) {
+    if partner_rule && partners_suit(auction.shown[PARTNER].suits[card.suit() as usize].length.0) {
         return suit.max() == Some(card);
     }
-    auction.trump.is_some() || card.rank() >= 12 || fourth_highest(suit) == Some(card)
+    !fourth_rule || auction.trump.is_some() || card.rank() >= 12 || fourth_highest(suit) == Some(card)
+}
+
+/// Which of the two lead conventions are on: the rule for partner's suit, and
+/// the rule for the other suits at notrump.  Both are, except in tests of
+/// each alone (see [`with_conventions`]).
+#[cfg(not(test))]
+fn conventions_on() -> (bool, bool) {
+    (true, true)
+}
+
+#[cfg(test)]
+fn conventions_on() -> (bool, bool) {
+    CONVENTIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Which lead conventions are on for this thread, as [`conventions_on`]
+    /// says: the one for partner's suit, and the one for the other suits at
+    /// notrump (set by [`with_conventions`]).
+    static CONVENTIONS: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((true, true)) };
+}
+
+/// Runs `f` on this thread with the lead conventions for partner's suit and
+/// for the other suits at notrump on or off (in tests only), which
+/// [`lead_allowed`] and [`lead_facts`] follow.
+#[cfg(test)]
+pub(crate) fn with_conventions<R>(partner_rule: bool, fourth_rule: bool, f: impl FnOnce() -> R) -> R {
+    let before = CONVENTIONS.replace((partner_rule, fourth_rule));
+    let result = f();
+    CONVENTIONS.set(before);
+    result
 }
 
 /// Whether partner's fewest cards of a suit, as the auction showed them, make
@@ -499,9 +532,10 @@ pub(crate) fn lead_facts<C>(game: &GameState<C>) -> Option<LeadFact> {
     };
     let bounds = Unseen::shown(game, game.system.table(), leader);
     let (trump, _, _) = contract(&game.bids);
-    let shows = if partners_suit(bounds[PARTNER].0.length[card.suit()]) {
+    let (partner_rule, fourth_rule) = conventions_on();
+    let shows = if partner_rule && partners_suit(bounds[PARTNER].0.length[card.suit()]) {
         LeadShows::Highest
-    } else if trump.is_none() && card.rank() <= 11 {
+    } else if fourth_rule && trump.is_none() && card.rank() <= 11 {
         LeadShows::FourthBest
     } else {
         return None;
