@@ -367,12 +367,14 @@ fn features(auction: &Auction, hand: Cards, card: Card) -> [f64; FEATURES.len()]
     ]
 }
 
-/// The weights of [`FEATURES`] against a notrump contract, fitted to 1,501
-/// notrump leads of the 5,000 situations of seed 1.
+/// The weights of [`FEATURES`] against a notrump contract, fitted to the
+/// 3,626 notrump leads of 12,000 fresh deals (seed 31) that the lead
+/// conventions allow, each valued by eight playouts of the big play model in
+/// every seat (see `collect_lead_playouts` and `fit_lead_playouts`).
 const NOTRUMP_WEIGHTS: [f64; FEATURES.len()] = [
-    2.766, -0.064, -0.437, 1.541, -2.635, -1.428, 2.199, 1.598, 1.272, -0.317, 0.000, 2.710, -1.624,
-    -2.589, 2.499, 1.484, -1.498, -1.330, -0.571, 0.302, 2.631, 3.948, 0.072, 0.018, 0.000, 0.039,
-    0.000, 0.181, 0.000, 7.299, -1.306, 0.000, 0.026, -3.275, 0.058, 0.184, 0.000, -0.008, -0.317,
+    1.287, -0.046, -0.142, 1.197, -0.775, -0.774, 0.275, 0.908, 1.238, 0.900, 0.000, 1.432, -0.763,
+    -0.921, 1.425, 0.251, -1.483, -0.836, 1.336, 1.360, -1.757, -0.721, -0.079, 0.942, 0.000, 0.001,
+    0.000, 1.432, 0.000, 0.626, 1.287, 0.000, -0.049, -1.735, -0.063, 1.425, 0.000, 0.000, -0.374,
 ];
 
 /// The weights of [`FEATURES`] against a suit contract, fitted to 3,499
@@ -459,6 +461,23 @@ pub(crate) struct LeadFact {
     pub(crate) shows: LeadShows,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Whether [`lead_facts`] reads nothing, for tests of a table whose
+    /// players do not know the lead conventions: set by [`with_facts`] for
+    /// the thread.
+    static FACTS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` on this thread with [`lead_facts`] on or off (in tests only).
+#[cfg(test)]
+pub(crate) fn with_facts<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    let before = FACTS_OFF.replace(!on);
+    let result = f();
+    FACTS_OFF.set(before);
+    result
+}
+
 /// What the opening lead of `game` shows by the lead conventions, if it has
 /// been made and shows anything (an ace, king or queen against notrump
 /// outside partner's suit, and any lead against a suit contract outside it,
@@ -467,6 +486,10 @@ pub(crate) struct LeadFact {
 /// robot can know it.  `None` for a game that does not keep its tricks once
 /// the first one is over.
 pub(crate) fn lead_facts<C>(game: &GameState<C>) -> Option<LeadFact> {
+    #[cfg(test)]
+    if FACTS_OFF.with(std::cell::Cell::get) {
+        return None;
+    }
     let leader = game.dummy()? + 3;
     let card = match game.tricks.first() {
         Some(&(seat, cards)) if seat == leader => cards[0],
@@ -550,6 +573,31 @@ pub(crate) mod candidates {
     pub(crate) fn pruned_lead(auction: &Auction, hand: Cards) -> Card {
         best_lead(hand, |card| pruned_suit_score(auction, hand, card))
     }
+
+    /// The lead that the weights `notrump` or `suit` score highest, among the
+    /// leads that the conventions allow if `constrained`, or among all the
+    /// cards of the hand if not.
+    pub(crate) fn lead_by(auction: &Auction, hand: Cards, constrained: bool, notrump: &[f64; FEATURES.len()], suit: &[f64; FEATURES.len()]) -> Card {
+        let weights = if auction.trump.is_some() { suit } else { notrump };
+        let allowed: Cards = hand.filter(|&card| !constrained || lead_allowed(auction, hand, card)).fold(Cards::EMPTY, Cards::insert);
+        let candidates = if allowed.is_empty() { hand } else { allowed };
+        candidates
+            .max_by(|&a, &b| lead_score(auction, hand, a, weights).total_cmp(&lead_score(auction, hand, b, weights)))
+            .unwrap()
+    }
+
+    /// The weights of the code, for notrump and suit contracts.
+    pub(crate) fn current_weights() -> ([f64; FEATURES.len()], [f64; FEATURES.len()]) {
+        (NOTRUMP_WEIGHTS, SUIT_WEIGHTS)
+    }
+
+    /// The weights of [`FEATURES`] against notrump before the lead
+    /// conventions, which the unconstrained leads of a match start from.
+    pub(crate) const OLD_NOTRUMP_WEIGHTS: [f64; FEATURES.len()] = [
+        2.766, -0.064, -0.437, 1.541, -2.635, -1.428, 2.199, 1.598, 1.272, -0.317, 0.000, 2.710, -1.624,
+        -2.589, 2.499, 1.484, -1.498, -1.330, -0.571, 0.302, 2.631, 3.948, 0.072, 0.018, 0.000, 0.039,
+        0.000, 0.181, 0.000, 7.299, -1.306, 0.000, 0.026, -3.275, 0.058, 0.184, 0.000, -0.008, -0.317,
+    ];
 
     /// The tables of an n-tuple network for the opening lead: their sizes,
     /// and the plain facts about a lead that index each of them.
@@ -1275,6 +1323,13 @@ mod tests {
     #[ignore]
     fn fit_lead_playouts() {
         let leads = read_lead_playouts(&std::env::var("OPENING_LEAD_PLAYOUTS").expect("OPENING_LEAD_PLAYOUTS"));
+        // `OPENING_LEAD_ALL` says that the data is of every card of the hand,
+        // for the weights of unconstrained leads, which are compared with
+        // the weights before the conventions.  `OPENING_LEAD_WEIGHTS_OUT`
+        // names a file for the weights that are fitted, a line each for
+        // notrump and suit contracts.
+        let all = std::env::var("OPENING_LEAD_ALL").is_ok();
+        let mut written = String::new();
         let value = |lead: &Lead, card: Card| lead.values.iter().find(|v| v.0 == card).unwrap().1;
         for notrump in [true, false] {
             let leads = by_contract(&leads, notrump);
@@ -1304,7 +1359,14 @@ mod tests {
                 let (train, test) = split(fold);
                 let weights = fit(&train, best.1);
                 for lead in test {
-                    old.push(value(lead, likely_opening_leads(&lead.auction, lead.hand)[0]));
+                    old.push(value(
+                        lead,
+                        if all {
+                            candidates::lead_by(&lead.auction, lead.hand, false, &candidates::OLD_NOTRUMP_WEIGHTS, &SUIT_WEIGHTS)
+                        } else {
+                            likely_opening_leads(&lead.auction, lead.hand)[0]
+                        },
+                    ));
                     new.push(value(lead, greedy_of_values(lead, &weights)));
                     random.push(lead.values.iter().map(|v| v.1).sum::<f64>() / lead.values.len() as f64);
                     most.push(lead.values.iter().map(|v| v.1).fold(f64::MIN, f64::max));
@@ -1328,6 +1390,10 @@ mod tests {
             for (name, weight) in FEATURES.iter().zip(weights) {
                 println!("    {weight:.3}, // {name}");
             }
+            written += &format!("{}\n", weights.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(","));
+        }
+        if let Ok(path) = std::env::var("OPENING_LEAD_WEIGHTS_OUT") {
+            std::fs::write(path, written).unwrap();
         }
     }
 

@@ -2236,6 +2236,9 @@ mod tests {
         let playouts = number("PLAY_LEAD_PLAYOUTS", 8);
         let temperature: f64 = var("PLAY_LEAD_T", "0.03").parse().unwrap();
         let games = crate::ai::opening_lead::candidates::opening_leads(seed, count);
+        // `PLAY_LEAD_ALL` values every lead, with the lead facts off, for the
+        // weights of a table that has no conventions.
+        let all = std::env::var("PLAY_LEAD_ALL").is_ok();
         let next = std::sync::atomic::AtomicUsize::new(0);
         let lines = std::sync::Mutex::new(Vec::new());
         let learners = std::slice::from_ref(&model);
@@ -2257,7 +2260,8 @@ mod tests {
                         let runs: Vec<Card> = crate::ai::playout::one_of_each_run(game).collect();
                         // The lowest allowed card of each run.
                         let mut leads: Vec<(usize, Card)> = Vec::new();
-                        for card in hand.filter(|&c| lead_allowed(&auction, hand, c)) {
+                        let allowed = |c: Card| all || lead_allowed(&auction, hand, c);
+                        for card in hand.filter(|&c| allowed(c)) {
                             let run = crate::ai::playout::run_of(&runs, card);
                             match leads.iter_mut().find(|l| l.0 == run) {
                                 Some(l) => l.1 = l.1.min(card),
@@ -2270,12 +2274,14 @@ mod tests {
                             let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
                             let luck = rng.r#gen();
                             for (total, &(_, card)) in totals.iter_mut().zip(&leads) {
-                                let tricks = playout_at(game, card, convention, learners, players, temperature, &qualities, luck);
+                                let tricks = crate::ai::opening_lead::with_facts(!all, || {
+                                    playout_at(game, card, convention, learners, players, temperature, &qualities, luck)
+                                });
                                 *total += tricks[leader as usize % 2] as f64 / playouts as f64;
                             }
                         }
                         let values: Vec<(Card, f64)> = hand
-                            .filter(|&c| lead_allowed(&auction, hand, c))
+                            .filter(|&c| allowed(c))
                             .map(|card| {
                                 let run = crate::ai::playout::run_of(&runs, card);
                                 let at = leads.iter().position(|l| l.0 == run).unwrap();
@@ -2300,6 +2306,96 @@ mod tests {
         lines.sort();
         let text: String = lines.into_iter().map(|(_, line)| line + "\n").collect();
         std::fs::write(path, text).unwrap();
+    }
+
+    /// Plays three tables of opening leads by the same model `PLAY_MODEL` in
+    /// every seat, on `PLAY_MATCH_DEALS` (6000) fresh deals from the seed
+    /// `PLAY_MATCH_SEED` (41), each valued by `PLAY_MATCH_PLAYOUTS` (8)
+    /// playouts at the temperature `PLAY_LEAD_T` (0.03) that meet the same
+    /// luck at every table: (A) the conventional leads with the weights of the
+    /// code, with the lead facts on; (B) leads of any card with the weights
+    /// in the file `PLAY_LEAD_B_WEIGHTS` (a line each, for notrump and suit
+    /// contracts, as `fit_lead_playouts` writes them), the facts off; (C) the
+    /// leads of A, the facts off.  Prints each table's tricks for the leader's
+    /// side, and A−B (what the conventions are worth), C−B (what restricting the
+    /// leads costs) and A−C (what the facts are worth), with their standard
+    /// errors.
+    #[test]
+    #[ignore]
+    fn match_the_leads() {
+        use crate::ai::opening_lead::candidates::{current_weights, lead_by, opening_leads};
+        use crate::ai::opening_lead::{with_facts, Auction};
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let count = number("PLAY_MATCH_DEALS", 6000);
+        let seed = number("PLAY_MATCH_SEED", 41) as u64;
+        let playouts = number("PLAY_MATCH_PLAYOUTS", 8);
+        let temperature: f64 = var("PLAY_LEAD_T", "0.03").parse().unwrap();
+        let weights_b: Vec<[f64; 39]> = std::fs::read_to_string(std::env::var("PLAY_LEAD_B_WEIGHTS").expect("PLAY_LEAD_B_WEIGHTS"))
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let w: Vec<f64> = line.split(',').map(|x| x.parse().unwrap()).collect();
+                w.try_into().unwrap()
+            })
+            .collect();
+        let (notrump_a, suit_a) = current_weights();
+        let games = opening_leads(seed, count);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(vec![[0.0; 3]; games.len()]);
+        let same = std::sync::atomic::AtomicUsize::new(0);
+        let learners = std::slice::from_ref(&model);
+        let players = [Player::Learning(0); 4];
+        std::thread::scope(|scope| {
+            for _ in 0..number("PLAY_THREADS", 2) {
+                scope.spawn(|| {
+                    let mut conventions = std::collections::HashMap::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(game) = games.get(i) else {
+                            break;
+                        };
+                        let convention = conventions.entry(format!("{:?}", game.system)).or_insert_with(|| game.system.convention());
+                        let auction = Auction::new(game).unwrap();
+                        let leader = game.turn().unwrap();
+                        let hand = game.hands[leader];
+                        let card_a = lead_by(&auction, hand, true, &notrump_a, &suit_a);
+                        let card_b = lead_by(&auction, hand, false, &weights_b[0], &weights_b[1]);
+                        same.fetch_add(usize::from(card_a == card_b), std::sync::atomic::Ordering::Relaxed);
+                        let mut rng = StdRng::seed_from_u64(seed * 1_000_003 + i as u64);
+                        let mut totals = [0.0; 3];
+                        for _ in 0..playouts {
+                            let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
+                            let luck = rng.r#gen();
+                            for (total, (card, facts)) in totals.iter_mut().zip([(card_a, true), (card_b, false), (card_a, false)]) {
+                                let tricks = with_facts(facts, || playout_at(game, card, convention, learners, players, temperature, &qualities, luck));
+                                *total += tricks[leader as usize % 2] as f64 / playouts as f64;
+                            }
+                        }
+                        results.lock().unwrap()[i] = totals;
+                    }
+                });
+            }
+        });
+        let results = results.into_inner().unwrap();
+        let stats = |f: &dyn Fn(&[f64; 3]) -> f64| {
+            let values: Vec<f64> = results.iter().map(f).collect();
+            let n = values.len() as f64;
+            let mean = values.iter().sum::<f64>() / n;
+            (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
+        };
+        let (a, b, c) = (stats(&|r| r[0]), stats(&|r| r[1]), stats(&|r| r[2]));
+        println!(
+            "{} deals, the leader's side's tricks: A (conventional, facts) {:.3}, B (unconstrained, no facts) {:.3}, C (conventional, no facts) {:.3}; A and B lead the same card in {:.1}%",
+            results.len(),
+            a.0,
+            b.0,
+            c.0,
+            100.0 * same.load(std::sync::atomic::Ordering::Relaxed) as f64 / results.len() as f64,
+        );
+        for (name, f) in [("A-B", (|r: &[f64; 3]| r[0] - r[1]) as fn(&[f64; 3]) -> f64), ("C-B", |r| r[2] - r[1]), ("A-C", |r| r[0] - r[2])] {
+            let (mean, error) = stats(&f);
+            println!("{name}: {mean:+.3} ({error:.3})");
+        }
     }
 
     /// Writes a corpus of situations of the play valued by playouts, in the
