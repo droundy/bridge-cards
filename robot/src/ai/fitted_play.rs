@@ -2212,6 +2212,96 @@ mod tests {
         std::fs::write(path, text).unwrap();
     }
 
+    /// Values the opening leads that the lead conventions allow by playouts
+    /// on the true deal, for the fit of the lead weights (see
+    /// `fit_lead_playouts` in `opening_lead`): of `PLAY_LEAD_DEALS` (4000)
+    /// fresh opening leads from the seed `PLAY_LEAD_SEED` (31), each lead
+    /// that is allowed (see [`lead_allowed`]), one a run of touching cards,
+    /// is played out to the end `PLAY_LEAD_PLAYOUTS` (8) times by the model
+    /// `PLAY_MODEL` (see [`read_model`]) in every seat at the temperature
+    /// `PLAY_LEAD_T` (0.03), the playouts after the different leads meeting
+    /// the same luck.  A value is the tricks of the leader's side.  The
+    /// lines go to the file `PLAY_LEAD_DATA`: the seed, the number of the
+    /// lead, and for each allowed card its suit, rank and mean value (the
+    /// cards of one run share the value of the lowest allowed one).  It runs
+    /// on `PLAY_THREADS` threads (2).
+    #[test]
+    #[ignore]
+    fn collect_lead_playouts() {
+        use crate::ai::opening_lead::{lead_allowed, Auction};
+        let path = std::env::var("PLAY_LEAD_DATA").expect("PLAY_LEAD_DATA");
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let count = number("PLAY_LEAD_DEALS", 4000);
+        let seed = number("PLAY_LEAD_SEED", 31) as u64;
+        let playouts = number("PLAY_LEAD_PLAYOUTS", 8);
+        let temperature: f64 = var("PLAY_LEAD_T", "0.03").parse().unwrap();
+        let games = crate::ai::opening_lead::candidates::opening_leads(seed, count);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let lines = std::sync::Mutex::new(Vec::new());
+        let learners = std::slice::from_ref(&model);
+        let players = [Player::Learning(0); 4];
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            for _ in 0..number("PLAY_THREADS", 2) {
+                scope.spawn(|| {
+                    let mut conventions = std::collections::HashMap::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(game) = games.get(i) else {
+                            break;
+                        };
+                        let convention = conventions.entry(format!("{:?}", game.system)).or_insert_with(|| game.system.convention());
+                        let auction = Auction::new(game).unwrap();
+                        let leader = game.turn().unwrap();
+                        let hand = game.hands[leader];
+                        let runs: Vec<Card> = crate::ai::playout::one_of_each_run(game).collect();
+                        // The lowest allowed card of each run.
+                        let mut leads: Vec<(usize, Card)> = Vec::new();
+                        for card in hand.filter(|&c| lead_allowed(&auction, hand, c)) {
+                            let run = crate::ai::playout::run_of(&runs, card);
+                            match leads.iter_mut().find(|l| l.0 == run) {
+                                Some(l) => l.1 = l.1.min(card),
+                                None => leads.push((run, card)),
+                            }
+                        }
+                        let mut rng = StdRng::seed_from_u64(seed * 1_000_003 + i as u64);
+                        let mut totals = vec![0.0; leads.len()];
+                        for _ in 0..playouts {
+                            let qualities: [[f64; 4]; 13] = std::array::from_fn(|_| std::array::from_fn(|_| rng.r#gen()));
+                            let luck = rng.r#gen();
+                            for (total, &(_, card)) in totals.iter_mut().zip(&leads) {
+                                let tricks = playout_at(game, card, convention, learners, players, temperature, &qualities, luck);
+                                *total += tricks[leader as usize % 2] as f64 / playouts as f64;
+                            }
+                        }
+                        let values: Vec<(Card, f64)> = hand
+                            .filter(|&c| lead_allowed(&auction, hand, c))
+                            .map(|card| {
+                                let run = crate::ai::playout::run_of(&runs, card);
+                                let at = leads.iter().position(|l| l.0 == run).unwrap();
+                                (card, totals[at])
+                            })
+                            .collect();
+                        let line = serde_json::json!({
+                            "seed": seed,
+                            "index": i,
+                            "values": values.iter().map(|&(c, v)| serde_json::json!([c.suit() as usize, c.rank(), v])).collect::<Vec<_>>(),
+                        });
+                        let mut lines = lines.lock().unwrap();
+                        lines.push((i, line.to_string()));
+                        if lines.len() % 100 == 0 {
+                            println!("{} leads, {:.0} s", lines.len(), started.elapsed().as_secs_f64());
+                        }
+                    }
+                });
+            }
+        });
+        let mut lines = lines.into_inner().unwrap();
+        lines.sort();
+        let text: String = lines.into_iter().map(|(_, line)| line + "\n").collect();
+        std::fs::write(path, text).unwrap();
+    }
+
     /// Writes a corpus of situations of the play valued by playouts, in the
     /// form that [`collect_play_data`] writes and [`read_situations`] reads,
     /// to the file `PLAY_CORPUS`: `PLAY_CORPUS_DEALS` (1000) fresh deals that

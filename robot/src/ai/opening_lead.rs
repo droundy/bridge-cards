@@ -1194,6 +1194,116 @@ mod tests {
         }
     }
 
+    /// The leads of the data in the files `paths`, comma-separated, that
+    /// `collect_lead_playouts` (in `fitted_play`) writes: the auction and the
+    /// hand of each, and the leader's side's mean tricks of each allowed lead.
+    fn read_lead_playouts(paths: &str) -> Vec<Lead> {
+        let mut games: std::collections::HashMap<u64, Vec<GameState<()>>> = std::collections::HashMap::new();
+        let mut leads = Vec::new();
+        for path in paths.split(',') {
+            let text = std::fs::read_to_string(path.trim()).unwrap();
+            let lines: Vec<serde_json::Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            for line in &lines {
+                let seed = line["seed"].as_u64().unwrap();
+                let most = lines.iter().filter(|l| l["seed"].as_u64() == Some(seed)).map(|l| l["index"].as_u64().unwrap()).max().unwrap();
+                games.entry(seed).or_insert_with(|| opening_leads(seed, most as usize + 1));
+                let game = &games[&seed][line["index"].as_u64().unwrap() as usize];
+                let leader = game.turn().unwrap();
+                let values: Vec<(Card, f64)> = line["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| (Card::new(Suit::ALL[v[0].as_u64().unwrap() as usize], v[1].as_u64().unwrap() as u8), v[2].as_f64().unwrap()))
+                    .collect();
+                leads.push(Lead {
+                    auction: Auction::new(game).unwrap(),
+                    hand: game.hands[leader],
+                    values,
+                    halves: [Vec::new(), Vec::new()],
+                    first_deals: Vec::new(),
+                });
+            }
+        }
+        leads
+    }
+
+    /// The first of the lead's cards that `weights` score highest.
+    fn greedy_of_values(lead: &Lead, weights: &Weights) -> Card {
+        lead.values
+            .iter()
+            .map(|&(card, _)| card)
+            .max_by(|&a, &b| lead_score(&lead.auction, lead.hand, a, weights).total_cmp(&lead_score(&lead.auction, lead.hand, b, weights)))
+            .unwrap()
+    }
+
+    /// Fits the lead weights to the leads of the playouts in the files
+    /// `OPENING_LEAD_PLAYOUTS` (see [`read_lead_playouts`]), choosing the
+    /// penalty by five-fold cross-validation, and prints, for each kind of
+    /// contract, the leader's side's tricks a lead, held out, of the weights
+    /// that are in the code, of the new weights, of a lead at random among
+    /// those that are allowed, and of the best lead (which is the best of
+    /// noisy values, so it is more than any rule can have), the difference of
+    /// the new and the old with its standard error, and the new weights.
+    #[test]
+    #[ignore]
+    fn fit_lead_playouts() {
+        let leads = read_lead_playouts(&std::env::var("OPENING_LEAD_PLAYOUTS").expect("OPENING_LEAD_PLAYOUTS"));
+        let value = |lead: &Lead, card: Card| lead.values.iter().find(|v| v.0 == card).unwrap().1;
+        for notrump in [true, false] {
+            let leads = by_contract(&leads, notrump);
+            let folds = 5;
+            let split = |fold: usize| -> (Vec<&Lead>, Vec<&Lead>) {
+                let train = leads.iter().enumerate().filter(|(i, _)| i % folds != fold).map(|(_, l)| *l).collect();
+                let test = leads.iter().enumerate().filter(|(i, _)| i % folds == fold).map(|(_, l)| *l).collect();
+                (train, test)
+            };
+            let mut best = (f64::MIN, 0.0);
+            for penalty in [0.0, 0.001, 0.003, 0.01, 0.03, 0.1] {
+                let mut total = 0.0;
+                for fold in 0..folds {
+                    let (train, test) = split(fold);
+                    let weights = fit(&train, penalty);
+                    total += mean_tricks(&test, |lead| greedy_of_values(lead, &weights)) * test.len() as f64;
+                }
+                let tricks = total / leads.len() as f64;
+                println!("notrump {notrump}, penalty {penalty}: {tricks:.4} tricks held out");
+                if tricks > best.0 {
+                    best = (tricks, penalty);
+                }
+            }
+            // Held out: each lead is chosen by weights fitted without it.
+            let (mut old, mut new, mut random, mut most) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            for fold in 0..folds {
+                let (train, test) = split(fold);
+                let weights = fit(&train, best.1);
+                for lead in test {
+                    old.push(value(lead, likely_opening_leads(&lead.auction, lead.hand)[0]));
+                    new.push(value(lead, greedy_of_values(lead, &weights)));
+                    random.push(lead.values.iter().map(|v| v.1).sum::<f64>() / lead.values.len() as f64);
+                    most.push(lead.values.iter().map(|v| v.1).fold(f64::MIN, f64::max));
+                }
+            }
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+            let differences: Vec<f64> = new.iter().zip(&old).map(|(n, o)| n - o).collect();
+            let d = mean(&differences);
+            let error = (differences.iter().map(|x| (x - d).powi(2)).sum::<f64>() / (differences.len() as f64 - 1.0) / differences.len() as f64).sqrt();
+            println!(
+                "{} {} leads, held out, tricks a lead: old weights {:.3}, new weights {:.3} (penalty {}), random allowed lead {:.3}, best of the values {:.3}; new minus old {d:+.3} ({error:.3})",
+                leads.len(),
+                if notrump { "notrump" } else { "suit" },
+                mean(&old),
+                mean(&new),
+                best.1,
+                mean(&random),
+                mean(&most),
+            );
+            let weights = fit(&leads, best.1);
+            for (name, weight) in FEATURES.iter().zip(weights) {
+                println!("    {weight:.3}, // {name}");
+            }
+        }
+    }
+
     /// Fits an n-tuple network over the tables of `TUPLES` to the data in
     /// `OPENING_LEAD_DATA` with `fitting`, picking the penalty by five-fold
     /// cross-validation, and prints the tricks of its first lead, and those
