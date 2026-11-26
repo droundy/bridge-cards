@@ -728,6 +728,33 @@ mod tests {
         assert!(fourth > 0 && highest > 0, "{fourth} fourth best, {highest} in partner's suit");
     }
 
+    /// The live robot's view of the deal places cards by a robot's lead, and
+    /// only where they really are.
+    #[test]
+    fn the_robot_places_cards_by_the_lead_only_where_they_are() {
+        use rand::seq::IteratorRandom;
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut placed = 0;
+        for mut game in opening_leads(5, 80) {
+            let hand = game.hands[game.turn().unwrap()];
+            game.play(likely_opening_leads(&Auction::new(&game).unwrap(), hand)[0]);
+            for _ in 0..rng.gen_range(0..12) {
+                if game.hand_done {
+                    break;
+                }
+                game.play(game.could_be_played().choose(&mut rng).unwrap());
+            }
+            let Some(starting) = game.starting() else { continue };
+            let lead = game.lead.unwrap();
+            for (place, &cards) in starting.hands.iter().enumerate() {
+                let seat = lead + place;
+                assert!((cards - game.original_hands[seat]).is_empty(), "{seat:?}");
+            }
+            placed += usize::from(lead_facts(&game).is_some());
+        }
+        assert!(placed > 0);
+    }
+
     #[test]
     fn the_ensemble_leads_one_of_the_likeliest_leads() {
         use crate::ai::ensemble::EnsemblePlay;
