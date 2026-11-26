@@ -3691,8 +3691,9 @@ mod tests {
     ///
     /// `PLAY_SPLITS` (comma-separated, `1` or, with `PLAY_SPLIT=1`, `4`) says
     /// how each shape and penalty is fitted: `1` is one fit of every
-    /// situation, `4` one fit for each of the four groups and `2` one for
-    /// declarer and one for the defence, each tested on its own situations.
+    /// situation, `4` one fit for each of the four groups, `2` one for
+    /// declarer and one for the defence, and `r` one for each of the four
+    /// roles, each tested on its own situations.
     /// A trailing `s` scales each fit's penalty by N/N_g, the situations in
     /// all over those it is fitted to, which is the same prior as the one
     /// fit's: the penalty is on the mean loss, so as a prior its precision
@@ -3718,15 +3719,16 @@ mod tests {
                     let started = std::time::Instant::now();
                     let (ways, scaled) = (split.trim_end_matches('s'), split.ends_with('s'));
                     // The fit that each group's situations belong to.
-                    let way: fn(usize) -> usize = match ways {
-                        "1" => |_| 0,
-                        "2" => |g| g / 2,
-                        "4" => |g| g,
-                        _ => panic!("PLAY_SPLITS: {split} is not 1, 2 or 4 with or without s"),
+                    let (way, count): (fn(&Situation) -> usize, usize) = match ways {
+                        "1" => (|_| 0, 1),
+                        "2" => (|s| s.group / 2, 2),
+                        "4" => (|s| s.group, 4),
+                        "r" => (|s| s.role / 2, 4),
+                        _ => panic!("PLAY_SPLITS: {split} is not 1, 2, 4 or r with or without s"),
                     };
-                    let fits: Vec<Network> = (0..ways.parse().unwrap())
+                    let fits: Vec<Network> = (0..count)
                         .map(|f| {
-                            let choices: Vec<_> = train.iter().filter(|s| way(s.group) == f).map(|s| &s.choice).collect();
+                            let choices: Vec<_> = train.iter().filter(|s| way(s) == f).map(|s| &s.choice).collect();
                             let penalty = if scaled { penalty * train.len() as f64 / choices.len() as f64 } else { penalty };
                             fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)
                         })
@@ -3735,7 +3737,7 @@ mod tests {
                     let losses: Vec<f64> = test
                         .iter()
                         .map(|s| {
-                            let network = &fits[way(s.group)];
+                            let network = &fits[way(s)];
                             let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
                             best - s.choice[network.choice(&s.choice)].1
                         })
@@ -3755,11 +3757,15 @@ mod tests {
                         }
                         None => println!(),
                     }
-                    for (g, name) in GROUPS.iter().enumerate() {
-                        let at: Vec<usize> = (0..test.len()).filter(|&i| test[i].group == g).collect();
+                    // By group, by role, and by role and contract.
+                    let kinds: [(&[&str], fn(&Situation) -> usize); 3] =
+                        [(&GROUPS, |s| s.group), (&ROLES_ALONE, |s| s.role / 2), (&ROLES, |s| s.role)];
+                    let kinds = kinds.into_iter().flat_map(|(names, kind)| names.iter().enumerate().map(move |(g, name)| (name, g, kind)));
+                    for (name, g, kind) in kinds {
+                        let at: Vec<usize> = (0..test.len()).filter(|&i| kind(&test[i]) == g).collect();
                         let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
                         let (mean, spread) = error(&these);
-                        print!("    {name:<17} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                        print!("    {name:<20} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
                         match &first {
                             Some(first) => {
                                 let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
@@ -4253,12 +4259,31 @@ mod tests {
         stage: usize,
         /// Which of [`GROUPS`] it is in.
         group: usize,
+        /// The role of the player (see [`Table`]) and whether the contract
+        /// is in notrump, as an index of [`ROLES`].
+        role: usize,
         choice: Vec<(Entries, f64)>,
     }
 
     /// The kinds of situation that [`screen_play_shapes`] reports apart: who
     /// plays, the declarer's side or the defence, and in what contract.
     const GROUPS: [&str; 4] = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
+
+    /// The roles, which [`screen_play_shapes`] reports apart as well.
+    const ROLES_ALONE: [&str; 4] = ["own hand", "dummy", "left defender", "right defender"];
+
+    /// The roles crossed with suit and notrump, which [`screen_play_shapes`]
+    /// reports apart as well.
+    const ROLES: [&str; 8] = [
+        "own hand, suit",
+        "own hand, notrump",
+        "dummy, suit",
+        "dummy, notrump",
+        "left defender, suit",
+        "left defender, NT",
+        "right defender, suit",
+        "right defender, NT",
+    ];
 
     /// The situations in the files `paths`, comma-separated, each card with
     /// its entries in the tables of `shape`.
@@ -4303,6 +4328,7 @@ mod tests {
                 situations.push(Situation {
                     stage: json["stage"].as_u64().unwrap() as usize,
                     group: 2 * usize::from(view.role >= 2) + usize::from(view.trump.is_none()),
+                    role: 2 * view.role + usize::from(view.trump.is_none()),
                     choice,
                 });
             }
