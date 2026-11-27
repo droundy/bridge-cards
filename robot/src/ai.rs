@@ -103,16 +103,9 @@ fn legal_bids(history: &[Bid]) -> Vec<Bid> {
     candidates
 }
 
-/// Every bid, in the order of `legal_bids`.
+/// Every bid, in order, which is the order of `legal_bids`.
 fn all_bids() -> Vec<Bid> {
-    let mut bids = vec![Bid::Pass, Bid::Double, Bid::Redouble];
-    for level in 1..8 {
-        for suit in Suit::ALL.iter().cloned() {
-            bids.push(Bid::Suit(level, suit));
-        }
-        bids.push(Bid::NT(level));
-    }
-    bids
+    (0..Bid::CALLS).map(Bid::from_index).collect()
 }
 
 /// Bids by a table of conventions: the first entry in the table that
@@ -1385,8 +1378,6 @@ impl Convention {
     ///
     /// Panics if an entry's patterns do not each end in one bid.
     fn most_forcing_then_highest(self) -> Convention {
-        let ranks = all_bids();
-        let rank = |bid: Bid| ranks.iter().position(|&b| b == bid).unwrap();
         let mut keyed = Vec::new();
         for entry in self.entries() {
             let auctions = entry.auctions().expect("only entries can be sorted");
@@ -1394,7 +1385,7 @@ impl Convention {
                 let bid = pattern
                     .last_bid()
                     .unwrap_or_else(|| panic!("no final bid in {}", pattern.source()));
-                let key = (entry.is_forcing(), rank(bid));
+                let key = (entry.is_forcing(), bid);
                 keyed.push((key, entry.with_pattern(pattern)));
             }
         }
@@ -3266,7 +3257,7 @@ fn robot_bids_are_what_the_server_accepts() {
             .collect();
         let mut robot = legal_bids(&history);
         assert!(robot.iter().all(|&b| game.bid_is_legal(seat, b)));
-        robot.sort_by_key(|b| every_bid.iter().position(|x| x == b));
+        robot.sort();
         assert_eq!(accepted, robot, "after {}", bids_string(&history));
     }
     assert!(legal_bids(&[Suit(1, Hearts), Pass, Pass]).contains(&Double));

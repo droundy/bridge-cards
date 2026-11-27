@@ -10,17 +10,6 @@ use display_as::{format_as, HTML};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wording::{or, Text};
 
-/// Where a call stands among all calls, lowest first.
-pub(super) fn rank(bid: Bid) -> usize {
-    match bid {
-        Bid::Pass => 0,
-        Bid::Double => 1,
-        Bid::Redouble => 2,
-        Bid::Suit(level, suit) => 5 * level + suit as usize,
-        Bid::NT(level) => 5 * level + 4,
-    }
-}
-
 /// Is the auction over?
 pub(super) fn is_over(history: &[Bid]) -> bool {
     let n = history.len();
@@ -183,7 +172,7 @@ pub(super) fn walk(table: &Convention) -> (Vec<Node>, Vec<Meaning>) {
             .filter(in_table)
             .map(|&(_, bid)| bid)
             .collect();
-        calls.sort_by_key(|&bid| rank(bid));
+        calls.sort();
         calls.dedup();
         if !assumed && !calls.contains(&Bid::Pass) {
             todo.push((followed_by(&history, Bid::Pass), true));
@@ -224,9 +213,9 @@ impl Openings {
         }
         let mut groups: Vec<Vec<Bid>> = groups.into_iter().map(|(_, bids)| bids).collect();
         for bids in groups.iter_mut() {
-            bids.sort_by_key(|&bid| rank(bid));
+            bids.sort();
         }
-        groups.sort_by_key(|bids| rank(bids[0]));
+        groups.sort_by_key(|bids| bids[0]);
         Openings(groups)
     }
     /// The group that an opening bid is in.
