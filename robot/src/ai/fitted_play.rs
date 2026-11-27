@@ -416,6 +416,46 @@ pub(crate) struct Shape {
     /// layer takes all the units of the one before, so that it can weigh
     /// combinations of those.
     pub(crate) layers: &'static [usize],
+    /// Which head of the network scores the cards of a situation.
+    pub(crate) heads: Heads,
+}
+
+/// Which of the network's heads (see [`Network`]) scores the cards of a
+/// situation, by the role of the player: the heads share the tables' rows
+/// and the first layer, and each has its later layers of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Heads {
+    /// One head for every role.
+    One,
+    /// One for the declarer, playing either hand, and one for the defence.
+    Sides,
+    /// One for the declarer, one for the defender on the declarer's left,
+    /// and one for the defender on the right.
+    Defenders,
+    /// One for each role.
+    Roles,
+}
+
+impl Heads {
+    /// How many there are.
+    pub(crate) const fn count(self) -> usize {
+        match self {
+            Heads::One => 1,
+            Heads::Sides => 2,
+            Heads::Defenders => 3,
+            Heads::Roles => 4,
+        }
+    }
+
+    /// The head for a player of `role` (see [`Table`]).
+    pub(crate) fn head(self, role: usize) -> usize {
+        match self {
+            Heads::One => 0,
+            Heads::Sides => usize::from(role >= 2),
+            Heads::Defenders => role.saturating_sub(1),
+            Heads::Roles => role,
+        }
+    }
 }
 
 /// The first shape, of the model trained by self-play from round 0.
@@ -435,6 +475,7 @@ pub(crate) const V1: Shape = Shape {
         Table::SecondPoints,
     ],
     layers: &[16, 8],
+    heads: Heads::One,
 };
 
 /// [`V1`] without the entries that no card looks up: the same facts, and
@@ -455,16 +496,17 @@ pub(crate) const V2: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
+    heads: Heads::One,
     layers: &[16, 8],
 };
 
 /// [`V2`] with hidden layers twice as wide, to see whether its width is what
 /// limits it.
-pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16] };
+pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16], heads: Heads::One };
 
 /// [`V2`] and more tables, to see whether they pay.
 const fn v2_and(name: &'static str, tables: &'static [Table]) -> Shape {
-    Shape { name, tables, layers: &[16, 8] }
+    Shape { name, tables, layers: &[16, 8], heads: Heads::One }
 }
 
 /// The tables of [`V2`] and then `$table`s.
@@ -504,23 +546,24 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
 /// [`V2_TRUMPS`] with hidden layers twice as wide, to see whether its width
 /// is what stops training from going further.
-pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16] };
+pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16], heads: Heads::One };
 /// [`V2_TRUMPS`] and [`Table::History`].
 pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_tables_and!(Table::Trumps, Table::History));
 /// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
 pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
-    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16] };
+    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16], heads: Heads::One };
 /// [`V2_TRUMPS_HISTORY`] with a third hidden layer, to see whether depth
 /// pays where width did not.  A model of two layers grows into it with the
 /// third passing on the second, so that it starts by playing as it did.
 pub(crate) const V2_TRUMPS_HISTORY_DEEP: Shape =
-    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8] };
+    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8], heads: Heads::One };
 /// Every table that does not read the calls nor the beliefs, and layers
 /// that are wider and one deeper, to be trained for far longer than the
 /// screens: a model of two layers grows into it playing as it did (see
 /// [`Model::grown_to`]).
 pub(crate) const V2_BIG: Shape = Shape {
     name: "v2-big",
+    heads: Heads::One,
     tables: v2_tables_and!(Table::Later, Table::Trumps, Table::History, Table::Later2),
     layers: &[64, 32, 16],
 };
@@ -532,6 +575,17 @@ pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
 /// whether a hidden hand that plays after the player could win the trick.
 pub(crate) const V2_TRUMPS_HISTORY_LATER2: Shape =
     v2_and("v2-trumps-history-later2", v2_tables_and!(Table::Trumps, Table::History, Table::Later2));
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for the declarer and one for the
+/// defence (see [`Heads`]).
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_SIDES: Shape =
+    Shape { name: "v2-trumps-history-later2-sides", heads: Heads::Sides, ..V2_TRUMPS_HISTORY_LATER2 };
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for the declarer and one for each
+/// defender.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_DEFENDERS: Shape =
+    Shape { name: "v2-trumps-history-later2-defenders", heads: Heads::Defenders, ..V2_TRUMPS_HISTORY_LATER2 };
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for each role.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_ROLES: Shape =
+    Shape { name: "v2-trumps-history-later2-roles", heads: Heads::Roles, ..V2_TRUMPS_HISTORY_LATER2 };
 
 /// [`V2_TRUMPS`] reading the player's beliefs about where the hidden cards
 /// lie: [`Table::AboveSplit`] and [`Table::BelowSplit`] in place of
@@ -792,6 +846,9 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_DEEP,
     &V2_BIG,
     &V2_TRUMPS_HISTORY_LATER2,
+    &V2_TRUMPS_HISTORY_LATER2_SIDES,
+    &V2_TRUMPS_HISTORY_LATER2_DEFENDERS,
+    &V2_TRUMPS_HISTORY_LATER2_ROLES,
     &V2_TRUMPS_BELIEFS,
     &V2_TRUMPS_HISTORY_LATER3,
     &V2_TRUMPS_HISTORY_LATER3_KNOTS,
@@ -832,7 +889,7 @@ impl Shape {
 
     /// How many weights a model of this shape has.
     pub(crate) fn size(&self) -> usize {
-        Network::size(self.entries(), self.layers)
+        Network::size(self.entries(), self.layers, self.heads.count())
     }
 }
 
@@ -846,7 +903,7 @@ pub(crate) struct Model {
 impl Model {
     /// The model of `shape` with `params`, such as one written out before.
     pub(crate) fn with_params(shape: &'static Shape, params: Vec<f64>) -> Model {
-        let network = Network::with_params(shape.entries(), shape.layers, params);
+        let network = Network::with_params(shape.entries(), shape.layers, shape.heads.count(), params);
         Model { shape, network }
     }
 
@@ -854,7 +911,7 @@ impl Model {
     /// [`Network::new`]).
     #[cfg(test)]
     pub(crate) fn new(shape: &'static Shape, seed: u64) -> Model {
-        let network = Network::new(shape.entries(), shape.layers, seed);
+        let network = Network::new(shape.entries(), shape.layers, seed).with_heads(shape.heads.count());
         Model { shape, network }
     }
 
@@ -898,6 +955,10 @@ impl Model {
     /// `shape`.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
+        if self.shape.heads != Heads::One {
+            // Only a model of one head grows; one of several stays as it is.
+            return (self.shape == shape).then(|| self.clone());
+        }
         if self.shape == &V1 {
             return self.without_room().grown_to(shape);
         }
@@ -979,6 +1040,8 @@ impl Model {
         for (from, to, factor) in copies {
             network.copy_entry(from, to, factor);
         }
+        // Each head starts as a copy of the one it had.
+        let network = network.with_heads(shape.heads.count());
         Some(Model { shape, network })
     }
 
@@ -1020,6 +1083,7 @@ impl Model {
             name: Box::leak(format!("{} without {dropped:?}", self.shape.name).into_boxed_str()),
             tables: Box::leak(tables.into_boxed_slice()),
             layers: self.shape.layers,
+            heads: self.shape.heads,
         }));
         let mut moved = Vec::with_capacity(self.shape.entries());
         let mut next = 0;
@@ -1034,7 +1098,7 @@ impl Model {
             }
         }
         let params = self.network.with_entries_moved(&self.network.params, &moved, shape.entries());
-        Model { shape, network: Network::with_params(shape.entries(), shape.layers, params) }
+        Model { shape, network: Network::with_params(shape.entries(), shape.layers, shape.heads.count(), params) }
     }
 
     /// Where each entry of [`V1`] is in [`V2`], if it is there.
@@ -2815,7 +2879,7 @@ impl View {
             }
             offset += table.size();
         }
-        Entries { one, weighted }
+        Entries { one, weighted, head: shape.heads.head(self.role) }
     }
 }
 
@@ -3097,7 +3161,7 @@ fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
 #[cfg(test)]
 pub(crate) fn random_model(seed: u64) -> Model {
     use rand::{Rng, SeedableRng};
-    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
+    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3], heads: Heads::One };
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut model = Model::new(&SMALL, 3);
     for p in &mut model.network.params {
@@ -3573,6 +3637,7 @@ mod tests {
                 Table::FirstPoints,
             ],
             layers: &[20, 11],
+            heads: Heads::One,
         };
         // The shapes with every table of v2 (the lean ones drop some).
         let shapes: Vec<&'static Shape> = SHAPES
@@ -3584,8 +3649,8 @@ mod tests {
         assert_eq!(grown.len(), shapes.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
         // Nor can a shape that lacks a table, or has narrower layers.
-        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8] };
-        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8] };
+        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8], heads: Heads::One };
+        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8], heads: Heads::One };
         assert!(new.grown_to(&FEWER).is_none() && new.grown_to(&NARROWER).is_none());
         let more = grown.last().unwrap();
         let mut gradient = vec![0.0; more.network.params.len()];
@@ -3666,6 +3731,7 @@ mod tests {
             name: Box::leak(spec.to_string().into_boxed_str()),
             tables: Box::leak(all.into_boxed_slice()),
             layers: Box::leak(layers.into_boxed_slice()),
+            heads: Heads::One,
         }))
     }
 
@@ -3804,6 +3870,7 @@ mod tests {
     fn measure_play_tables() {
         let model = read_model(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
         assert!(!model.shape.reads_beliefs(), "the tables are measured by their one entry each, which a table of the beliefs has not");
+        assert_eq!(model.shape.heads, Heads::One, "the tables are measured by the first head");
         let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), model.shape);
         let network = &model.network;
         let n = test.len() as f64;
@@ -3981,7 +4048,7 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
+        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3], heads: Heads::One };
         let mut weights = Model::new(&SMALL, 3);
         for p in &mut weights.network.params {
             *p = rng.gen_range(-1.0..1.0);
@@ -6513,7 +6580,7 @@ mod tests {
     fn make_play_model_file() {
         let shape = shape_of("PLAY_SHAPE");
         let read = |path: &str| {
-            let network = Network::read(path, shape.entries(), shape.layers);
+            let network = Network::read(path, shape.entries(), shape.layers, shape.heads.count());
             Model { shape, network }
         };
         let weights = read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
@@ -6556,7 +6623,7 @@ mod tests {
                 .strip_suffix(".txt")
                 .and_then(|stem| SHAPES.iter().filter(|s| stem.ends_with(&format!("-{}", s.name))).max_by_key(|s| s.name.len()));
             let shape = named.copied().unwrap_or_else(|| shape_of("PLAY_SHAPE"));
-            Model { shape, network: Network::read(path, shape.entries(), shape.layers) }
+            Model { shape, network: Network::read(path, shape.entries(), shape.layers, shape.heads.count()) }
         }
     }
 
@@ -7527,6 +7594,38 @@ mod tests {
         time("scores with Trick+SuitTricks", &|game, convention| scores(&suit_tricks, game, convention));
     }
 
+    /// A model grown into a shape of several heads scores every card as it
+    /// did, whichever head scores it, and the heads are chosen by the role:
+    /// every head scores some cards.
+    #[test]
+    fn a_model_given_heads_scores_as_it_did() {
+        let mut rng = StdRng::seed_from_u64(13);
+        let mut old = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
+        old.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
+        for shape in [&V2_TRUMPS_HISTORY_LATER2_SIDES, &V2_TRUMPS_HISTORY_LATER2_DEFENDERS, &V2_TRUMPS_HISTORY_LATER2_ROLES] {
+            let new = old.grown_to(shape).unwrap();
+            assert_eq!(new.network.params.len(), shape.size());
+            assert!(new.grown_to(shape).is_some() && new.grown_to(&V2_TRUMPS_HISTORY_LATER2).is_none());
+            let mut used = vec![0; shape.heads.count()];
+            for game in crate::ai::opening_lead::candidates::opening_leads(43, 4) {
+                let convention = game.system.convention();
+                let mut game = crate::ai::playout::copy_of(&game);
+                while !game.hand_done {
+                    if let Some(view) = View::new(&game, &convention) {
+                        for card in view.legal() {
+                            used[new.entries(&view, card).head] += 1;
+                            let (a, b) = (old.score(&view, card), new.score(&view, card));
+                            assert!((a - b).abs() < 1e-9, "{}: {a} against {b}", shape.name);
+                        }
+                    }
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                }
+            }
+            assert!(used.iter().all(|&n| n > 0), "{}: {used:?}", shape.name);
+        }
+    }
+
     #[test]
     fn a_model_grown_to_read_beliefs_scores_as_it_did() {
         let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
@@ -8313,6 +8412,134 @@ mod tests {
         }
     }
 
+    /// The snapshots of learner `learner` in the directory `directory` from
+    /// round `from` to `to`, with their rounds and paths, and their average.
+    fn averaged(directory: &str, learner: usize, from: usize, to: usize) -> (Vec<(usize, String)>, Vec<Model>, Model) {
+        let mut paths: Vec<(usize, String)> = std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path().to_str()?.to_string();
+                let name = path.rsplit('/').next()?;
+                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
+                let round: usize = digits.parse().ok()?;
+                let rest = name.strip_prefix(&format!("round-{digits}-learner-{learner}-"))?;
+                (rest.ends_with(".txt") && (from..=to).contains(&round)).then_some((round, path))
+            })
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no snapshots of learner {learner} in {directory} from round {from} to {to}");
+        let snapshots: Vec<Model> = paths.iter().map(|(_, path)| read_model(path)).collect();
+        let mut average = snapshots[0].clone();
+        for (j, p) in average.network.params.iter_mut().enumerate() {
+            *p = snapshots.iter().map(|s| s.network.params[j]).sum::<f64>() / snapshots.len() as f64;
+        }
+        (paths, snapshots, average)
+    }
+
+    /// Plays arms of play models against the model of `PLAY_SELF_REFERENCE`
+    /// in two-table matches on `PLAY_MATCH_DEALS` (6000) deals that the robot
+    /// bid (the tournament's, from seed 17), the same deals for every model,
+    /// and compares the arms with the first, deal by deal.  `PLAY_MATCH_ARMS`
+    /// lists the arms, separated by `;`, each a name, `=`, and its models
+    /// separated by `,`: a model file or snapshot (see [`read_model`]), or
+    /// `DIRECTORY@LEARNER@FROM@TO` for the average of a learner's snapshots
+    /// (see [`averaged`]).  An arm's result on a deal is the mean of its
+    /// models'.  Each deal is split into what the arm's side took as the
+    /// declarer's side, at the table where it declares, and as the defence
+    /// at the other, each against the reference, so that the difference of
+    /// two arms is reported by who played (declarer or defence) and by the
+    /// contract (suit or notrump), with standard errors deal by deal.  It
+    /// uses `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn match_arms_by_group() {
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let _ = LOCATIONS.set(read_locations(&path));
+        }
+        let reference = read_model(&std::env::var("PLAY_SELF_REFERENCE").expect("PLAY_SELF_REFERENCE"));
+        let arms: Vec<(String, Vec<Model>)> = std::env::var("PLAY_MATCH_ARMS")
+            .expect("PLAY_MATCH_ARMS")
+            .split(';')
+            .map(|arm| {
+                let (name, models) = arm.split_once('=').expect("an arm's name and =");
+                let models = models
+                    .split(',')
+                    .map(|spec| match spec.trim().split('@').collect::<Vec<_>>()[..] {
+                        [directory, learner, from, to] => {
+                            averaged(directory, learner.parse().unwrap(), from.parse().unwrap(), to.parse().unwrap()).2
+                        }
+                        _ => read_model(spec.trim()),
+                    })
+                    .collect();
+                (name.trim().to_string(), models)
+            })
+            .collect();
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(17, number("PLAY_MATCH_DEALS", 6000))
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+            .collect();
+        // Each deal's contract (suit 0 or notrump 1), and the side that declares.
+        let kinds: Vec<(usize, usize)> = deals
+            .iter()
+            .map(|json| {
+                let game: GameState<()> = serde_json::from_str(json).unwrap();
+                let notrump = game.bids.iter().rev().find(|b| matches!(b, Bid::Suit(..) | Bid::NT(_))).is_some_and(|b| matches!(b, Bid::NT(_)));
+                (usize::from(notrump), game.find_declarer().unwrap() as usize % 2)
+            })
+            .collect();
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        // For each arm and deal, the tricks of its side as declarer and as
+        // the defence, each its models' mean.
+        let results: Vec<Vec<[f64; 2]>> = arms
+            .iter()
+            .map(|(_, models)| {
+                workers.install(|| {
+                    deals
+                        .par_iter()
+                        .zip(&kinds)
+                        .map(|(json, &(_, declarer))| {
+                            let game: GameState<()> = serde_json::from_str(json).unwrap();
+                            let convention = game.system.convention();
+                            let mut sum = [0.0; 2];
+                            for model in models {
+                                for (part, side) in [declarer, 1 - declarer].into_iter().enumerate() {
+                                    let ns = play_at_a_table(json, &convention, model, side, Some(&reference)) as f64;
+                                    sum[part] += if side == 0 { ns } else { 13.0 - ns };
+                                }
+                            }
+                            sum.map(|s| s / models.len() as f64)
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        let mean_and_error = |values: &[f64]| {
+            let n = values.len() as f64;
+            let mean = values.iter().sum::<f64>() / n;
+            (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
+        };
+        let names = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
+        for (a, (name, models)) in arms.iter().enumerate() {
+            let gains: Vec<f64> = results[a].iter().map(|[d, e]| d + e - 13.0).collect();
+            let (mean, error) = mean_and_error(&gains);
+            print!("{name} ({} models): {mean:+.4} ({error:.4}) tricks a deal against the reference", models.len());
+            if a == 0 {
+                println!();
+                continue;
+            }
+            let more: Vec<f64> = results[a].iter().zip(&results[0]).map(|(x, y)| x[0] + x[1] - y[0] - y[1]).collect();
+            let (mean, error) = mean_and_error(&more);
+            println!(", {mean:+.4} ({error:.4}) more than {}", arms[0].0);
+            for (g, group) in names.iter().enumerate() {
+                let (part, kind) = (g / 2, g % 2);
+                let at: Vec<f64> =
+                    (0..deals.len()).filter(|&i| kinds[i].0 == kind).map(|i| results[a][i][part] - results[0][i][part]).collect();
+                let (mean, error) = mean_and_error(&at);
+                println!("    {group:<17} {:>5} deals: {mean:+.4} ({error:.4}) tricks a deal of the kind", at.len());
+            }
+        }
+    }
+
     /// Averages the weights of learner `PLAY_LEARNER` (1) over its snapshots
     /// in the directory `PLAY_SELF_SNAPSHOTS` from round `PLAY_FROM` to
     /// `PLAY_TO`, and plays the average, and each of those snapshots, against
@@ -8336,24 +8563,7 @@ mod tests {
         set_oracle(std::env::var("PLAY_SELF_ORACLE").map_or(0.0, |v| v.parse().expect("PLAY_SELF_ORACLE")));
         let learner = number("PLAY_LEARNER", 1);
         let (from, to) = (number("PLAY_FROM", 0), number("PLAY_TO", usize::MAX));
-        let mut paths: Vec<(usize, String)> = std::fs::read_dir(&directory)
-            .unwrap()
-            .filter_map(|entry| {
-                let path = entry.unwrap().path().to_str()?.to_string();
-                let name = path.rsplit('/').next()?;
-                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
-                let round: usize = digits.parse().ok()?;
-                let rest = name.strip_prefix(&format!("round-{digits}-learner-{learner}-"))?;
-                (rest.ends_with(".txt") && (from..=to).contains(&round)).then_some((round, path))
-            })
-            .collect();
-        paths.sort();
-        assert!(!paths.is_empty(), "no snapshots of learner {learner} from round {from} to {to}");
-        let snapshots: Vec<Model> = paths.iter().map(|(_, path)| read_model(path)).collect();
-        let mut average = snapshots[0].clone();
-        for (j, p) in average.network.params.iter_mut().enumerate() {
-            *p = snapshots.iter().map(|s| s.network.params[j]).sum::<f64>() / snapshots.len() as f64;
-        }
+        let (paths, snapshots, average) = averaged(&directory, learner, from, to);
         if let Ok(path) = std::env::var("PLAY_AVERAGE") {
             average.network.write(&path);
         }
