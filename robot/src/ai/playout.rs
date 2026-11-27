@@ -108,6 +108,7 @@ pub(crate) fn copy_of<C>(game: &GameState<C>) -> GameState<()> {
     copy.shown_out = game.shown_out;
     copy.tricks = game.tricks.clone();
     copy.system = game.system;
+    copy.hands_called_by = game.hands_called_by;
     copy
 }
 

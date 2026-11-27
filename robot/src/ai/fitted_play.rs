@@ -8,9 +8,10 @@
 //! good, only which facts each table sees; the opening lead has its own
 //! tables (`opening_lead`), since the dummy is not yet in sight then.
 
-use super::fitting::Network;
+use super::fitting::{Entries, Network};
 #[cfg(test)]
 mod model_file;
+mod suit_play;
 use super::Convention;
 use crate::{Bid, GameState, Seat, Seated};
 use bridge_deck::{Card, Cards, Suit};
@@ -87,8 +88,90 @@ pub(crate) enum Table {
     /// ruffing, which is when it can be void in the suit led and may hold a
     /// trump that beats it.  Following wins over ruffing when both could do it.
     Later2,
+    /// [`Table::Later2`] by the player's beliefs: the same entries, each with
+    /// its chance, where a hand's state is what it does hold, not what it
+    /// could: it cannot beat the card and the trick so far, it holds a card
+    /// of the suit led that beats them, or it holds none of the suit led and
+    /// a trump that beats them.  Those are exclusive, since a hand that holds
+    /// a card of the suit led must follow.
+    Later3,
+    /// [`Table::Later3`] with each state's chance p put on a scale that can
+    /// bend: an entry for each of [`KNOTS`], weighted by the hat function of
+    /// p that is 1 at that knot and falls to 0 at the knots beside it (at 0
+    /// below the first), the last rising to 1 at p = 1.  Their weights make a
+    /// function of p that is linear between the knots and 0 at p = 0, which
+    /// a state's p alone, entering the first layer, cannot be.
+    Later3Knots,
+    /// The role, the play, and how many tricks of its suit the card gives
+    /// away against the best card of the suit (0, 1, 2, or 3 or more), with
+    /// the suit played out alone with all four hands known, for each way that
+    /// the player's beliefs give the suit's hidden cards, with its chance;
+    /// or that the card does not follow the suit led, or that the suit has
+    /// too many cards whose place is not known to be worked out.
+    SuitTricks,
+    /// The role, the play, and what a small search of the card's suit says
+    /// of it (see [`suit_play`]): played out from now as though at notrump,
+    /// for each way that the hidden cards of the suit could be split between
+    /// the hidden hands, by what the auction and the play show, how many
+    /// fewer tricks the player's side takes in the suit after this card than
+    /// after the best card of the suit (0, 1, 2, or 3 or more), at the worst
+    /// split and at the best.  A lead is compared with the other leads of
+    /// its suit, a discard by what it costs its own suit against the
+    /// cheapest discard, and a ruff is always 0.
+    SuitPlay,
+    /// The role, the play, and the median number of tricks in a row that the
+    /// player's side takes, from this trick on, over the ways that the
+    /// hidden cards could lie by the player's beliefs (0 to 4 or more): each
+    /// way is a deal of the hidden cards, in which every play of the side's
+    /// two hands, and each play that the opponents can make to win a trick,
+    /// ruffs and overruffs included, is tried, and the run counts the tricks
+    /// that the side takes one after the other until the opponents win one,
+    /// the side leading each trick that it has won, whichever hand won it.
+    /// So a run can cross to the other hand to lead, or ruff in each hand in
+    /// turn.  Only for views that keep beliefs.
+    Run,
+    /// [`Table::Run`] worked out without dealing: the role, the play, and the
+    /// chance of each run, 0 to 4 or more tricks in a row from this trick on.
+    /// Each suit's ways of lying come with their exact chances from the
+    /// player's beliefs; in each, the side cashes the suit from the top
+    /// until an opponent's card beats its best or a void opponent with a trump
+    /// ruffs, the opponents playing low otherwise.  The trick in progress is
+    /// played out for each way that the suit led lies, and the suits are
+    /// added up as though they lay independently given which hidden hands
+    /// hold trumps (above the trick's top trump, for this trick), whose
+    /// chances come from the trump suit.  The hands are taken to reach each
+    /// other at will: there is no transport, and the side does not ruff.
+    RunOdds,
+    /// [`Table::RunOdds`] with transport and ruffs: the role, the play, and
+    /// the chance of each run, 0 to 4 or more.  After the trick in progress,
+    /// the side plays its suits one after another, choosing each next suit
+    /// by the mean run that it leads to, knowing what the state says (the run
+    /// so far, the hand on lead, the trumps) and not how the suits lie, and
+    /// carrying from suit to suit which of its hands is on lead and the
+    /// trumps that each hand and each opponent holds.  In a
+    /// suit it leads from the hand on lead, which needs a card of it (so a
+    /// suit can be blocked), cashes while its best card is safe and the lead
+    /// goes to the hand that wins, and when it cannot cash it ruffs in the
+    /// other hand if that hand has none of the suit and a trump, and no
+    /// opponent with none of the suit holds a trump.  The opponents' trumps
+    /// are drawn by the side's cashing of trumps.  Each suit's ways of lying
+    /// come with their chances from the beliefs, as for RunOdds.
+    RunPlan,
+    /// The run of [`Table::RunOdds`] that is sure: the fewest tricks in a
+    /// row over every way of lying that the player's beliefs allow at all,
+    /// which is every way that the cards seen and the suits shown out allow.
+    RunSure,
     /// The role, the play, and which seats bid the card's suit.
     Bids,
+    /// The place, and whether each of the three cards just above is the
+    /// player's, in the other hand in sight, in the first hidden hand after
+    /// the player, in the second, or not left at all: with the chance of
+    /// each way that the hidden ones could lie, by the player's beliefs
+    /// about where the cards are (see [`crate::ai::locations`]), each
+    /// entry looked up with its chance.
+    AboveSplit,
+    /// The same of the three cards just below.
+    BelowSplit,
     Trick1,
     Above1,
     Below1,
@@ -135,8 +218,13 @@ impl Table {
             Table::History => 4 * PLAYS * 5 * 4,
             Table::Trumps => PLAYS * 4 * 4 * 4 * 2,
             Table::Later => 4 * PLAYS * 3 * 3,
-            Table::Later2 => 4 * PLAYS * 4 * 4,
+            Table::Later2 | Table::Later3 => 4 * PLAYS * 4 * 4,
+            Table::Later3Knots => 4 * PLAYS * 4 * 4 * KNOTS.len(),
+            Table::SuitTricks => 4 * PLAYS * 5,
+            Table::SuitPlay => 4 * PLAYS * 4 * 4,
+            Table::Run | Table::RunOdds | Table::RunSure | Table::RunPlan => 4 * PLAYS * 5,
             Table::Bids => 4 * PLAYS * 16,
+            Table::AboveSplit | Table::BelowSplit => 4 * 125,
             Table::Trick1 => 4 * 4 * 4 * 2 * 2,
             Table::Above1 | Table::Below1 => 4 * 125,
             Table::Rank1 => 4 * 4 * 6 * 2,
@@ -268,9 +356,24 @@ impl Table {
                 ["no", "cannot beat", "can beat"][index / 3 % 3],
                 ["no", "yes", "known void"][index % 3]
             ),
-            Table::Later2 => {
+            Table::SuitTricks => {
+                let what = ["gives away no trick", "gives away 1 trick", "gives away 2 tricks", "gives away 3 or more", "off the suit, or not worked out"];
+                format!("{}, in its suit {}", role_play(index / 5), what[index % 5])
+            }
+            Table::RunOdds => format!("{}, a run of {}{} tricks", role_play(index / 5), index % 5, if index % 5 == RUN_MOST { " or more" } else { "" }),
+            Table::RunPlan => format!("{}, a planned run of {}{} tricks", role_play(index / 5), index % 5, if index % 5 == RUN_MOST { " or more" } else { "" }),
+            Table::RunSure => format!("{}, a sure run of {}{} tricks", role_play(index / 5), index % 5, if index % 5 == RUN_MOST { " or more" } else { "" }),
+            Table::Run => format!("{}, the median run is {}{} tricks", role_play(index / 5), index % 5, if index % 5 == RUN_MOST { " or more" } else { "" }),
+            Table::Later3Knots => {
+                let (state, knot) = (index / KNOTS.len(), KNOTS[index % KNOTS.len()]);
+                format!("{}, at the chance {knot}", Table::Later3.describe(state))
+            }
+            Table::Later2 | Table::Later3 => {
                 const COULD: [&str; 4] = ["no", "cannot beat", "could beat following", "could beat ruffing"];
                 format!("{}, opponents after: {}, partner after: {}", role_play(index / 16), COULD[index / 4 % 4], COULD[index % 4])
+            }
+            Table::SuitPlay => {
+                format!("{}, tricks fewer at the worst split: {}, at the best: {}", role_play(index / 16), index / 4 % 4, index % 4)
             }
             Table::Bids => {
                 let bidders: Vec<&str> =
@@ -313,6 +416,46 @@ pub(crate) struct Shape {
     /// layer takes all the units of the one before, so that it can weigh
     /// combinations of those.
     pub(crate) layers: &'static [usize],
+    /// Which head of the network scores the cards of a situation.
+    pub(crate) heads: Heads,
+}
+
+/// Which of the network's heads (see [`Network`]) scores the cards of a
+/// situation, by the role of the player: the heads share the tables' rows
+/// and the first layer, and each has its later layers of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Heads {
+    /// One head for every role.
+    One,
+    /// One for the declarer, playing either hand, and one for the defence.
+    Sides,
+    /// One for the declarer, one for the defender on the declarer's left,
+    /// and one for the defender on the right.
+    Defenders,
+    /// One for each role.
+    Roles,
+}
+
+impl Heads {
+    /// How many there are.
+    pub(crate) const fn count(self) -> usize {
+        match self {
+            Heads::One => 1,
+            Heads::Sides => 2,
+            Heads::Defenders => 3,
+            Heads::Roles => 4,
+        }
+    }
+
+    /// The head for a player of `role` (see [`Table`]).
+    pub(crate) fn head(self, role: usize) -> usize {
+        match self {
+            Heads::One => 0,
+            Heads::Sides => usize::from(role >= 2),
+            Heads::Defenders => role.saturating_sub(1),
+            Heads::Roles => role,
+        }
+    }
 }
 
 /// The first shape, of the model trained by self-play from round 0.
@@ -332,6 +475,7 @@ pub(crate) const V1: Shape = Shape {
         Table::SecondPoints,
     ],
     layers: &[16, 8],
+    heads: Heads::One,
 };
 
 /// [`V1`] without the entries that no card looks up: the same facts, and
@@ -352,16 +496,17 @@ pub(crate) const V2: Shape = Shape {
         Table::FirstPoints,
         Table::SecondPoints,
     ],
+    heads: Heads::One,
     layers: &[16, 8],
 };
 
 /// [`V2`] with hidden layers twice as wide, to see whether its width is what
 /// limits it.
-pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16] };
+pub(crate) const V2_WIDE: Shape = Shape { name: "v2-wide", tables: V2.tables, layers: &[32, 16], heads: Heads::One };
 
 /// [`V2`] and more tables, to see whether they pay.
 const fn v2_and(name: &'static str, tables: &'static [Table]) -> Shape {
-    Shape { name, tables, layers: &[16, 8] }
+    Shape { name, tables, layers: &[16, 8], heads: Heads::One }
 }
 
 /// The tables of [`V2`] and then `$table`s.
@@ -401,23 +546,24 @@ pub(crate) const V2_LATER_HISTORY: Shape =
 pub(crate) const V2_LATER_TRUMPS: Shape = v2_and("v2-later-trumps", v2_tables_and!(Table::Later, Table::Trumps));
 /// [`V2_TRUMPS`] with hidden layers twice as wide, to see whether its width
 /// is what stops training from going further.
-pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16] };
+pub(crate) const V2_TRUMPS_WIDE: Shape = Shape { name: "v2-trumps-wide", tables: V2_TRUMPS.tables, layers: &[32, 16], heads: Heads::One };
 /// [`V2_TRUMPS`] and [`Table::History`].
 pub(crate) const V2_TRUMPS_HISTORY: Shape = v2_and("v2-trumps-history", v2_tables_and!(Table::Trumps, Table::History));
 /// [`V2_TRUMPS_HISTORY`] with hidden layers twice as wide.
 pub(crate) const V2_TRUMPS_HISTORY_WIDE: Shape =
-    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16] };
+    Shape { name: "v2-trumps-history-wide", tables: V2_TRUMPS_HISTORY.tables, layers: &[32, 16], heads: Heads::One };
 /// [`V2_TRUMPS_HISTORY`] with a third hidden layer, to see whether depth
 /// pays where width did not.  A model of two layers grows into it with the
 /// third passing on the second, so that it starts by playing as it did.
 pub(crate) const V2_TRUMPS_HISTORY_DEEP: Shape =
-    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8] };
+    Shape { name: "v2-trumps-history-deep", tables: V2_TRUMPS_HISTORY.tables, layers: &[16, 8, 8], heads: Heads::One };
 /// Every table that does not read the calls nor the beliefs, and layers
 /// that are wider and one deeper, to be trained for far longer than the
 /// screens: a model of two layers grows into it playing as it did (see
 /// [`Model::grown_to`]).
 pub(crate) const V2_BIG: Shape = Shape {
     name: "v2-big",
+    heads: Heads::One,
     tables: v2_tables_and!(Table::Later, Table::Trumps, Table::History, Table::Later2),
     layers: &[64, 32, 16],
 };
@@ -429,6 +575,258 @@ pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
 /// whether a hidden hand that plays after the player could win the trick.
 pub(crate) const V2_TRUMPS_HISTORY_LATER2: Shape =
     v2_and("v2-trumps-history-later2", v2_tables_and!(Table::Trumps, Table::History, Table::Later2));
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for the declarer and one for the
+/// defence (see [`Heads`]).
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_SIDES: Shape =
+    Shape { name: "v2-trumps-history-later2-sides", heads: Heads::Sides, ..V2_TRUMPS_HISTORY_LATER2 };
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for the declarer and one for each
+/// defender.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_DEFENDERS: Shape =
+    Shape { name: "v2-trumps-history-later2-defenders", heads: Heads::Defenders, ..V2_TRUMPS_HISTORY_LATER2 };
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head for each role.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_ROLES: Shape =
+    Shape { name: "v2-trumps-history-later2-roles", heads: Heads::Roles, ..V2_TRUMPS_HISTORY_LATER2 };
+
+/// [`V2_TRUMPS`] reading the player's beliefs about where the hidden cards
+/// lie: [`Table::AboveSplit`] and [`Table::BelowSplit`] in place of
+/// [`Table::Above`] and [`Table::Below`], which a model of [`V2_TRUMPS`]
+/// grows into by giving both hidden hands the weights of "hidden", so that
+/// it scores every card as it did.
+pub(crate) const V2_TRUMPS_BELIEFS: Shape = v2_and(
+    "v2-trumps-beliefs",
+    &[
+        Table::Trick,
+        Table::AboveSplit,
+        Table::BelowSplit,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::FirstPoints,
+        Table::SecondPoints,
+        Table::Trumps,
+    ],
+);
+
+/// The most cards of a suit left in the hands that [`Table::SuitTricks`]
+/// works the suit out for: it solves the suit once for each way that those
+/// whose place is not known could lie, and a whole suit takes far too long.
+#[cfg(test)]
+const SUIT_TRICKS_MOST: usize = 8;
+
+/// Plays one suit out alone, with every hand's cards of it known, for the
+/// most tricks for the player's side (the hands 0 and 2, counting clockwise
+/// from the player): each trick is won by the highest card, a hand with no
+/// card of the suit plays none, and the side that wins a trick leads the
+/// next from either of its hands that has a card of the suit, or, if
+/// neither has, the other side does.  Ruffs and entries are left out.
+#[cfg(test)]
+#[derive(Default)]
+struct SuitSolver {
+    known: std::collections::HashMap<(u64, u64), u8>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Each thread's [`SuitSolver`], which keeps the positions it has solved
+    /// from view to view, its cards numbered by their order (see
+    /// `View::suit_losses`), up to a million of them.
+    static SUIT_SOLVER: std::cell::RefCell<SuitSolver> = Default::default();
+}
+
+#[cfg(test)]
+impl SuitSolver {
+    /// The tricks of the player's side from here, the trick in progress
+    /// with them: the `hands`' cards of the suit (as bits of their ranks),
+    /// the trick led by `leader`, of which `turns` hands have played, the
+    /// `ranks` they played (0 for none).
+    fn tricks(&mut self, hands: [u16; 4], leader: usize, turns: usize, ranks: [u8; 4]) -> u8 {
+        let key = (
+            hands.iter().fold(0u64, |key, &h| key << 16 | u64::from(h)),
+            ranks.iter().fold((leader * 8 + turns) as u64, |key, &r| key << 8 | u64::from(r)),
+        );
+        if let Some(&tricks) = self.known.get(&key) {
+            return tricks;
+        }
+        if self.known.len() > 1 << 20 {
+            self.known.clear();
+        }
+        let tricks = if turns == 4 {
+            let winner = (0..4).max_by_key(|&s| ranks[s]).unwrap();
+            let won = u8::from(winner.is_multiple_of(2));
+            let leaders = |side: usize| -> Vec<usize> { [side, side + 2].into_iter().filter(|&s| hands[s] != 0).collect() };
+            let mut next = leaders(winner % 2);
+            if next.is_empty() {
+                next = leaders(1 - winner % 2);
+            }
+            match next.first() {
+                None => won,
+                Some(&first) => {
+                    let values = next.iter().map(|&l| self.tricks(hands, l, 0, [0; 4]));
+                    won + if first.is_multiple_of(2) { values.max().unwrap() } else { values.min().unwrap() }
+                }
+            }
+        } else {
+            let seat = (leader + turns) % 4;
+            if hands[seat] == 0 {
+                self.tricks(hands, leader, turns + 1, ranks)
+            } else {
+                // Cards with no card of another hand, nor one played to this
+                // trick, between them are the same: play the highest of each run.
+                let others = (0..4).filter(|&s| s != seat).fold(0u16, |o, s| o | hands[s])
+                    | ranks.iter().filter(|&&r| r > 0).fold(0u16, |o, &r| o | 1 << r);
+                let mut values = Vec::new();
+                for rank in 1..=14u8 {
+                    if hands[seat] & 1 << rank == 0 {
+                        continue;
+                    }
+                    let higher = hands[seat] & !((2u16 << rank) - 1);
+                    if higher != 0 {
+                        let next = higher.trailing_zeros();
+                        let between = !((2u16 << rank) - 1) & ((1u16 << next) - 1);
+                        if others & between == 0 {
+                            continue;
+                        }
+                    }
+                    let mut after = hands;
+                    after[seat] &= !(1 << rank);
+                    let mut played = ranks;
+                    played[seat] = rank;
+                    values.push(self.tricks(after, leader, turns + 1, played));
+                }
+                if seat.is_multiple_of(2) {
+                    values.into_iter().max().unwrap()
+                } else {
+                    values.into_iter().min().unwrap()
+                }
+            }
+        };
+        self.known.insert(key, tricks);
+        tricks
+    }
+}
+
+/// The chances at which [`Table::Later3Knots`] has a knot, after 0: the
+/// scale may bend at ½, where the plan that plays best tends to change (a
+/// finesse or the drop, which way to guess), and the units can learn bends
+/// elsewhere.
+pub(crate) const KNOTS: [f64; 2] = [0.5, 1.0];
+
+/// The hat functions of the chance `p` at each of [`KNOTS`]: so that
+/// `Σ knot · hat = p`, and with weights `w` the sum `Σ w · hat` is the
+/// function of p that is linear between the knots, `w` at each and 0 at 0.
+#[cfg(test)]
+fn hats(p: f64) -> [f64; KNOTS.len()] {
+    let p = p.clamp(0.0, 1.0);
+    std::array::from_fn(|j| {
+        let (left, at) = (if j == 0 { 0.0 } else { KNOTS[j - 1] }, KNOTS[j]);
+        if p <= left {
+            0.0
+        } else if p <= at {
+            (p - left) / (at - left)
+        } else {
+            match KNOTS.get(j + 1) {
+                Some(&right) if p < right => (right - p) / (right - at),
+                _ => 0.0,
+            }
+        }
+    })
+}
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] with [`Table::Later3`] in place of
+/// [`Table::Later2`], to see what the chances add to what could be.
+pub(crate) const V2_TRUMPS_HISTORY_LATER3: Shape =
+    v2_and("v2-trumps-history-later3", v2_tables_and!(Table::Trumps, Table::History, Table::Later3));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] with [`Table::Later3Knots`] in place of
+/// [`Table::Later2`], to see what a scale of the chances that can bend adds.
+pub(crate) const V2_TRUMPS_HISTORY_LATER3_KNOTS: Shape =
+    v2_and("v2-trumps-history-later3-knots", v2_tables_and!(Table::Trumps, Table::History, Table::Later3Knots));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::RunOdds`].
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN_ODDS: Shape =
+    v2_and("v2-trumps-history-later2-run-odds", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::RunOdds));
+
+/// A leaner [`V2_TRUMPS_HISTORY_LATER2`]: without [`Table::FirstPoints`],
+/// [`Table::SecondPoints`] and [`Table::Below`], whose 1536 entries (about a
+/// quarter of its weights) the corpus fits found worth no more than their
+/// noise when left out.
+pub(crate) const V2_LEAN: Shape = v2_and(
+    "v2-lean",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+    ],
+);
+
+/// [`V2_LEAN`] and [`Table::RunPlan`].
+pub(crate) const V2_LEAN_RUN_PLAN: Shape = v2_and(
+    "v2-lean-run-plan",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+        Table::RunPlan,
+    ],
+);
+
+/// [`V2_LEAN`] and [`Table::RunOdds`].
+pub(crate) const V2_LEAN_RUN_ODDS: Shape = v2_and(
+    "v2-lean-run-odds",
+    &[
+        Table::Trick,
+        Table::Above,
+        Table::Rank,
+        Table::Lengths,
+        Table::TricksLeft,
+        Table::Contract,
+        Table::FirstLength,
+        Table::SecondLength,
+        Table::Trumps,
+        Table::History,
+        Table::Later2,
+        Table::RunOdds,
+    ],
+);
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::RunPlan`].
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN_PLAN: Shape =
+    v2_and("v2-trumps-history-later2-run-plan", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::RunPlan));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::RunSure`].
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN_SURE: Shape =
+    v2_and("v2-trumps-history-later2-run-sure", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::RunSure));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::Run`].
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_RUN: Shape =
+    v2_and("v2-trumps-history-later2-run", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::Run));
+
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::SuitTricks`].
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_SUIT_TRICKS: Shape =
+    v2_and("v2-trumps-history-later2-suit-tricks", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::SuitTricks));
+/// [`V2_TRUMPS_HISTORY_LATER2`] and [`Table::SuitPlay`], to see whether a
+/// small search of the card's suit pays.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_SUIT_PLAY: Shape =
+    v2_and("v2-trumps-history-later2-suit-play", v2_tables_and!(Table::Trumps, Table::History, Table::Later2, Table::SuitPlay));
 
 /// Every shape there is.
 pub(crate) const SHAPES: &[&Shape] = &[
@@ -448,6 +846,21 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_DEEP,
     &V2_BIG,
     &V2_TRUMPS_HISTORY_LATER2,
+    &V2_TRUMPS_HISTORY_LATER2_SIDES,
+    &V2_TRUMPS_HISTORY_LATER2_DEFENDERS,
+    &V2_TRUMPS_HISTORY_LATER2_ROLES,
+    &V2_TRUMPS_BELIEFS,
+    &V2_TRUMPS_HISTORY_LATER3,
+    &V2_TRUMPS_HISTORY_LATER3_KNOTS,
+    &V2_TRUMPS_HISTORY_LATER2_SUIT_TRICKS,
+    &V2_TRUMPS_HISTORY_LATER2_SUIT_PLAY,
+    &V2_TRUMPS_HISTORY_LATER2_RUN,
+    &V2_TRUMPS_HISTORY_LATER2_RUN_ODDS,
+    &V2_TRUMPS_HISTORY_LATER2_RUN_SURE,
+    &V2_TRUMPS_HISTORY_LATER2_RUN_PLAN,
+    &V2_LEAN,
+    &V2_LEAN_RUN_PLAN,
+    &V2_LEAN_RUN_ODDS,
 ];
 
 impl Shape {
@@ -467,9 +880,16 @@ impl Shape {
         entries
     }
 
+    /// Whether it reads the players' beliefs about where the hidden cards
+    /// lie, which only self-play keeps.
+    #[cfg(test)]
+    pub(crate) fn reads_beliefs(&self) -> bool {
+        self.tables.iter().any(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run | Table::RunOdds | Table::RunSure | Table::RunPlan))
+    }
+
     /// How many weights a model of this shape has.
     pub(crate) fn size(&self) -> usize {
-        Network::size(self.entries(), self.layers)
+        Network::size(self.entries(), self.layers, self.heads.count())
     }
 }
 
@@ -483,7 +903,7 @@ pub(crate) struct Model {
 impl Model {
     /// The model of `shape` with `params`, such as one written out before.
     pub(crate) fn with_params(shape: &'static Shape, params: Vec<f64>) -> Model {
-        let network = Network::with_params(shape.entries(), shape.layers, params);
+        let network = Network::with_params(shape.entries(), shape.layers, shape.heads.count(), params);
         Model { shape, network }
     }
 
@@ -491,7 +911,7 @@ impl Model {
     /// [`Network::new`]).
     #[cfg(test)]
     pub(crate) fn new(shape: &'static Shape, seed: u64) -> Model {
-        let network = Network::new(shape.entries(), shape.layers, seed);
+        let network = Network::new(shape.entries(), shape.layers, seed).with_heads(shape.heads.count());
         Model { shape, network }
     }
 
@@ -506,13 +926,13 @@ impl Model {
     }
 
     /// The entries of its tables that playing `card` looks up in `view`.
-    pub(crate) fn entries(&self, view: &View, card: Card) -> Vec<usize> {
+    pub(crate) fn entries(&self, view: &View, card: Card) -> Entries {
         view.entries(card, self.shape)
     }
 
     /// Its score for playing `card` in `view`.
     pub(crate) fn score(&self, view: &View, card: Card) -> f64 {
-        self.network.score(&self.entries(view, card))
+        self.network.score_of(&self.entries(view, card))
     }
 
     /// This model of [`V1`] as a model of [`V2`], which scores every card
@@ -535,10 +955,28 @@ impl Model {
     /// `shape`.
     #[cfg(test)]
     pub(crate) fn grown_to(&self, shape: &'static Shape) -> Option<Model> {
+        if self.shape.heads != Heads::One {
+            // Only a model of one head grows; one of several stays as it is.
+            return (self.shape == shape).then(|| self.clone());
+        }
         if self.shape == &V1 {
             return self.without_room().grown_to(shape);
         }
         if !crate::ai::fitting::grows(self.shape.layers, shape.layers) {
+            return None;
+        }
+        let kept = |table: Table| {
+            let becomes = match table {
+                Table::Above => Some(Table::AboveSplit),
+                Table::Below => Some(Table::BelowSplit),
+                Table::Later2 => Some(Table::Later3),
+                _ => None,
+            };
+            shape.tables.contains(&table)
+                || becomes.is_some_and(|t| shape.tables.contains(&t))
+                || (table == Table::Later2 || table == Table::Later3) && shape.tables.contains(&Table::Later3Knots)
+        };
+        if self.shape.tables.iter().any(|&t| !kept(t)) {
             return None;
         }
         // Where each table starts among the entries of `shape`.
@@ -550,13 +988,117 @@ impl Model {
                 Some(*start - table.size())
             })
             .collect();
+        // A table of where the cards near the card lie may become the same
+        // with the hidden hands told apart: "hidden" becomes the first
+        // hidden hand, and then the second is given its weights too.
+        let split = |table: Table| match table {
+            Table::Above => Table::AboveSplit,
+            Table::Below => Table::BelowSplit,
+            Table::Later2 => Table::Later3,
+            table => table,
+        };
         let mut moved = Vec::with_capacity(self.shape.entries());
-        for table in self.shape.tables {
-            let at = shape.tables.iter().position(|t| t == table)?;
-            moved.extend((0..table.size()).map(|index| starts[at] + index));
+        let mut copies = Vec::new();
+        for &table in self.shape.tables {
+            if let Some(at) = shape.tables.iter().position(|&t| t == table) {
+                moved.extend((0..table.size()).map(|index| starts[at] + index));
+                continue;
+            }
+            if let Some(at) = shape.tables.iter().position(|&t| t == Table::Later3Knots).filter(|_| matches!(table, Table::Later2 | Table::Later3)) {
+                // Each state's weights go to its last knot, at p = 1, and
+                // the others get them times their knots, which scores the
+                // chances p as Later3 does (and as Later2 does p = 1).
+                let n = KNOTS.len();
+                moved.extend((0..table.size()).map(|index| starts[at] + index * n + n - 1));
+                for index in 0..table.size() {
+                    for (j, &knot) in KNOTS[..n - 1].iter().enumerate() {
+                        copies.push((starts[at] + index * n + n - 1, starts[at] + index * n + j, knot));
+                    }
+                }
+                continue;
+            }
+            let at = shape.tables.iter().position(|&t| t == split(table) && t != table)?;
+            if table == Table::Later2 {
+                // The same entries, now with their chances.
+                moved.extend((0..table.size()).map(|index| starts[at] + index));
+                continue;
+            }
+            moved.extend((0..table.size()).map(|index| {
+                let (place, h) = (index / 64, index % 64);
+                starts[at] + place * 125 + h % 4 + 5 * (h / 4 % 4) + 25 * (h / 16)
+            }));
+            for index in 0..shape.tables[at].size() {
+                let (place, mut digits) = (index / 125, [index % 5, index / 5 % 5, index / 25]);
+                if digits.contains(&4) {
+                    digits.iter_mut().filter(|d| **d == 4).for_each(|d| *d = 3);
+                    let from = place * 125 + digits[0] + 5 * digits[1] + 25 * digits[2];
+                    copies.push((starts[at] + from, starts[at] + index, 1.0));
+                }
+            }
         }
-        let network = self.network.grown(&moved, shape.entries(), shape.layers, 11);
+        let mut network = self.network.grown(&moved, shape.entries(), shape.layers, 11);
+        for (from, to, factor) in copies {
+            network.copy_entry(from, to, factor);
+        }
+        // Each head starts as a copy of the one it had.
+        let network = network.with_heads(shape.heads.count());
         Some(Model { shape, network })
+    }
+
+    /// This model grown into one of `shape` (see [`Model::grown_to`]), after
+    /// dropping the tables that `shape` has no place for, with their entries'
+    /// weights (see [`Model::without_tables`]), so that its cards' scores lose
+    /// what those tables added.
+    #[cfg(test)]
+    pub(crate) fn reshaped_to(&self, shape: &'static Shape) -> Option<Model> {
+        let model = if self.shape == &V1 { self.without_room() } else { self.clone() };
+        let dropped: Vec<Table> = model
+            .shape
+            .tables
+            .iter()
+            .copied()
+            .filter(|&t| {
+                let becomes = match t {
+                    Table::Above => Some(Table::AboveSplit),
+                    Table::Below => Some(Table::BelowSplit),
+                    Table::Later2 => Some(Table::Later3),
+                    _ => None,
+                };
+                !shape.tables.contains(&t)
+                    && !becomes.is_some_and(|b| shape.tables.contains(&b))
+                    && !((t == Table::Later2 || t == Table::Later3) && shape.tables.contains(&Table::Later3Knots))
+            })
+            .collect();
+        if dropped.is_empty() { model.grown_to(shape) } else { model.without_tables(&dropped).grown_to(shape) }
+    }
+
+    /// This model without the tables `dropped`: a model of the shape of its
+    /// other tables and the same layers, whose cards' scores lose what those
+    /// tables added.  The shape is made for the purpose, and lives until the
+    /// program ends.
+    #[cfg(test)]
+    pub(crate) fn without_tables(&self, dropped: &[Table]) -> Model {
+        let tables: Vec<Table> = self.shape.tables.iter().copied().filter(|t| !dropped.contains(t)).collect();
+        let shape: &'static Shape = Box::leak(Box::new(Shape {
+            name: Box::leak(format!("{} without {dropped:?}", self.shape.name).into_boxed_str()),
+            tables: Box::leak(tables.into_boxed_slice()),
+            layers: self.shape.layers,
+            heads: self.shape.heads,
+        }));
+        let mut moved = Vec::with_capacity(self.shape.entries());
+        let mut next = 0;
+        for &table in self.shape.tables {
+            for _ in 0..table.size() {
+                if dropped.contains(&table) {
+                    moved.push(None);
+                } else {
+                    moved.push(Some(next));
+                    next += 1;
+                }
+            }
+        }
+        let params = self.network.with_entries_moved(&self.network.params, &moved, shape.entries());
+        Model { shape, network: Network::with_params(shape.entries(), shape.layers, shape.heads.count(), params) }
     }
 
     /// Where each entry of [`V1`] is in [`V2`], if it is there.
@@ -603,7 +1145,7 @@ impl Shown {
         hidden: Cards,
         lead: Option<super::opening_lead::LeadFact>,
     ) -> Shown {
-        let first = (seat as usize + 4 - game.dealer as usize) % 4;
+        let first = (game.hand_called_by(seat) as usize + 4 - game.dealer as usize) % 4;
         let offset = (game.bids.len() + 4 - first) % 4;
         let (mut min, max) = convention.shown_bounds(&game.bids, offset);
         if let Some(lead) = lead.filter(|lead| lead.leader == seat && lead.shows == super::opening_lead::LeadShows::FourthBest) {
@@ -703,6 +1245,477 @@ pub(crate) struct View {
     /// For each of the two hidden hands, the cards that the opening lead
     /// shows it cannot hold (see [`super::opening_lead::lead_facts`]).
     cannot_hold: [Cards; 2],
+    /// How many cards each hand holds, counting clockwise from the player,
+    /// and the cards played to this trick before the player, in order.
+    sizes: [usize; 4],
+    trick: [Option<Card>; 3],
+    /// What [`Table::SuitPlay`] says of each card, by its offset, worked out
+    /// the first time that it is asked for.
+    suit_play: std::cell::OnceCell<[u8; 64]>,
+    /// Which hand plays `n` places after the player, for each `n`: 0 the
+    /// player's, 1 the other in sight, 2 the first hidden hand, 3 the second.
+    #[cfg(test)]
+    order: [usize; 4],
+    /// What the player believes of where the hidden cards lie, when
+    /// [`LOCATIONS`] is set.
+    #[cfg(test)]
+    beliefs: Option<std::sync::Arc<Seen>>,
+}
+
+/// The most tricks in a row that [`Table::Run`] counts.
+#[cfg(test)]
+const RUN_MOST: usize = 4;
+
+/// One way that the cards of a suit could lie: the ranks (as bits) that each
+/// hand holds, the player's, the other in sight, the first hidden and the
+/// second, and its chance.
+#[cfg(test)]
+type SuitSplit = ([u16; 4], f64);
+
+/// The ways of lying of the trump suit that give the hidden hands the same
+/// trump states (see `View::run_odds`): the states, their chance, and the
+/// ways.
+#[cfg(test)]
+type TrumpGroup = ([u8; 2], f64, Vec<(usize, SuitSplit)>);
+
+/// The most cards of a suit whose place is not known whose ways of lying
+/// [`Table::RunOdds`] tells apart; the lower ones of a longer suit go to the
+/// hidden hands in turn.
+#[cfg(test)]
+const RUN_ODDS_MOST_FREE: usize = 8;
+
+/// The highest rank of `bits`, or 0.
+#[cfg(test)]
+fn top_rank(bits: u16) -> u8 {
+    if bits == 0 { 0 } else { 15 - bits.leading_zeros() as u8 }
+}
+
+/// `bits` without their lowest.
+#[cfg(test)]
+fn without_lowest(bits: u16) -> u16 {
+    bits & bits.wrapping_sub(1)
+}
+
+/// The tricks in a row, at most [`RUN_MOST`], that the side of the hands
+/// `ours` takes by cashing one suit, its hands holding `hands` of it: each
+/// round the side's highest card wins unless an opponent holds a higher
+/// one, or holds none of the suit and `ruffs`, the side's other hand and
+/// the opponents playing their lowest.
+#[cfg(test)]
+fn cash(mut hands: [u16; 4], ours: [usize; 2], opponents: [usize; 2], ruffs: [bool; 2]) -> usize {
+    let mut run = 0;
+    while run < RUN_MOST {
+        let mine = hands[ours[0]] | hands[ours[1]];
+        if mine == 0 {
+            break;
+        }
+        let top = top_rank(mine);
+        let stopped = (0..2).any(|k| {
+            let o = hands[opponents[k]];
+            if o == 0 { ruffs[k] } else { top_rank(o) > top }
+        });
+        if stopped {
+            break;
+        }
+        run += 1;
+        let (winner, other) = if hands[ours[0]] & 1 << top != 0 { (ours[0], ours[1]) } else { (ours[1], ours[0]) };
+        hands[winner] &= !(1 << top);
+        hands[other] = without_lowest(hands[other]);
+        for &o in &opponents {
+            hands[o] = without_lowest(hands[o]);
+        }
+    }
+    run
+}
+
+/// Where a run of [`Table::RunPlan`] stands between suits.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct RunState {
+    /// The tricks taken in a row so far, at most [`RUN_MOST`].
+    run: u8,
+    /// Which of the side's hands is on lead: 0 the player's, 1 partner's.
+    lead: u8,
+    /// The trumps that each of the side's hands holds, the player's first.
+    ours: [u8; 2],
+    /// The trumps that each of the side's hands has ruffed with, which its
+    /// cards of the trump suit no longer have.
+    ruffed: [u8; 2],
+    /// The trumps that each opponent holds.
+    theirs: [u8; 2],
+}
+
+/// [`RunState`] after the side plays one suit, whose cards the hands hold as
+/// `hands` (by the four hands, as rank bits): the side's two hands are
+/// `side`, the player's first, and the opponents `opponents`; the suit is
+/// trumps if `is_trump`, and there are trumps if `trumps`.
+#[cfg(test)]
+fn plan_step(mut hands: [u16; 4], mut state: RunState, side: [usize; 2], opponents: [usize; 2], is_trump: bool, trumps: bool) -> RunState {
+    if is_trump {
+        for (i, &h) in side.iter().enumerate() {
+            for _ in 0..state.ruffed[i] {
+                hands[h] = without_lowest(hands[h]);
+            }
+        }
+    }
+    while (state.run as usize) < RUN_MOST {
+        let lead = state.lead as usize;
+        let (x, y) = (side[lead], side[1 - lead]);
+        if hands[x] == 0 {
+            break;
+        }
+        let top = top_rank(hands[x] | hands[y]);
+        let beaten = opponents.iter().any(|&o| hands[o] != 0 && top_rank(hands[o]) > top);
+        let ruffer = !is_trump && trumps && (0..2).any(|k| hands[opponents[k]] == 0 && state.theirs[k] > 0);
+        if !beaten && !ruffer {
+            let winner = if hands[x] & 1 << top != 0 { lead } else { 1 - lead };
+            hands[side[winner]] &= !(1 << top);
+            hands[side[1 - winner]] = without_lowest(hands[side[1 - winner]]);
+            for &o in &opponents {
+                hands[o] = without_lowest(hands[o]);
+            }
+            state.lead = winner as u8;
+            state.run += 1;
+        } else if !is_trump && trumps && hands[y] == 0 && state.ours[1 - lead] > 0 && !ruffer {
+            hands[x] = without_lowest(hands[x]);
+            for &o in &opponents {
+                hands[o] = without_lowest(hands[o]);
+            }
+            state.ours[1 - lead] -= 1;
+            state.ruffed[1 - lead] += 1;
+            state.lead = (1 - lead) as u8;
+            state.run += 1;
+        } else {
+            break;
+        }
+    }
+    if is_trump {
+        state.ours = side.map(|h| hands[h].count_ones() as u8);
+        state.theirs = opponents.map(|h| hands[h].count_ones() as u8);
+        state.ruffed = [0; 2];
+    }
+    state
+}
+
+/// The top card of a trick, as (whether it is a trump, its rank, its hand).
+#[cfg(test)]
+type TrickTop = Option<(bool, u8, usize)>;
+
+/// Plays out the rest of a trick whose top card so far is `top`, by the
+/// hands `later`, which hold `hands` of the suit led (as rank bits, by the
+/// four hands); `side` is the player's side, `trump_led` says whether the
+/// suit led is trumps, and `ruffs` whether a hand with none of the suit led
+/// would ruff above any trump so far.  Each hand knows where the suit's cards
+/// lie: a hand whose side is not winning plays the cheapest card that beats
+/// the trick and every later opponent's best, or else the cheapest that
+/// beats the trick, or else its lowest; a hand whose side is winning keeps
+/// its lowest unless a later opponent can beat the trick, and then plays the
+/// cheapest card above them; a hand with none of the suit ruffs if it can
+/// and its side is not winning, or is winning with a card that a later
+/// opponent can beat.  Gives the top card at the end, the hands'
+/// cards of the suit led after the trick, and which hands ruffed.
+#[cfg(test)]
+fn play_out_trick(hands: [u16; 4], mut top: TrickTop, later: &[usize], side: [usize; 2], trump_led: bool, ruffs: impl Fn(usize) -> bool) -> (TrickTop, [u16; 4], [u8; 4]) {
+    let mut after = hands;
+    let mut ruffed = [0u8; 4];
+    // The cards above `rank` in `bits`, and the cheapest of them.
+    let cheapest_above = |bits: u16, rank: u8| {
+        let above = bits & !((2u16 << rank) - 1);
+        (above != 0).then(|| above.trailing_zeros() as u8)
+    };
+    for (i, &h) in later.iter().enumerate() {
+        let ours = side.contains(&h);
+        let winning = top.is_some_and(|(_, _, w)| side.contains(&w) == ours);
+        // A trump on a trick of another suit cannot be beaten by following.
+        let ruffed_trick = top.is_some_and(|(t, _, _)| t && !trump_led);
+        let threat = later[i + 1..].iter().filter(|&&o| side.contains(&o) != ours).map(|&o| top_rank(hands[o])).max().unwrap_or(0);
+        let holding = hands[h];
+        if holding == 0 {
+            let threatened = !ruffed_trick && threat > top.map_or(0, |t| t.1);
+            if (!winning || threatened) && !ruffed_trick && !trump_led && ruffs(h) {
+                top = Some((true, 15, h));
+                ruffed[h] = 1;
+            }
+            continue;
+        }
+        let top_rank_now = top.map_or(0, |t| t.1);
+        let card = if ruffed_trick {
+            None
+        } else if winning {
+            if top_rank_now > threat { None } else { cheapest_above(holding, threat) }
+        } else {
+            cheapest_above(holding, top_rank_now.max(threat)).or_else(|| cheapest_above(holding, top_rank_now))
+        };
+        match card {
+            Some(rank) => {
+                after[h] &= !(1 << rank);
+                top = Some((trump_led, rank, h));
+            }
+            None => after[h] = without_lowest(after[h]),
+        }
+    }
+    (top, after, ruffed)
+}
+
+/// The chances of each run from `state` on, with the suits of `remaining`
+/// (as bits by suit) still to play, each suit's ways of lying `ways`: the
+/// side plays next the suit that gives the most tricks in a row in the mean,
+/// which it chooses knowing all that the state says (the run so far, the
+/// hand on lead, the trumps) and nothing of how the suits lie.  `known`
+/// keeps what has been worked out.
+#[cfg(test)]
+fn best_rest(
+    state: RunState,
+    remaining: u8,
+    ways: &[Vec<SuitSplit>; 4],
+    side: [usize; 2],
+    opponents: [usize; 2],
+    trump: Option<Suit>,
+    known: &mut RunMemo,
+) -> [f64; RUN_MOST + 1] {
+    let mut runs = [0.0; RUN_MOST + 1];
+    if state.run as usize >= RUN_MOST || remaining == 0 {
+        runs[(state.run as usize).min(RUN_MOST)] = 1.0;
+        return runs;
+    }
+    if let Some((_, found)) = known.iter().find(|(k, _)| *k == (state, remaining)) {
+        return *found;
+    }
+    let mean = |runs: &[f64; RUN_MOST + 1]| runs.iter().enumerate().map(|(k, p)| k as f64 * p).sum::<f64>();
+    let mut best: Option<[f64; RUN_MOST + 1]> = None;
+    for suit in Suit::ALL {
+        if remaining & 1 << suit as usize == 0 {
+            continue;
+        }
+        let mut these = [0.0; RUN_MOST + 1];
+        for &(hands, q) in &ways[suit as usize] {
+            let next = plan_step(hands, state, side, opponents, Some(suit) == trump, trump.is_some());
+            // A suit that takes nothing is left, and the run goes on by the others.
+            let after = best_rest(next, remaining & !(1 << suit as usize), ways, side, opponents, trump, known);
+            for (t, a) in these.iter_mut().zip(after) {
+                *t += q * a;
+            }
+        }
+        if best.is_none_or(|b| mean(&these) > mean(&b)) {
+            best = Some(these);
+        }
+    }
+    let best = best.unwrap();
+    known.push(((state, remaining), best));
+    best
+}
+
+/// What [`best_rest`] has worked out, by the state and the suits left (a
+/// list, since it is short and a hash costs more than looking through it).
+#[cfg(test)]
+type RunMemo = Vec<((RunState, u8), [f64; RUN_MOST + 1])>;
+
+/// The [`RunMemo`]s of a view: one for each way of the trump states, suit
+/// led and card that leaves another suit, since those are what the rest of
+/// the plan after the trick depends on.
+#[cfg(test)]
+type RunMemos = std::sync::Mutex<Vec<(([(bool, u8); 4], Suit, Option<Card>, u8), RunMemo)>>;
+
+/// The chances of runs of 0 to [`RUN_MOST`] tricks of two independent
+/// parts added up, a run of the most or more counting as the most.
+#[cfg(test)]
+fn add_runs(a: &[f64; RUN_MOST + 1], b: &[f64; RUN_MOST + 1]) -> [f64; RUN_MOST + 1] {
+    let mut sum = [0.0; RUN_MOST + 1];
+    for (i, &p) in a.iter().enumerate() {
+        for (j, &q) in b.iter().enumerate() {
+            sum[(i + j).min(RUN_MOST)] += p * q;
+        }
+    }
+    sum
+}
+
+/// How many ways that the hidden cards could lie [`Table::Run`] tries.
+#[cfg(test)]
+const RUN_SAMPLES: usize = 24;
+
+/// The most plays that a search of [`Table::Run`] makes before it gives up,
+/// counting the opponents' as winning.
+#[cfg(test)]
+const RUN_NODES: usize = 50_000;
+
+/// The search that [`Table::Run`] makes in one deal of all four hands: how
+/// many tricks in a row, up to a most, the side of the seats 0 and 2 takes
+/// from a trick on, when it chooses every play of its two hands and the
+/// opponents choose theirs to stop it.
+#[cfg(test)]
+struct RunSearch {
+    trump: Option<Suit>,
+    nodes: usize,
+}
+
+#[cfg(test)]
+impl RunSearch {
+    /// The tricks in a row, at most `depth`, that seats 0 and 2 take from the
+    /// trick that `leader` led and `played` (the seat and card of each play so
+    /// far) are the plays of, with `hands` what the seats still hold.
+    fn trick(&mut self, hands: &mut [Cards; 4], leader: usize, played: &mut Vec<(usize, Card)>, depth: usize) -> usize {
+        if played.len() == 4 {
+            let mut top = played[0];
+            for &(seat, card) in &played[1..] {
+                if beats(self.trump, card, top.1) {
+                    top = (seat, card);
+                }
+            }
+            if !top.0.is_multiple_of(2) {
+                return 0;
+            }
+            if depth <= 1 || hands.iter().all(|hand| hand.is_empty()) {
+                return 1;
+            }
+            let mut next = Vec::with_capacity(4);
+            return 1 + self.trick(hands, top.0, &mut next, depth - 1);
+        }
+        self.nodes += 1;
+        if self.nodes > RUN_NODES {
+            return 0;
+        }
+        let seat = (leader + played.len()) % 4;
+        let ours = seat.is_multiple_of(2);
+        let mut best = if ours { 0 } else { depth };
+        for card in self.candidates(hands, seat, played) {
+            hands[seat] -= Cards::singleton(card);
+            played.push((seat, card));
+            let value = self.trick(hands, leader, played, depth);
+            played.pop();
+            hands[seat] += Cards::singleton(card);
+            if ours {
+                best = best.max(value);
+                if best >= depth {
+                    break;
+                }
+            } else {
+                best = best.min(value);
+                if best == 0 {
+                    break;
+                }
+            }
+        }
+        best
+    }
+
+    /// The cards that `seat` could play next that are worth trying: of
+    /// cards that touch among those left, the lowest; and for an opponent
+    /// only those that beat the trick so far (ruffs and overruffs among them),
+    /// the lowest card that follows, and when it cannot follow the lowest card
+    /// of each suit, since it plays to take the trick, or else to give
+    /// nothing up.
+    fn candidates(&self, hands: &[Cards; 4], seat: usize, played: &[(usize, Card)]) -> Vec<Card> {
+        let hand = hands[seat];
+        let led = played.first().map(|&(_, card)| card.suit());
+        let following = led.is_some_and(|led| !hand.in_suit(led).is_empty());
+        let legal = if following { hand.in_suit(led.unwrap()) } else { hand };
+        let left = hands.iter().fold(Cards::EMPTY, |cards, &hand| cards + hand)
+            + played.iter().fold(Cards::EMPTY, |cards, &(_, card)| cards + Cards::singleton(card));
+        let mut lowest: Vec<Card> = Vec::new();
+        for suit in Suit::ALL {
+            let mut previous: Option<Card> = None;
+            for card in legal.in_suit(suit) {
+                // Cards come lowest first.
+                let touches = previous.is_some_and(|before| {
+                    !left.in_suit(suit).into_iter().any(|other| other.rank() > before.rank() && other.rank() < card.rank())
+                });
+                if !touches {
+                    lowest.push(card);
+                }
+                previous = Some(card);
+            }
+        }
+        // The cards most likely to settle the search come first, so that it
+        // stops as soon as a line takes every trick it counts (or, for an
+        // opponent, wins one): the highest cards, with trumps ahead when the
+        // trick is not trumped yet.
+        let top = played.iter().map(|&(_, card)| card).reduce(|top, card| if beats(self.trump, card, top) { card } else { top });
+        let strength = |card: &Card| {
+            let beating = top.is_some_and(|top| beats(self.trump, *card, top));
+            (beating, Some(card.suit()) == self.trump, card.rank())
+        };
+        if seat.is_multiple_of(2) {
+            lowest.sort_by_key(|card| std::cmp::Reverse(strength(card)));
+            return lowest;
+        }
+        let mut chosen: Vec<Card> = lowest.iter().copied().filter(|&card| top.is_none_or(|top| beats(self.trump, card, top))).collect();
+        if following {
+            chosen.extend(legal.min());
+        } else {
+            for suit in Suit::ALL {
+                chosen.extend(legal.in_suit(suit).min());
+            }
+        }
+        chosen.sort_by_key(|card| (card.suit() as usize, card.rank()));
+        chosen.dedup();
+        chosen.sort_by_key(|card| std::cmp::Reverse(strength(card)));
+        chosen
+    }
+}
+
+/// The prior and the evidence by which the views of self-play keep the
+/// players' beliefs about where the hidden cards lie, for the tables that
+/// read them ([`Table::AboveSplit`]), set once by self-play when its file
+/// is given.
+#[cfg(test)]
+pub(crate) static LOCATIONS: std::sync::OnceLock<(crate::ai::locations::Prior, crate::ai::locations::Evidence)> =
+    std::sync::OnceLock::new();
+
+/// How much the players' beliefs about where the hidden cards lie are the
+/// truth, λ from 0 to 1, as the bits of an `f64`: the chance of each way the
+/// cards a table reads could lie is λ for the way they do lie and 1 − λ times
+/// that of the beliefs.  At 1 the beliefs are the true deal, and no beliefs
+/// are kept.  Self-play sets it from `PLAY_SELF_ORACLE`.
+#[cfg(test)]
+pub(crate) static ORACLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// λ of [`ORACLE`].
+#[cfg(test)]
+fn oracle() -> f64 {
+    f64::from_bits(ORACLE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Sets λ of [`ORACLE`].
+#[cfg(test)]
+fn set_oracle(lambda: f64) {
+    ORACLE.store(lambda.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A player's beliefs about where the hidden cards lie, as a [`View`] reads
+/// them.
+#[cfg(test)]
+pub(crate) struct Seen {
+    /// The beliefs, unless they are the truth alone.
+    beliefs: Option<crate::ai::locations::Beliefs>,
+    /// Its joint chances, worked out when a table first reads them.
+    joint: std::sync::OnceLock<crate::ai::locations::Joint>,
+    /// The hidden cards whose place is not known.
+    free: Cards,
+    /// Those known to be in the player's first hidden hand.
+    first: Cards,
+    /// Whether the player's first hidden hand is the beliefs' second, as it
+    /// is for the declarer playing from the dummy.
+    swapped: bool,
+    /// The cards that the player's first hidden hand holds.
+    truth: Cards,
+    /// How much the beliefs are the truth (see [`ORACLE`]).
+    oracle: f64,
+    /// What works out the chances of how the hidden hands could beat the
+    /// trick, for [`Table::Later3`], once it first reads them; it keeps them,
+    /// since the cards of a view that do not beat the trick share them.
+    beating: std::sync::OnceLock<crate::ai::locations::Beater>,
+    /// The chances of how many tricks of its suit each card the player can
+    /// play gives away, for [`Table::SuitTricks`], once worked out.
+    suit_losses: std::sync::Mutex<Vec<(Card, [f64; 4])>>,
+    /// The ways that the player's first hidden hand could be dealt by the
+    /// beliefs, for [`Table::Run`], dealt once for all the cards of a view.
+    run_deals: std::sync::OnceLock<Vec<Cards>>,
+    /// Each suit's ways of lying among the four hands, for
+    /// [`Table::RunOdds`], worked out once for all the cards of a view.
+    run_splits: std::sync::OnceLock<[Vec<SuitSplit>; 4]>,
+    /// What [`Table::RunPlan`] has worked out of the plans after the trick,
+    /// shared by the cards of a view whose plans are the same.
+    run_memos: RunMemos,
 }
 
 impl View {
@@ -823,6 +1836,25 @@ impl View {
         };
         let hidden = left - mine - other;
         let in_sight = if seat == dummy { declarer } else { dummy };
+        #[cfg(test)]
+        let beliefs = (|| {
+            let player_first = (1..4).map(|n| seat + n).find(|&s| s != in_sight)?;
+            let (truth, oracle) = (hands[player_first], oracle());
+            if oracle >= 1.0 {
+                let joint = std::sync::OnceLock::new();
+                return Some(std::sync::Arc::new(Seen { beliefs: None, joint, free: Cards::EMPTY, first: truth, swapped: false, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default(), run_memos: Default::default() }));
+            }
+            let (prior, evidence) = LOCATIONS.get()?;
+            let viewer = if seat == dummy { declarer } else { seat };
+            let plays = game.tricks.get(..done)?.iter().flat_map(|(_, cards)| cards.iter().copied()).chain(trick.iter().copied());
+            let tracker = crate::ai::locations::replayed(game, convention, viewer, plays, prior, evidence)?;
+            let swapped = player_first != tracker.first;
+            let b = &tracker.beliefs;
+            let first = if swapped { b.in_second } else { b.in_first };
+            let free = b.unseen - b.in_first - b.in_second;
+            let joint = std::sync::OnceLock::new();
+            Some(std::sync::Arc::new(Seen { beliefs: Some(tracker.beliefs), joint, free, first, swapped, truth, oracle, beating: std::sync::OnceLock::new(), suit_losses: Default::default(), run_deals: Default::default(), run_splits: Default::default(), run_memos: Default::default() }))
+        })();
         let mut hidden_seats = (1..4).map(|n| seat + n).filter(|&s| s != in_sight);
         let hidden_order = [hidden_seats.next().unwrap(), hidden_seats.next().unwrap()];
         let lead = super::opening_lead::lead_facts(game);
@@ -871,7 +1903,7 @@ impl View {
         let mut bid_by = [0; 4];
         for (i, bid) in game.bids.iter().enumerate() {
             if let Bid::Suit(_, suit) = bid {
-                bid_by[*suit as usize] |= 1 << from_me(game.dealer + i);
+                bid_by[*suit as usize] |= 1 << from_me(game.hand_of_caller(game.dealer + i));
             }
         }
         let later: Vec<Seat> = (1..4 - place).map(|n| seat + n).collect();
@@ -897,6 +1929,18 @@ impl View {
             hidden_after: hidden_order.map(|s| later.contains(&s)),
             hidden_partner: hidden_order.map(|s| s == seat + 2),
             cannot_hold,
+            sizes: std::array::from_fn(|n| hands[seat + n].len()),
+            trick: std::array::from_fn(|i| trick.get(i).copied()),
+            suit_play: std::cell::OnceCell::new(),
+            #[cfg(test)]
+            order: std::array::from_fn(|n| match seat + n {
+                _ if n == 0 => 0,
+                s if s == in_sight => 1,
+                s if s == hidden_order[0] => 2,
+                _ => 3,
+            }),
+            #[cfg(test)]
+            beliefs,
         })
     }
 
@@ -966,9 +2010,673 @@ impl View {
         values[0] * 4 + values[1]
     }
 
+    /// What [`Table::Later3`] says of playing `card`: as
+    /// [`View::later2`] gives it, 4 times the opponents' value and then the
+    /// partner's, but for each way that the hidden hands could hold the
+    /// cards that beat the card and the trick so far, with its chance by the
+    /// player's beliefs, mixed with the truth as [`ORACLE`] says.
+    #[cfg(test)]
+    fn later3(&self, card: Card) -> Vec<(usize, f64)> {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let led = self.lead.unwrap_or(card.suit());
+        let top = match self.winning {
+            Some(winning) if !beats(self.trump, card, winning) => winning,
+            _ => card,
+        };
+        let mut beating = Cards::higher_than(top);
+        if let Some(trump) = self.trump.filter(|&trump| trump != top.suit()) {
+            beating += Cards::ALL.in_suit(trump);
+        }
+        let beating = beating & self.hidden;
+        let led_cards = self.hidden.in_suit(led);
+        let following = beating.in_suit(led);
+        let ruffing = match self.trump {
+            Some(trump) if trump != led => beating.in_suit(trump),
+            _ => Cards::EMPTY,
+        };
+        // The chances of the states of the player's first and second hidden
+        // hands (see `Beliefs::beating`).
+        let mut chances = [[0.0; 3]; 3];
+        if seen.oracle < 1.0 {
+            let beliefs = seen.beliefs.as_ref().expect("the beliefs");
+            let after = if seen.swapped { [self.hidden_after[1], self.hidden_after[0]] } else { self.hidden_after };
+            let believed = seen.beating.get_or_init(|| beliefs.beater()).beating(led_cards, following, ruffing, after);
+            for (a, row) in believed.iter().enumerate() {
+                for (b, &chance) in row.iter().enumerate() {
+                    let (first, second) = if seen.swapped { (b, a) } else { (a, b) };
+                    chances[first][second] += (1.0 - seen.oracle) * chance;
+                }
+            }
+        }
+        if seen.oracle > 0.0 {
+            let state = |hand: Cards, after: bool| {
+                if !after {
+                    0
+                } else if !(hand & following).is_empty() {
+                    1
+                } else if (hand & led_cards).is_empty() && !(hand & ruffing).is_empty() {
+                    2
+                } else {
+                    0
+                }
+            };
+            let first = seen.truth & self.hidden;
+            chances[state(first, self.hidden_after[0])][state(self.hidden - first, self.hidden_after[1])] += seen.oracle;
+        }
+        let mut entries = [0.0; 16];
+        for (a, row) in chances.iter().enumerate() {
+            for (b, &chance) in row.iter().enumerate() {
+                // As in `later2`: the hand that could do the most, where
+                // beating by following goes before ruffing, then not beating,
+                // then not playing.
+                let mut values = [0, 0];
+                for (k, state) in [a, b].into_iter().enumerate() {
+                    if !self.hidden_after[k] {
+                        continue;
+                    }
+                    let value = [1, 2, 3][state];
+                    let side = &mut values[self.hidden_partner[k] as usize];
+                    let rank = |value: usize| [0, 1, 3, 2][value];
+                    if rank(value) > rank(*side) {
+                        *side = value;
+                    }
+                }
+                entries[values[0] * 4 + values[1]] += chance;
+            }
+        }
+        entries.into_iter().enumerate().filter(|&(_, chance)| chance > 0.0).collect()
+    }
+
+    /// What [`Table::SuitTricks`] says of playing `card`: each number of the
+    /// suit's tricks that it gives away, 0 to 3 or more, with its chance, or
+    /// 4 if it is off the suit led or the suit cannot be worked out.
+    #[cfg(test)]
+    fn suit_tricks(&self, card: Card) -> Vec<(usize, f64)> {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let suit = card.suit();
+        let off = || vec![(4, 1.0)];
+        if self.lead.is_some_and(|lead| lead != suit) || self.trick.iter().flatten().any(|c| c.suit() != suit) {
+            return off();
+        }
+        let free: Vec<Card> = {
+            let mut free: Vec<Card> = seen.free.in_suit(suit).collect();
+            free.sort_by_key(|c| c.rank());
+            free
+        };
+        // By the cards of the suit left in the hands, not by those whose place
+        // is not known, so that the beliefs and the truth leave out the same
+        // suits.
+        if self.left.in_suit(suit).len() > SUIT_TRICKS_MOST {
+            return off();
+        }
+        let kept = seen.suit_losses.lock().unwrap().iter().find(|(c, _)| *c == card).map(|(_, losses)| *losses);
+        let losses = kept.unwrap_or_else(|| {
+            let worked = self.suit_losses(seen, suit, &free);
+            let mut kept = seen.suit_losses.lock().unwrap();
+            kept.extend(worked.iter().copied());
+            worked.iter().find(|(c, _)| *c == card).map(|(_, losses)| *losses).expect("a legal card of the suit")
+        });
+        losses.into_iter().enumerate().filter(|&(_, p)| p > 0.0).collect()
+    }
+
+    /// For each card of `suit` that the player can play, the chances of how
+    /// many of the suit's tricks it gives away (0 to 3 or more), over the
+    /// ways that the `free` cards of the suit, whose place is not known, lie.
+    #[cfg(test)]
+    fn suit_losses(&self, seen: &Seen, suit: Suit, free: &[Card]) -> Vec<(Card, [f64; 4])> {
+        let believed = match &seen.beliefs {
+            Some(beliefs) => seen.joint.get_or_init(|| beliefs.joint()).of(free),
+            None => (0..1 << free.len()).map(|bits| f64::from(u8::from(bits == 0))).collect(),
+        };
+        let true_bits: usize =
+            free.iter().enumerate().filter(|(_, c)| seen.truth.contains(**c) != seen.swapped).map(|(t, _)| 1 << t).sum();
+        let legal: Vec<Card> = self.legal().in_suit(suit).collect();
+        let mut losses = vec![[0.0; 4]; legal.len()];
+        // Only the order of the cards of the suit still in play matters, so
+        // they are numbered from 1 by it, the trick's with them, and the
+        // positions of different deals are the same position.  A suit's
+        // cards come lowest first.
+        let in_play = self.left.in_suit(suit) + self.trick.iter().flatten().fold(Cards::EMPTY, |cards, &c| cards + Cards::singleton(c));
+        let mut number = [0u8; 15];
+        for (i, c) in in_play.in_suit(suit).enumerate() {
+            number[c.rank() as usize] = i as u8 + 1;
+        }
+        let bits_of = |cards: Cards| cards.in_suit(suit).fold(0u16, |bits, c| bits | 1 << number[c.rank() as usize]);
+        let place = self.place;
+        let leader = (4 - place) % 4;
+        let mut ranks = [0u8; 4];
+        for (i, c) in self.trick.iter().flatten().enumerate() {
+            ranks[(leader + i) % 4] = number[c.rank() as usize];
+        }
+        for (bits, &believed) in believed.iter().enumerate() {
+            let chance = (1.0 - seen.oracle) * believed + seen.oracle * f64::from(u8::from(bits == true_bits));
+            if chance == 0.0 {
+                continue;
+            }
+            let mut first = seen.first;
+            for (t, &c) in free.iter().enumerate() {
+                if (bits & (1 << t) != 0) != seen.swapped {
+                    first += Cards::singleton(c);
+                }
+            }
+            let holdings = [self.mine, self.other, first, self.hidden - first].map(bits_of);
+            let hands: [u16; 4] = std::array::from_fn(|n| holdings[self.order[n]]);
+            let values: Vec<u8> = legal
+                .iter()
+                .map(|c| {
+                    let mut after = hands;
+                    let n = number[c.rank() as usize];
+                    after[0] &= !(1 << n);
+                    let mut ranks = ranks;
+                    ranks[0] = n;
+                    SUIT_SOLVER.with(|solver| solver.borrow_mut().tricks(after, leader, place + 1, ranks))
+                })
+                .collect();
+            let best = values.iter().copied().max().unwrap_or(0);
+            for (loss, &value) in losses.iter_mut().zip(&values) {
+                loss[((best - value) as usize).min(3)] += chance;
+            }
+        }
+        legal.into_iter().zip(losses).collect()
+    }
+
+    /// What [`Table::Run`] says of playing `card`: the median of
+    /// [`View::run_runs`], the lower of the middle two for an even number.
+    #[cfg(test)]
+    fn run_median(&self, card: Card) -> usize {
+        let runs = self.run_runs(card);
+        runs[(runs.len() - 1) / 2].0
+    }
+
+    /// The runs of [`Table::Run`] after playing `card`, sorted: over the ways
+    /// that the hidden cards could lie by the player's beliefs (or the
+    /// true way, as [`ORACLE`] says), the tricks in a row that the player's
+    /// side takes from this trick on, found by [`RunSearch`] in each, at most
+    /// [`RUN_MOST`], each with whether the search gave up.
+    #[cfg(test)]
+    fn run_runs(&self, card: Card) -> Vec<(usize, bool)> {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let place = self.place;
+        let leader = (4 - place) % 4;
+        // The ways that the hidden cards could lie are dealt from a seed
+        // that the position makes, so that the same view always gives the
+        // same value, and once, for all the cards of the view.
+        let deals = seen.run_deals.get_or_init(|| {
+            use rand::SeedableRng;
+            let seed = self.hidden.into_iter().chain(self.mine).chain(self.trick.iter().flatten().copied()).fold(0x9e3779b9u64, |h, c| {
+                h.wrapping_mul(0x100000001b3).wrapping_add(c.suit() as u64 * 16 + c.rank() as u64)
+            });
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let samples = if seen.beliefs.is_none() { 1 } else { RUN_SAMPLES };
+            (0..samples)
+                .map(|i| match &seen.beliefs {
+                    Some(beliefs) if (i as f64) >= seen.oracle * samples as f64 => {
+                        let dealt = beliefs.deal(&mut rng);
+                        let mut first = seen.first;
+                        for c in seen.free {
+                            if dealt.contains(c) != seen.swapped {
+                                first += Cards::singleton(c);
+                            }
+                        }
+                        first
+                    }
+                    _ => seen.truth & self.hidden,
+                })
+                .collect()
+        });
+        let mut runs: Vec<(usize, bool)> = Vec::with_capacity(deals.len());
+        let mut search = RunSearch { trump: self.trump, nodes: 0 };
+        for &first in deals {
+            let holdings = [self.mine - Cards::singleton(card), self.other, first, self.hidden - first];
+            let mut hands: [Cards; 4] = std::array::from_fn(|n| holdings[self.order[n]]);
+            let mut played: Vec<(usize, Card)> = self.trick.iter().flatten().enumerate().map(|(i, &c)| ((i + 4 - place) % 4, c)).collect();
+            played.push((0, card));
+            search.nodes = 0;
+            let run = search.trick(&mut hands, leader, &mut played, RUN_MOST);
+            runs.push((run, search.nodes > RUN_NODES));
+        }
+        runs.sort_unstable();
+        runs
+    }
+
+    /// The ways that each suit's cards could lie among the four hands, with
+    /// their chances by the beliefs (mixed with the truth as [`ORACLE`] says),
+    /// the cards of the trick in progress left out.
+    #[cfg(test)]
+    fn run_splits(&self, seen: &Seen) -> [Vec<SuitSplit>; 4] {
+        Suit::ALL.map(|suit| {
+            let mut free: Vec<Card> = seen.free.in_suit(suit).collect();
+            free.sort_by_key(|c| c.rank());
+            // The lowest beyond the most, which go to the hidden hands in turn.
+            let low: Vec<Card> = free.drain(..free.len().saturating_sub(RUN_ODDS_MOST_FREE)).collect();
+            let believed = match &seen.beliefs {
+                Some(beliefs) => seen.joint.get_or_init(|| beliefs.joint()).of(&free),
+                None => (0..1 << free.len()).map(|bits| f64::from(u8::from(bits == 0))).collect(),
+            };
+            let true_bits: usize =
+                free.iter().enumerate().filter(|(_, c)| seen.truth.contains(**c) != seen.swapped).map(|(t, _)| 1 << t).sum();
+            let bits_of = |cards: Cards| cards.in_suit(suit).fold(0u16, |bits, c| bits | 1 << c.rank());
+            let mut base = seen.first;
+            for (i, &c) in low.iter().enumerate() {
+                if i % 2 == 0 {
+                    base += Cards::singleton(c);
+                }
+            }
+            let mut splits = Vec::new();
+            for (bits, &believed) in believed.iter().enumerate() {
+                let chance = (1.0 - seen.oracle) * believed + seen.oracle * f64::from(u8::from(bits == true_bits));
+                if chance == 0.0 {
+                    continue;
+                }
+                let mut first = base;
+                for (t, &c) in free.iter().enumerate() {
+                    if (bits & (1 << t) != 0) != seen.swapped {
+                        first += Cards::singleton(c);
+                    }
+                }
+                splits.push(([self.mine, self.other, first, self.hidden - first].map(bits_of), chance));
+            }
+            splits
+        })
+    }
+
+    /// For [`Table::RunOdds`] and [`Table::RunSure`]: the chances of each run,
+    /// 0 to [`RUN_MOST`] tricks in a row from this trick on, after playing
+    /// `card`, and the sure run.
+    #[cfg(test)]
+    fn run_odds(&self, card: Card) -> ([f64; RUN_MOST + 1], usize) {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let splits = seen.run_splits.get_or_init(|| self.run_splits(seen));
+        // The hands of the player's side, and the opponents': the player's
+        // partner is the other hand in sight for the declarer's side, and
+        // the hidden partner for a defender.
+        let partner = if self.role <= 1 { 1 } else if self.hidden_partner[0] { 2 } else { 3 };
+        let ours = [0, partner];
+        let opponents: Vec<usize> = (1..4).filter(|&h| h != partner).collect();
+        let opponents = [opponents[0], opponents[1]];
+        let led = self.lead.unwrap_or(card.suit());
+        let trump = self.trump;
+        let rank_bit = |c: Card| 1u16 << c.rank();
+        // Each hand's trumps, as a state: 0 none, 1 none above `above`, 2 one
+        // above it.
+        let trump_state = |bits: u16, above: u8| if bits == 0 { 0 } else if top_rank(bits) > above { 2 } else { 1 };
+        // The trick so far: the top card as (trumps, rank, hand).
+        let place = self.place;
+        let mut top: Option<(bool, u8, usize)> = None;
+        let beats = |new: (bool, u8), top: Option<(bool, u8, usize)>| match top {
+            None => true,
+            Some((t, r, _)) => (new.0 && !t) || (new.0 == t && new.1 > r),
+        };
+        for (i, c) in self.trick.iter().flatten().enumerate() {
+            let hand = self.order[(i + 4 - place) % 4];
+            let key = (Some(c.suit()) == trump, c.rank());
+            if (c.suit() == led || key.0) && beats(key, top) {
+                top = Some((key.0, key.1, hand));
+            }
+        }
+        let mine_key = (Some(card.suit()) == trump, card.rank());
+        if (card.suit() == led || mine_key.0) && beats(mine_key, top) {
+            top = Some((mine_key.0, mine_key.1, 0));
+        }
+        let above = match top {
+            Some((true, r, _)) => r,
+            _ => 0,
+        };
+        let later: Vec<usize> = (1..4 - place).map(|n| self.order[n]).collect();
+        // The ways of lying of the trump suit, as each hidden hand's trump
+        // state, with the chances, and the trump suit's own runs in each.
+        let trump_suit = trump.filter(|&t| t != led);
+        // The chances of each suit's run but the suit led's, when the
+        // hidden hands' trump states are `states` (any trump counts for a
+        // ruff), the card leaving the player's hand if it is of that suit.
+        let rest = |states: [u8; 2], trump_splits: Option<&[(usize, SuitSplit)]>| -> ([f64; RUN_MOST + 1], usize) {
+            let mut total = [0.0; RUN_MOST + 1];
+            total[0] = 1.0;
+            let mut sure = 0;
+            for suit in Suit::ALL {
+                if suit == led {
+                    continue;
+                }
+                let has_trump = |h: usize| match h {
+                    2 | 3 => states[h - 2] > 0,
+                    _ => trump.is_some_and(|t| !(if h == 0 { self.mine } else { self.other }).in_suit(t).is_empty()),
+                };
+                let ruffs = if trump.is_some_and(|t| t != suit) { opponents.map(has_trump) } else { [false; 2] };
+                let mut odds = [0.0; RUN_MOST + 1];
+                let mut fewest = RUN_MOST;
+                let mut total_chance = 0.0;
+                let from: Vec<(usize, SuitSplit)> = match trump_splits.filter(|_| Some(suit) == trump) {
+                    Some(splits) => splits.to_vec(),
+                    None => splits[suit as usize].iter().map(|&s| (0, s)).collect(),
+                };
+                for (_, (mut hands, chance)) in from {
+                    if card.suit() == suit {
+                        hands[0] &= !rank_bit(card);
+                    }
+                    let run = cash(hands, ours, opponents, ruffs);
+                    odds[run] += chance;
+                    total_chance += chance;
+                    fewest = fewest.min(run);
+                }
+                if total_chance > 0.0 {
+                    odds.iter_mut().for_each(|p| *p /= total_chance);
+                    total = add_runs(&total, &odds);
+                    sure = (sure + fewest).min(RUN_MOST);
+                }
+            }
+            (total, sure)
+        };
+        // The ways of the trump states, when trumps are not led: from the
+        // trump suit's ways of lying, grouped by the hidden hands' states.
+        let groups: Vec<TrumpGroup> = match trump_suit {
+            None => vec![([0, 0], 1.0, Vec::new())],
+            Some(t) => {
+                let mut groups: Vec<TrumpGroup> = Vec::new();
+                for &(hands, chance) in &splits[t as usize] {
+                    let states = [trump_state(hands[2], above), trump_state(hands[3], above)];
+                    match groups.iter_mut().find(|g| g.0 == states) {
+                        Some(g) => {
+                            g.1 += chance;
+                            g.2.push((0, (hands, chance)));
+                        }
+                        None => groups.push((states, chance, vec![(0, (hands, chance))])),
+                    }
+                }
+                let total: f64 = groups.iter().map(|g| g.1).sum();
+                groups.iter_mut().for_each(|g| g.1 /= total);
+                groups
+            }
+        };
+        let mut odds = [0.0; RUN_MOST + 1];
+        let mut sure = RUN_MOST;
+        let led_total: f64 = splits[led as usize].iter().map(|s| s.1).sum();
+        for (states, group_chance, trump_splits) in &groups {
+            // When trumps are led, the states come from the suit led's way.
+            let mut kept: Option<([f64; RUN_MOST + 1], usize)> = None;
+            for &(holdings, chance) in &splits[led as usize] {
+                let mut hands = holdings;
+                if card.suit() == led {
+                    hands[0] &= !rank_bit(card);
+                }
+                let states = if trump == Some(led) { [trump_state(hands[2], above), trump_state(hands[3], above)] } else { *states };
+                // Each later hand plays: to win the trick if its side is not
+                // winning and it can, else its lowest of the suit led.
+                let ruffs = |h: usize| {
+                    trump.is_some_and(|t| t != led)
+                        && match h {
+                            2 | 3 => states[h - 2] == 2,
+                            _ => trump_state((if h == 0 { self.mine } else { self.other }).in_suit(trump.unwrap()).fold(0u16, |b, c| b | 1 << c.rank()), above) == 2,
+                        }
+                };
+                let (top, after, _) = play_out_trick(hands, top, &later, ours, trump == Some(led), ruffs);
+                let won = top.is_some_and(|(_, _, w)| ours.contains(&w));
+                let (runs, fewest) = if won {
+                    let rest = *kept.get_or_insert_with(|| rest(states, Some(trump_splits)));
+                    let ruffs = if trump.is_some_and(|t| t != led) {
+                        opponents.map(|h| match h {
+                            2 | 3 => states[h - 2] > 0,
+                            _ => !(if h == 0 { self.mine } else { self.other }).in_suit(trump.unwrap()).is_empty(),
+                        })
+                    } else {
+                        [false; 2]
+                    };
+                    let more = 1 + cash(after, ours, opponents, ruffs);
+                    let mut runs = [0.0; RUN_MOST + 1];
+                    for (k, &p) in rest.0.iter().enumerate() {
+                        runs[(k + more).min(RUN_MOST)] += p;
+                    }
+                    (runs, (rest.1 + more).min(RUN_MOST))
+                } else {
+                    let mut runs = [0.0; RUN_MOST + 1];
+                    runs[0] = 1.0;
+                    (runs, 0)
+                };
+                if trump == Some(led) {
+                    kept = None;
+                }
+                let weight = group_chance * chance / led_total;
+                for (o, r) in odds.iter_mut().zip(runs) {
+                    *o += weight * r;
+                }
+                sure = sure.min(fewest);
+            }
+        }
+        (odds, sure)
+    }
+
+    /// For [`Table::RunPlan`]: the chances of each run, 0 to [`RUN_MOST`]
+    /// tricks in a row from this trick on, after playing `card`.
+    #[cfg(test)]
+    fn run_plan(&self, card: Card) -> [f64; RUN_MOST + 1] {
+        let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+        let splits = seen.run_splits.get_or_init(|| self.run_splits(seen));
+        let partner = if self.role <= 1 { 1 } else if self.hidden_partner[0] { 2 } else { 3 };
+        let side = [0, partner];
+        let others: Vec<usize> = (1..4).filter(|&h| h != partner).collect();
+        let opponents = [others[0], others[1]];
+        let led = self.lead.unwrap_or(card.suit());
+        let trump = self.trump;
+        let rank_bit = |c: Card| 1u16 << c.rank();
+        let without_card = |suit: Suit, mut hands: [u16; 4]| {
+            if card.suit() == suit {
+                hands[0] &= !rank_bit(card);
+            }
+            hands
+        };
+        // The trick so far, as its top card: (trumps, rank, hand).
+        let place = self.place;
+        let beats = |new: (bool, u8), top: Option<(bool, u8, usize)>| match top {
+            None => true,
+            Some((t, r, _)) => (new.0 && !t) || (new.0 == t && new.1 > r),
+        };
+        let mut top: Option<(bool, u8, usize)> = None;
+        for (i, c) in self.trick.iter().flatten().enumerate() {
+            let key = (Some(c.suit()) == trump, c.rank());
+            if (c.suit() == led || key.0) && beats(key, top) {
+                top = Some((key.0, key.1, self.order[(i + 4 - place) % 4]));
+            }
+        }
+        let key = (Some(card.suit()) == trump, card.rank());
+        if (card.suit() == led || key.0) && beats(key, top) {
+            top = Some((key.0, key.1, 0));
+        }
+        let above = match top {
+            Some((true, r, _)) => r,
+            _ => 0,
+        };
+        let later: Vec<usize> = (1..4 - place).map(|n| self.order[n]).collect();
+        // The ways of lying of the trump suit, in groups that give the four
+        // hands the same trumps for this trick: whether each holds one above
+        // the trick's top trump, and how many it holds (at most RUN_MOST).
+        let trump_key = |hands: &[u16; 4]| hands.map(|b| (top_rank(b) > above, (b.count_ones() as u8).min(RUN_MOST as u8)));
+        type Group = ([(bool, u8); 4], f64, Vec<SuitSplit>);
+        let groups: Vec<Group> = match trump.filter(|&t| t != led) {
+            None => vec![([(false, 0); 4], 1.0, Vec::new())],
+            Some(t) => {
+                let mut groups: Vec<Group> = Vec::new();
+                for &(hands, chance) in &splits[t as usize] {
+                    let hands = without_card(t, hands);
+                    let key = trump_key(&hands);
+                    match groups.iter_mut().find(|g| g.0 == key) {
+                        Some(g) => {
+                            g.1 += chance;
+                            g.2.push((hands, chance));
+                        }
+                        None => groups.push((key, chance, vec![(hands, chance)])),
+                    }
+                }
+                let total: f64 = groups.iter().map(|g| g.1).sum();
+                groups.iter_mut().for_each(|g| g.1 /= total);
+                groups
+            }
+        };
+        // The suits still to play after the suit led.
+        let rest_mask = Suit::ALL.iter().filter(|&&s| s != led).fold(0u8, |mask, &s| mask | 1 << s as usize);
+        let led_total: f64 = splits[led as usize].iter().map(|s| s.1).sum();
+        // Each suit's ways of lying, their chances summing to 1, the card
+        // played leaving the player's hand.
+        let side_ways: [Vec<SuitSplit>; 4] = Suit::ALL.map(|suit| {
+            let total: f64 = splits[suit as usize].iter().map(|s| s.1).sum();
+            splits[suit as usize].iter().map(|&(h, c)| (without_card(suit, h), c / total)).collect()
+        });
+        let mut odds = [0.0; RUN_MOST + 1];
+        for (key, group_chance, trump_splits) in &groups {
+            let mut ways = side_ways.clone();
+            if let Some(t) = trump.filter(|&t| t != led) {
+                let total: f64 = trump_splits.iter().map(|s| s.1).sum();
+                ways[t as usize] = trump_splits.iter().map(|&(h, c)| (h, c / total)).collect();
+            }
+            // The plan after the trick depends on the card only by the suit
+            // that it leaves, if that is not the suit led.
+            let memo_key = (*key, led, (card.suit() != led).then_some(card), above);
+            let mut known: RunMemo = {
+                let mut memos = seen.run_memos.lock().unwrap();
+                match memos.iter().position(|(k, _)| *k == memo_key) {
+                    Some(i) => memos.swap_remove(i).1,
+                    None => RunMemo::new(),
+                }
+            };
+            for &(holdings, chance) in &splits[led as usize] {
+                let hands = without_card(led, holdings);
+                let key = if trump == Some(led) { trump_key(&hands) } else { *key };
+                let ruffs = |h: usize| trump.is_some_and(|t| t != led) && key[h].0;
+                let (top, after, used) = play_out_trick(hands, top, &later, side, trump == Some(led), ruffs);
+                let weight = group_chance * chance / led_total;
+                match top {
+                    Some((_, _, w)) if side.contains(&w) => {
+                        let counts = |h: usize| key[h].1.saturating_sub(used[h]);
+                        let start = RunState {
+                            run: 1,
+                            lead: u8::from(w != 0),
+                            ours: side.map(counts),
+                            ruffed: [used[side[0]], used[side[1]]],
+                            theirs: opponents.map(counts),
+                        };
+                        let state = plan_step(after, start, side, opponents, trump == Some(led), trump.is_some());
+                        let runs = best_rest(state, rest_mask, &ways, side, opponents, trump, &mut known);
+                        for (o, r) in odds.iter_mut().zip(runs) {
+                            *o += weight * r;
+                        }
+                    }
+                    _ => odds[0] += weight,
+                }
+            }
+            seen.run_memos.lock().unwrap().push((memo_key, known));
+        }
+        odds
+    }
+
     /// The entries of the tables of `shape`, laid end to end, that playing
     /// `card` looks up, one in each table.
-    pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Vec<usize> {
+    /// What [`Table::SuitPlay`] says of playing `card`: 4 times how many
+    /// fewer tricks at the worst split, and then at the best.
+    fn suit_play(&self, card: Card) -> usize {
+        usize::from(self.suit_play.get_or_init(|| self.suit_plays())[card.suit() as usize * 16 + card.rank() as usize])
+    }
+
+    /// [`View::suit_play`] of every legal card, by its offset.
+    fn suit_plays(&self) -> [u8; 64] {
+        use suit_play::{Hands, Search};
+        let ranks = |cards: Cards, suit: Suit| cards.in_suit(suit).fold(0u16, |bits, c| bits | 1 << (c.rank() - 2));
+        // Where the other hand in sight sits, counting clockwise from the
+        // player, and so the two hidden hands, the first after the player
+        // first.
+        let other_at = [2, 2, 1, 3][self.role];
+        let hidden_at: Vec<usize> = (1..4).filter(|&n| n != other_at).collect();
+        // The tricks of the player's side in `suit` at the worst and the
+        // best split of its hidden cards, from `start` with the hands then.
+        let extremes = |suit: Suit, search: &mut Search, start: &mut dyn FnMut(&mut Search, Hands) -> u8| {
+            let hidden = ranks(self.hidden, suit);
+            let k = hidden.count_ones() as usize;
+            let bounds: Vec<(usize, usize)> = (0..2)
+                .map(|h| {
+                    let (least, most) = self.shown[h].length[suit as usize];
+                    (least, most.min(self.sizes[hidden_at[h]]))
+                })
+                .collect();
+            let mut hands: Hands = [0; 4];
+            hands[0] = ranks(self.mine, suit);
+            hands[other_at] = ranks(self.other, suit);
+            let (mut worst, mut best) = (u8::MAX, 0);
+            let mut any = false;
+            for fits in [true, false] {
+                let mut first = hidden;
+                loop {
+                    let n = first.count_ones() as usize;
+                    if !fits || ((bounds[0].0..=bounds[0].1).contains(&n) && (bounds[1].0..=bounds[1].1).contains(&(k - n))) {
+                        hands[hidden_at[0]] = first;
+                        hands[hidden_at[1]] = hidden & !first;
+                        let value = start(search, hands);
+                        (worst, best) = (worst.min(value), best.max(value));
+                        any = true;
+                    }
+                    if first == 0 {
+                        break;
+                    }
+                    first = (first - 1) & hidden;
+                }
+                if any {
+                    break;
+                }
+            }
+            (worst, best)
+        };
+        let legal: Vec<Card> = self.legal().collect();
+        let mut values = [0u8; 64];
+        // The tricks at the worst and best split after each card, or for a
+        // discard what it costs its suit, for the cards that are compared.
+        let mut after: Vec<(Card, (u8, u8))> = Vec::new();
+        let mut searches: [Search; 4] = Default::default();
+        for &card in &legal {
+            let suit = card.suit();
+            let rank = card.rank() as u16 - 2;
+            let search = &mut searches[suit as usize];
+            match self.lead {
+                Some(led) if led != suit => {
+                    if self.trump == Some(suit) {
+                        continue;
+                    }
+                    // A discard: what the suit is worth with the card, less
+                    // what it is worth without, led by the player.
+                    let with = extremes(suit, search, &mut |s, hands| s.led_by(hands, 0));
+                    let without = extremes(suit, search, &mut |s, mut hands| {
+                        hands[0] &= !(1 << rank);
+                        s.led_by(hands, 0)
+                    });
+                    after.push((card, (u8::MAX - (with.0 - without.0.min(with.0)), u8::MAX - (with.1 - without.1.min(with.1)))));
+                }
+                _ => {
+                    // Played to the trick: what went before, then this card.
+                    let mut played = [(0, None); 4];
+                    for (i, before) in self.trick.iter().take(self.place).enumerate() {
+                        let before = before.unwrap();
+                        let hand = 4 - self.place + i;
+                        played[i] = (hand, (before.suit() == suit).then(|| before.rank() as u16 - 2));
+                    }
+                    let place = self.place;
+                    let leader = (4 - place) % 4;
+                    let value = extremes(suit, search, &mut |s, mut hands| {
+                        hands[0] &= !(1 << rank);
+                        let mut played = played;
+                        played[place] = (0, Some(rank));
+                        s.within(hands, leader, &mut played, place + 1)
+                    });
+                    after.push((card, value));
+                }
+            }
+        }
+        // Each card against the best of those it is compared with: the
+        // cards of its suit, or every discard.
+        for &(card, (worst, best)) in &after {
+            let discard = self.lead.is_some_and(|led| led != card.suit());
+            let alike = after.iter().filter(|(c, _)| if discard { c.suit() != self.lead.unwrap() } else { c.suit() == card.suit() });
+            let (top_worst, top_best) = alike.fold((0, 0), |(w, b), &(_, (cw, cb))| (w.max(cw), b.max(cb)));
+            values[card.suit() as usize * 16 + card.rank() as usize] = 4 * (top_worst - worst).min(3) + (top_best - best).min(3);
+        }
+        values
+    }
+
+    pub(crate) fn entries(&self, card: Card, shape: &Shape) -> Entries {
         let suit = card.suit();
         let (role, place) = (self.role, self.place);
         let how = match self.lead {
@@ -1059,6 +2767,7 @@ impl View {
             Table::Trumps => play * 4 * 4 * 4 * 2 + trumps_index,
             Table::Later => (role * PLAYS + play) * 9 + later,
             Table::Later2 => (role * PLAYS + play) * 16 + self.later2(card),
+            Table::SuitPlay => (role * PLAYS + play) * 16 + self.suit_play(card),
             Table::Bids => (role * PLAYS + play) * 16 + self.bid_by[suit as usize],
             Table::Trick1 => ((role * 4 + place) * 4 + how) * 4 + trick,
             Table::Above1 => place * 125 + above3,
@@ -1068,18 +2777,109 @@ impl View {
             Table::Contract1 => ((role * 4 + place) * 4 + how) * 6 + self.contract,
             Table::FirstLength1 => (place * 4 + how) * 20 + self.shown[0].length_index(suit),
             Table::SecondLength1 => (place * 4 + how) * 20 + self.shown[1].length_index(suit),
+            Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::Later3Knots | Table::SuitTricks | Table::Run | Table::RunOdds | Table::RunSure | Table::RunPlan => {
+                panic!("{table:?} reads the player's beliefs, which only self-play keeps")
+            }
+        };
+        // The entries of where the three cards just above or below lie, with
+        // the hidden ones told apart, each with its chance.
+        #[cfg(test)]
+        let split = |above: bool| -> Vec<(usize, f64)> {
+            let seen = self.beliefs.as_ref().expect("the beliefs of PLAY_SELF_LOCATIONS or PLAY_SELF_ORACLE");
+            let in_suit = self.left.in_suit(suit);
+            let near: Vec<Card> = if above {
+                in_suit.filter(|c| c.rank() > card.rank()).take(3).collect()
+            } else {
+                in_suit.filter(|c| c.rank() < card.rank()).rev().take(3).collect()
+            };
+            let mut window: Vec<Card> = near.into_iter().filter(|&c| seen.free.contains(c)).collect();
+            window.sort_by_key(|c| c.rank());
+            let mut out = Vec::new();
+            let believed = match &seen.beliefs {
+                Some(beliefs) => seen.joint.get_or_init(|| beliefs.joint()).of(&window),
+                None => (0..1 << window.len()).map(|bits| f64::from(u8::from(bits == 0))).collect(),
+            };
+            // The way the window's cards do lie, in the bits of the beliefs.
+            let true_bits: usize =
+                window.iter().enumerate().filter(|(_, c)| seen.truth.contains(**c) != seen.swapped).map(|(t, _)| 1 << t).sum();
+            for (bits, &believed) in believed.iter().enumerate() {
+                let chance = (1.0 - seen.oracle) * believed + seen.oracle * f64::from(u8::from(bits == true_bits));
+                if chance == 0.0 {
+                    continue;
+                }
+                let mut first = seen.first;
+                for (t, &c) in window.iter().enumerate() {
+                    if (bits & (1 << t) != 0) != seen.swapped {
+                        first += Cards::singleton(c);
+                    }
+                }
+                let hands = [renumbered(self.mine), renumbered(self.other), renumbered(first), renumbered(self.hidden - first)];
+                let number =
+                    if above { Cards::holders_above(&hands, card_now, 3) } else { Cards::holders_below(&hands, card_now, 3) };
+                out.push((place * 125 + number, chance));
+            }
+            out
         };
         let mut offset = 0;
-        shape
-            .tables
-            .iter()
-            .map(|&table| {
-                let index = index(table);
-                debug_assert!(index < table.size(), "{table:?}");
-                offset += table.size();
-                offset - table.size() + index
-            })
-            .collect()
+        let mut one = Vec::with_capacity(shape.tables.len());
+        #[cfg_attr(not(test), expect(unused_mut, reason = "only self-play's tables are weighted"))]
+        let mut weighted = Vec::new();
+        for &table in shape.tables {
+            match table {
+                #[cfg(test)]
+                Table::AboveSplit | Table::BelowSplit => {
+                    weighted.extend(split(table == Table::AboveSplit).into_iter().map(|(e, p)| (offset + e, p)));
+                }
+                #[cfg(test)]
+                Table::Later3 => {
+                    let start = offset + (role * PLAYS + play) * 16;
+                    weighted.extend(self.later3(card).into_iter().map(|(e, p)| (start + e, p)));
+                }
+                #[cfg(test)]
+                Table::SuitTricks => {
+                    let start = offset + (role * PLAYS + play) * 5;
+                    weighted.extend(self.suit_tricks(card).into_iter().map(|(e, p)| (start + e, p)));
+                }
+                #[cfg(test)]
+                Table::RunOdds => {
+                    let start = offset + (role * PLAYS + play) * 5;
+                    weighted.extend(self.run_odds(card).0.into_iter().enumerate().filter(|&(_, p)| p > 0.0).map(|(k, p)| (start + k, p)));
+                }
+                #[cfg(test)]
+                Table::RunPlan => {
+                    let start = offset + (role * PLAYS + play) * 5;
+                    weighted.extend(self.run_plan(card).into_iter().enumerate().filter(|&(_, p)| p > 0.0).map(|(k, p)| (start + k, p)));
+                }
+                #[cfg(test)]
+                Table::RunSure => {
+                    let start = offset + (role * PLAYS + play) * 5;
+                    weighted.push((start + self.run_odds(card).1, 1.0));
+                }
+                #[cfg(test)]
+                Table::Run => {
+                    let start = offset + (role * PLAYS + play) * 5;
+                    weighted.push((start + self.run_median(card), 1.0));
+                }
+                #[cfg(test)]
+                Table::Later3Knots => {
+                    let start = offset + (role * PLAYS + play) * 16 * KNOTS.len();
+                    for (e, p) in self.later3(card) {
+                        for (j, hat) in hats(p).into_iter().enumerate() {
+                            if hat > 0.0 {
+                                weighted.push((start + e * KNOTS.len() + j, hat));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    let index = index(table);
+                    debug_assert!(index < table.size(), "{table:?}");
+                    one.push(offset + index);
+                }
+            }
+            offset += table.size();
+        }
+        Entries { one, weighted, head: shape.heads.head(self.role) }
     }
 }
 
@@ -1361,7 +3161,7 @@ fn beats(trump: Option<Suit>, card: Card, winning: Card) -> bool {
 #[cfg(test)]
 pub(crate) fn random_model(seed: u64) -> Model {
     use rand::{Rng, SeedableRng};
-    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
+    const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3], heads: Heads::One };
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut model = Model::new(&SMALL, 3);
     for p in &mut model.network.params {
@@ -1440,9 +3240,131 @@ mod tests {
         }
     }
 
+    /// A run reads the player's beliefs and never the true deal of the hidden
+    /// hands: with the hidden cards of each game dealt again between the two
+    /// hidden hands, in the same sizes, every card has the same value.  It
+    /// sets [`LOCATIONS`] for the process, so it is run alone.
+    #[test]
+    #[ignore]
+    fn the_run_never_reads_the_hidden_hands() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::none(), crate::ai::locations::Evidence::none()));
+        let mut rng = StdRng::seed_from_u64(5);
+        let (mut checked, mut changed) = (0, 0);
+        for game in some_games() {
+            let convention = game.system.convention();
+            let Some(view) = View::new(&game, &convention).filter(|view| view.beliefs.is_some()) else {
+                continue;
+            };
+            let seat = game.lead.unwrap() + game.played.len() % 4;
+            let in_sight = if Some(seat) == game.dummy() { seat + 2 } else { game.dummy().unwrap() };
+            let hidden_seats: Vec<Seat> = (1..4).map(|n| seat + n).filter(|&s| s != in_sight).collect();
+            let mut cards: Vec<Card> = (game.hands[hidden_seats[0]] + game.hands[hidden_seats[1]]).into_iter().collect();
+            let first_size = game.hands[hidden_seats[0]].len();
+            use rand::seq::SliceRandom;
+            cards.shuffle(&mut rng);
+            let mut dealt = crate::ai::playout::copy_of(&game);
+            dealt.hands[hidden_seats[0]] = cards[..first_size].iter().fold(Cards::EMPTY, |h, &c| h + Cards::singleton(c));
+            dealt.hands[hidden_seats[1]] = cards[first_size..].iter().fold(Cards::EMPTY, |h, &c| h + Cards::singleton(c));
+            // What each hand has played stays played by it.
+            for &hidden_seat in &hidden_seats {
+                dealt.original_hands[hidden_seat] =
+                    dealt.hands[hidden_seat] + (game.original_hands[hidden_seat] - game.hands[hidden_seat]);
+            }
+            if dealt.hands[hidden_seats[0]] != game.hands[hidden_seats[0]] {
+                changed += 1;
+            }
+            let other = View::new(&dealt, &convention).unwrap();
+            for card in view.legal() {
+                assert_eq!(view.run_median(card), other.run_median(card), "{}", serde_json::to_string(&game).unwrap());
+                checked += 1;
+            }
+        }
+        assert!(changed > 50 && checked > 100, "{changed} games dealt again, {checked} cards");
+    }
+
+    /// The tricks in a row that seats 0 and 2 take from the hands `hands` (a
+    /// string for each seat, which `Cards` reads), led by seat 0, with
+    /// `trump` as trumps, and how many plays the search made.
+    fn run_of(hands: [&str; 4], trump: Option<Suit>) -> (usize, usize) {
+        use std::str::FromStr;
+        let mut hands = hands.map(|h| Cards::from_str(h).unwrap());
+        let mut search = RunSearch { trump, nodes: 0 };
+        let run = search.trick(&mut hands, 0, &mut Vec::new(), RUN_MOST);
+        (run, search.nodes)
+    }
+
+    #[test]
+    fn a_run_of_winners_is_found_without_trying_every_play() {
+        // Seat 0 has the top spades, and all the tricks are theirs.
+        let (run, nodes) = run_of(["SAKQ", "S432", "S765", "SJT9"], None);
+        assert_eq!(run, 3);
+        assert!(nodes < 100, "{nodes} plays");
+        // With more cards the run is cut at the most that is counted.
+    }
+
+    #[test]
+    fn an_opponent_who_can_ruff_stops_the_run() {
+        // Every lead is a diamond, and seat 1 has no diamond, and trumps.
+        let (run, _) = run_of(["DA2", "HKQ", "D34", "C56"], Some(Suit::Hearts));
+        assert_eq!(run, 0);
+        // With no trumps nothing stops the ace, and then seat 2's higher
+        // diamond takes the second trick, the lead being seat 0's.
+        let (run, _) = run_of(["DA2", "HKQ", "D34", "C56"], None);
+        assert_eq!(run, 2);
+    }
+
+    #[test]
+    fn a_cross_ruff_takes_a_trick_in_each_hand() {
+        // Seat 0 leads a diamond that seat 2 ruffs, and seat 2 leads a club
+        // that seat 0 ruffs.
+        let (run, _) = run_of(["DAH3", "CKDK", "H2CA", "CQDQ"], Some(Suit::Hearts));
+        assert_eq!(run, 2);
+    }
+
+    #[test]
+    fn the_run_goes_to_the_hand_that_won_the_trick_to_lead() {
+        // Neither of seat 0's cards wins on its own, but seat 2's ace takes
+        // whichever is led, and then leads the other suit's ace: the run
+        // crosses to the other hand to lead.
+        let (run, _) = run_of(["S2H5", "S3H6", "SAHA", "S4H7"], None);
+        assert_eq!(run, 2);
+    }
+
     /// [`View::later2`] found card by card, and the soundness of what it says:
     /// when a later hidden hand really holds a card that it may play and
     /// that beats the trick so far, the table says that it could win.
+    /// Of the cards that SuitPlay compares, the best at the worst split and
+    /// the best at the best split are each 0 fewer, and a search of a view
+    /// takes little time.
+    #[test]
+    fn suit_play_gives_the_best_cards_nothing_fewer() {
+        let started = std::time::Instant::now();
+        let mut views = 0;
+        for game in some_games() {
+            let convention = game.system.convention();
+            let Some(view) = View::new(&game, &convention) else { continue };
+            views += 1;
+            let legal: Vec<Card> = view.legal().collect();
+            let discard = |c: &Card| view.lead.is_some_and(|led| led != c.suit());
+            for &card in &legal {
+                if discard(&card) && view.trump == Some(card.suit()) {
+                    assert_eq!(view.suit_play(card), 0);
+                    continue;
+                }
+                let alike: Vec<usize> = legal
+                    .iter()
+                    .filter(|c| {
+                        !(discard(c) && view.trump == Some(c.suit()))
+                            && if discard(&card) { discard(c) } else { c.suit() == card.suit() }
+                    })
+                    .map(|&c| view.suit_play(c))
+                    .collect();
+                assert!(alike.iter().any(|v| v / 4 == 0) && alike.iter().any(|v| v % 4 == 0), "{alike:?}");
+            }
+        }
+        println!("{views} views, {:.0} µs a view", started.elapsed().as_secs_f64() * 1e6 / views as f64);
+    }
+
     /// After a fourth-best opening lead, the next player sees the leader as
     /// holding at least the three cards of the suit above it.
     #[test]
@@ -1551,9 +3473,9 @@ mod tests {
                     assert!((least..=most).contains(&hand.high_card_points()), "{json}");
                 }
                 for card in game.could_be_played() {
-                    for shape in SHAPES {
+                    for shape in SHAPES.iter().filter(|shape| !shape.reads_beliefs()) {
                         let mut start = 0;
-                        for (table, entry) in shape.tables.iter().zip(view.entries(card, shape)) {
+                        for (table, entry) in shape.tables.iter().zip(view.entries(card, shape).one) {
                             assert!((start..start + table.size()).contains(&entry), "{table:?}");
                             start += table.size();
                         }
@@ -1715,13 +3637,20 @@ mod tests {
                 Table::FirstPoints,
             ],
             layers: &[20, 11],
+            heads: Heads::One,
         };
-        let mut grown: Vec<Model> = SHAPES.iter().filter_map(|&shape| old.grown_to(shape)).collect();
-        assert_eq!(grown.len(), SHAPES.len() - 1, "every shape but v1 grows from v1");
+        // The shapes with every table of v2 (the lean ones drop some).
+        let shapes: Vec<&'static Shape> = SHAPES
+            .iter()
+            .copied()
+            .filter(|shape| !shape.reads_beliefs() && (shape == &&V1 || V2.tables.iter().all(|t| shape.tables.contains(t))))
+            .collect();
+        let mut grown: Vec<Model> = shapes.iter().filter_map(|&shape| old.grown_to(shape)).collect();
+        assert_eq!(grown.len(), shapes.len() - 1, "every shape but v1 grows from v1");
         grown.push(old.grown_to(&MORE).unwrap());
         // Nor can a shape that lacks a table, or has narrower layers.
-        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8] };
-        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8] };
+        const FEWER: Shape = Shape { name: "fewer", tables: V2.tables.split_at(1).1, layers: &[16, 8], heads: Heads::One };
+        const NARROWER: Shape = Shape { name: "narrower", tables: V2.tables, layers: &[12, 8], heads: Heads::One };
         assert!(new.grown_to(&FEWER).is_none() && new.grown_to(&NARROWER).is_none());
         let more = grown.last().unwrap();
         let mut gradient = vec![0.0; more.network.params.len()];
@@ -1734,7 +3663,7 @@ mod tests {
                     let b = model.score(&view, card);
                     assert!((a - b).abs() < 1e-9, "{}: {a} {b}", model.shape.name);
                 }
-                more.network.add_gradient(&more.entries(&view, card), 1.0, &mut gradient);
+                more.network.add_gradient_of(&more.entries(&view, card), 1.0, &mut gradient);
             }
         }
         // The output weights of the new units of the last layer come last,
@@ -1745,7 +3674,7 @@ mod tests {
 
     /// The tables that a shape written out by [`shape_spec`] can name: every
     /// one but those of [`V1`].
-    const NAMED_TABLES: [Table; 16] = [
+    const NAMED_TABLES: [Table; 26] = [
         Table::Trick,
         Table::Above,
         Table::Below,
@@ -1761,7 +3690,17 @@ mod tests {
         Table::Trumps,
         Table::Later,
         Table::Later2,
+        Table::SuitPlay,
         Table::Bids,
+        Table::AboveSplit,
+        Table::BelowSplit,
+        Table::Later3,
+        Table::Later3Knots,
+        Table::SuitTricks,
+        Table::Run,
+        Table::RunOdds,
+        Table::RunSure,
+        Table::RunPlan,
     ];
 
     /// The shape that `spec` names: a shape's name, or tables joined by `+`
@@ -1792,6 +3731,7 @@ mod tests {
             name: Box::leak(spec.to_string().into_boxed_str()),
             tables: Box::leak(all.into_boxed_slice()),
             layers: Box::leak(layers.into_boxed_slice()),
+            heads: Heads::One,
         }))
     }
 
@@ -1814,6 +3754,16 @@ mod tests {
     /// than the first fit's they are, with the standard error of that paired
     /// difference.  Writes each fit's weights to `PLAY_WEIGHTS_DIR`, if that
     /// is set, as `SHAPE-PENALTY.txt`.
+    ///
+    /// `PLAY_SPLITS` (comma-separated, `1` or, with `PLAY_SPLIT=1`, `4`) says
+    /// how each shape and penalty is fitted: `1` is one fit of every
+    /// situation, `4` one fit for each of the four groups, `2` one for
+    /// declarer and one for the defence, and `r` one for each of the four
+    /// roles, each tested on its own situations.
+    /// A trailing `s` scales each fit's penalty by N/N_g, the situations in
+    /// all over those it is fitted to, which is the same prior as the one
+    /// fit's: the penalty is on the mean loss, so as a prior its precision
+    /// grows with the situations fitted.
     #[test]
     #[ignore]
     fn screen_play_shapes() {
@@ -1829,39 +3779,77 @@ mod tests {
         for shape in shapes {
             let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), shape);
             let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), shape);
-            let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
+            let splits = var("PLAY_SPLITS", if var("PLAY_SPLIT", "0") == "1" { "4" } else { "1" });
             for &penalty in &penalties {
-                let started = std::time::Instant::now();
-                let network =
-                    fitting::fit(&choices.iter().collect::<Vec<_>>(), Model::new(shape, 1).network, penalty, steps);
-                let losses: Vec<f64> = test
-                    .iter()
-                    .map(|s| {
-                        let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
-                        best - s.choice[network.choice(&s.choice)].1
-                    })
-                    .collect();
-                let (mean, spread) = error(&losses);
-                print!(
-                    "{:<11} penalty {penalty:<6} {} weights, {:.0} s: loses {mean:.4} ({spread:.4}) tricks a play",
-                    shape.name,
-                    shape.size(),
-                    started.elapsed().as_secs_f64()
-                );
-                match &first {
-                    Some(first) => {
-                        let more: Vec<f64> = losses.iter().zip(first).map(|(a, b)| a - b).collect();
-                        let (mean, spread) = error(&more);
-                        println!(", {mean:+.4} ({spread:.4}) more than the first");
+                for split in splits.split(',').map(str::trim) {
+                    let started = std::time::Instant::now();
+                    let (ways, scaled) = (split.trim_end_matches('s'), split.ends_with('s'));
+                    // The fit that each group's situations belong to.
+                    let (way, count): (Kind, usize) = match ways {
+                        "1" => (|_| 0, 1),
+                        "2" => (|s| s.group / 2, 2),
+                        "4" => (|s| s.group, 4),
+                        "r" => (|s| s.role / 2, 4),
+                        _ => panic!("PLAY_SPLITS: {split} is not 1, 2, 4 or r with or without s"),
+                    };
+                    let fits: Vec<Network> = (0..count)
+                        .map(|f| {
+                            let choices: Vec<_> = train.iter().filter(|s| way(s) == f).map(|s| &s.choice).collect();
+                            let penalty = if scaled { penalty * train.len() as f64 / choices.len() as f64 } else { penalty };
+                            fitting::fit(&choices, Model::new(shape, 1).network, penalty, steps)
+                        })
+                        .collect();
+                    let network = &fits[0];
+                    let losses: Vec<f64> = test
+                        .iter()
+                        .map(|s| {
+                            let network = &fits[way(s)];
+                            let best = s.choice.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+                            best - s.choice[network.choice(&s.choice)].1
+                        })
+                        .collect();
+                    let (mean, spread) = error(&losses);
+                    print!(
+                        "{:<11} split {split:<2} penalty {penalty:<6} {} weights, {:.0} s: loses {mean:.4} ({spread:.4}) tricks a play",
+                        shape.name,
+                        shape.size(),
+                        started.elapsed().as_secs_f64()
+                    );
+                    match &first {
+                        Some(first) => {
+                            let more: Vec<f64> = losses.iter().zip(first).map(|(a, b)| a - b).collect();
+                            let (mean, spread) = error(&more);
+                            println!(", {mean:+.4} ({spread:.4}) more than the first");
+                        }
+                        None => println!(),
                     }
-                    None => {
-                        println!();
+                    // By group, by role, and by role and contract.
+                    let kinds: [(&[&str], Kind); 3] =
+                        [(&GROUPS, |s| s.group), (&ROLES_ALONE, |s| s.role / 2), (&ROLES, |s| s.role)];
+                    let kinds = kinds.into_iter().flat_map(|(names, kind)| names.iter().enumerate().map(move |(g, name)| (name, g, kind)));
+                    for (name, g, kind) in kinds {
+                        let at: Vec<usize> = (0..test.len()).filter(|&i| kind(&test[i]) == g).collect();
+                        let these: Vec<f64> = at.iter().map(|&i| losses[i]).collect();
+                        let (mean, spread) = error(&these);
+                        print!("    {name:<20} {:>5} plays: loses {mean:.4} ({spread:.4})", at.len());
+                        match &first {
+                            Some(first) => {
+                                let more: Vec<f64> = at.iter().map(|&i| losses[i] - first[i]).collect();
+                                let (mean, spread) = error(&more);
+                                println!(", {mean:+.4} ({spread:.4}) more than the first");
+                            }
+                            None => println!(),
+                        }
+                    }
+                    if first.is_none() {
                         first = Some(losses);
                     }
-                }
-                if let Ok(directory) = std::env::var("PLAY_WEIGHTS_DIR") {
-                    std::fs::create_dir_all(&directory).unwrap();
-                    network.write(&format!("{directory}/{}-{penalty}.txt", shape.name));
+                    if let Ok(directory) = std::env::var("PLAY_WEIGHTS_DIR") {
+                        std::fs::create_dir_all(&directory).unwrap();
+                        // A split fit writes its first group's weights.
+                        let split = if split == "1" { String::new() } else { format!("-split{split}") };
+                        network.write(&format!("{directory}/{}-{penalty}{split}.txt", shape.name));
+                    }
                 }
             }
         }
@@ -1881,6 +3869,8 @@ mod tests {
     #[ignore]
     fn measure_play_tables() {
         let model = read_model(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
+        assert!(!model.shape.reads_beliefs(), "the tables are measured by their one entry each, which a table of the beliefs has not");
+        assert_eq!(model.shape.heads, Heads::One, "the tables are measured by the first head");
         let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), model.shape);
         let network = &model.network;
         let n = test.len() as f64;
@@ -1892,7 +3882,7 @@ mod tests {
                 .iter()
                 .map(|(entries, _)| {
                     let kept: Vec<usize> =
-                        entries.iter().enumerate().filter(|&(t, _)| Some(t) != left_out).map(|(_, &e)| e).collect();
+                        entries.one.iter().enumerate().filter(|&(t, _)| Some(t) != left_out).map(|(_, &e)| e).collect();
                     network.score(&kept)
                 })
                 .collect();
@@ -1929,13 +3919,13 @@ mod tests {
             let spread = test
                 .iter()
                 .map(|s| {
-                    let weights = s.choice.iter().map(|(e, _)| network.params[e[t]]);
+                    let weights = s.choice.iter().map(|(e, _)| network.params[e.one[t]]);
                     weights.clone().fold(f64::MIN, f64::max) - weights.fold(f64::MAX, f64::min)
                 })
                 .sum::<f64>()
                 / n;
             let used: std::collections::HashSet<usize> =
-                test.iter().flat_map(|s| s.choice.iter().map(move |(e, _)| e[t])).collect();
+                test.iter().flat_map(|s| s.choice.iter().map(move |(e, _)| e.one[t])).collect();
             println!(
                 "{:<14} {mean:>+9.4} {error:>7.4} {spread:>8.3} {:>6} of {:<5}",
                 format!("{table:?}"),
@@ -1949,7 +3939,7 @@ mod tests {
         let mut cards = 0;
         for s in &test {
             for (entries, _) in &s.choice {
-                for (layer, active) in counts.iter_mut().zip(network.active_units(entries)) {
+                for (layer, active) in counts.iter_mut().zip(network.active_units(&entries.one)) {
                     for (count, on) in layer.iter_mut().zip(active) {
                         *count += on as usize;
                     }
@@ -2058,7 +4048,7 @@ mod tests {
     #[test]
     fn the_chances_add_up_and_cover_only_cards_that_could_be_held() {
         let mut rng = StdRng::seed_from_u64(3);
-        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3] };
+        const SMALL: Shape = Shape { name: "small", tables: V1.tables, layers: &[4, 3], heads: Heads::One };
         let mut weights = Model::new(&SMALL, 3);
         for p in &mut weights.network.params {
             *p = rng.gen_range(-1.0..1.0);
@@ -2122,7 +4112,7 @@ mod tests {
                     let scores: Vec<f64> = s
                         .choice
                         .iter()
-                        .map(|(e, _)| weights.score(e) / temperature)
+                        .map(|(e, _)| weights.score_of(e) / temperature)
                         .collect();
                     let most = scores.iter().copied().fold(f64::MIN, f64::max);
                     let odds: Vec<f64> = scores.iter().map(|x| (x - most).exp()).collect();
@@ -2545,12 +4535,47 @@ mod tests {
     /// player, the tricks of their side, over the ensemble.
     struct Situation {
         stage: usize,
-        choice: Vec<(Vec<usize>, f64)>,
+        /// Which of [`GROUPS`] it is in.
+        group: usize,
+        /// The role of the player (see [`Table`]) and whether the contract
+        /// is in notrump, as an index of [`ROLES`].
+        role: usize,
+        choice: Vec<(Entries, f64)>,
     }
+
+    /// The kinds of situation that [`screen_play_shapes`] reports apart: who
+    /// plays, the declarer's side or the defence, and in what contract.
+    const GROUPS: [&str; 4] = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
+
+    /// Which of a list of kinds of situation (such as [`GROUPS`]) one is in.
+    type Kind = fn(&Situation) -> usize;
+
+    /// The roles, which [`screen_play_shapes`] reports apart as well.
+    const ROLES_ALONE: [&str; 4] = ["own hand", "dummy", "left defender", "right defender"];
+
+    /// The roles crossed with suit and notrump, which [`screen_play_shapes`]
+    /// reports apart as well.
+    const ROLES: [&str; 8] = [
+        "own hand, suit",
+        "own hand, notrump",
+        "dummy, suit",
+        "dummy, notrump",
+        "left defender, suit",
+        "left defender, NT",
+        "right defender, suit",
+        "right defender, NT",
+    ];
 
     /// The situations in the files `paths`, comma-separated, each card with
     /// its entries in the tables of `shape`.
+    ///
+    /// A shape that reads the players' beliefs reads them by the weights in
+    /// the file `PLAY_SELF_LOCATIONS` (see [`read_locations`]).
     fn read_situations(paths: &str, shape: &Shape) -> Vec<Situation> {
+        if shape.reads_beliefs() && LOCATIONS.get().is_none() {
+            let path = std::env::var("PLAY_SELF_LOCATIONS").expect("PLAY_SELF_LOCATIONS, for a shape that reads the beliefs");
+            let _ = LOCATIONS.set(read_locations(&path));
+        }
         let mut conventions = std::collections::HashMap::new();
         let mut situations = Vec::new();
         for path in paths.split(',') {
@@ -2583,6 +4608,8 @@ mod tests {
                     .collect();
                 situations.push(Situation {
                     stage: json["stage"].as_u64().unwrap() as usize,
+                    group: 2 * usize::from(view.role >= 2) + usize::from(view.trump.is_none()),
+                    role: 2 * view.role + usize::from(view.trump.is_none()),
                     choice,
                 });
             }
@@ -2605,7 +4632,7 @@ mod tests {
         let train = read_situations(&std::env::var("PLAY_DATA").expect("PLAY_DATA"), shape);
         let test = read_situations(&std::env::var("PLAY_TEST").expect("PLAY_TEST"), shape);
         let steps = number("PLAY_STEPS", 500);
-        let choices: fitting::Choices = train.into_iter().map(|s| s.choice).collect();
+        let choices: fitting::Choices<Entries> = train.into_iter().map(|s| s.choice).collect();
         let start = || Model::new(shape, 1).network;
         let (penalty, held_out) =
             fitting::cross_validate(&choices, &start, &[0.0, 0.0001, 0.001, 0.01], steps);
@@ -2649,7 +4676,7 @@ mod tests {
     /// number, and how many runs there are.
     struct Decision {
         learner: usize,
-        cards: Vec<(Vec<usize>, f64)>,
+        cards: Vec<(Entries, f64)>,
         chosen: usize,
         side: usize,
         trick: usize,
@@ -2658,6 +4685,9 @@ mod tests {
         weight: f64,
         run: Vec<usize>,
         runs: usize,
+        /// 1 for a choice that was also played out mirrored (see
+        /// [`mirrored`]), 2 for the mirrored choice, and 0 for the others.
+        mirror: u8,
     }
 
     /// The runs of touching cards among `legal`, the cards that the player
@@ -2949,6 +4979,116 @@ mod tests {
         [game.ns_tricks, game.ew_tricks]
     }
 
+    /// The seat that `seat` becomes when the table is reflected through the
+    /// declarer of `game` and the dummy: the declarer's two opponents trade
+    /// places.
+    fn reflected(game: &GameState<()>, seat: Seat) -> Option<Seat> {
+        let declarer = game.dummy()? + 2;
+        Some(declarer + (4 - (seat as usize + 4 - declarer as usize) % 4) % 4)
+    }
+
+    /// `game` at the start of a trick with the declarer's opponents' hands
+    /// trading places and the play so far turned round: each opponent keeps
+    /// its own cards, has played the same cards to the same tricks, and sits
+    /// on the other side of the declarer, so that each trick so far went the
+    /// other way round the table, and the calls that showed each hand still
+    /// show it (see [`GameState::hand_called_by`]).  Reflecting the table and
+    /// reversing the direction of play leaves the game as it was, so this is
+    /// `game` played clockwise to here and the other way from here on: the
+    /// cards that are gone, the suits shown out of and the tricks won are the
+    /// same, and each opponent's cards to come lie on the other side of the
+    /// declarer's.  `None` in the middle of a trick or before the opening lead.
+    fn mirrored(game: &GameState<()>) -> Option<GameState<()>> {
+        if !current_trick(game).is_empty() || game.tricks.is_empty() || game.hand_done {
+            return None;
+        }
+        let m = |seat: Seat| reflected(game, seat).unwrap();
+        reflected(game, Seat::South)?;
+        let mut twin = crate::ai::playout::copy_of(game);
+        let mut callers = Seated::new([Seat::South; 4]);
+        for seat in (0..4).map(Seat::from) {
+            twin.hands[m(seat)] = game.hands[seat];
+            twin.original_hands[m(seat)] = game.original_hands[seat];
+            twin.shown_out[m(seat)] = game.shown_out[seat];
+            callers[m(seat)] = game.hand_called_by(seat);
+        }
+        twin.hands_called_by = Some(callers);
+        let turned = |cards: &[Card]| [cards[0], cards[3], cards[2], cards[1]];
+        twin.tricks = game.tricks.iter().map(|(leader, cards)| (m(*leader), turned(cards))).collect();
+        if game.played.len() == 4 {
+            twin.played = turned(&game.played).to_vec();
+        }
+        twin.lead = game.lead.map(m);
+        Some(twin)
+    }
+
+    #[test]
+    fn mirrored_games_are_the_same_play_turned_round() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut twins = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(23, 40) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(twin) = mirrored(&game) {
+                    twins += 1;
+                    let m = |seat: Seat| reflected(&game, seat).unwrap();
+                    // Mirrored again, it is the game as it was.
+                    let back = mirrored(&twin).unwrap();
+                    assert_eq!(serde_json::to_string(&back.tricks).unwrap(), serde_json::to_string(&game.tricks).unwrap());
+                    assert_eq!(back.hands, game.hands);
+                    assert_eq!(back.lead, game.lead);
+                    assert!((0..4).map(Seat::from).all(|s| back.hand_called_by(s) == s));
+                    // Each card of each trick so far was played by the seat
+                    // its hand now sits in, and each trick was won by the
+                    // seat that leads the next.
+                    let trump = super::super::ensemble::trump_of(&game);
+                    for (k, ((leader, cards), (twin_leader, twin_cards))) in game.tricks.iter().zip(&twin.tricks).enumerate() {
+                        for (i, &card) in cards.iter().enumerate() {
+                            let j = twin_cards.iter().position(|&c| c == card).unwrap();
+                            assert_eq!(*twin_leader + j, m(*leader + i));
+                            assert!(twin.original_hands[*twin_leader + j].contains(card));
+                        }
+                        let mut winner = 0;
+                        for i in 1..4 {
+                            if beats(trump, twin_cards[i], twin_cards[winner]) {
+                                winner = i;
+                            }
+                        }
+                        let next = twin.tricks.get(k + 1).map(|t| t.0).or(twin.lead).unwrap();
+                        assert_eq!(*twin_leader + winner, next);
+                    }
+                    // Each hand that cannot be seen shows the same in both,
+                    // and so do the cards in sight.
+                    if let (Some(view), Some(twin_view)) = (View::new(&game, &convention), View::new(&twin, &convention)) {
+                        assert_eq!(view.mine, twin_view.mine);
+                        assert_eq!(view.other, twin_view.other);
+                        assert_eq!(view.hidden, twin_view.hidden);
+                        assert_eq!(view.contract, twin_view.contract);
+                        // What an opening lead shows is the conventions' of
+                        // the seat that led, which a mirrored game turns.
+                        let lead_facts = crate::ai::opening_lead::lead_facts;
+                        if lead_facts(&game).is_none() && lead_facts(&twin).is_none() {
+                            for (a, b) in view.shown.iter().zip(twin_view.shown.iter().rev()) {
+                                assert_eq!((a.length, a.points), (b.length, b.points));
+                            }
+                        }
+                    }
+                    // The twin plays on to the end.
+                    let mut twin = twin;
+                    while !twin.hand_done {
+                        let legal: Vec<Card> = twin.could_be_played().collect();
+                        twin.play(legal[rng.gen_range(0..legal.len())]);
+                    }
+                    assert_eq!(twin.ns_tricks + twin.ew_tricks, 13);
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(twins > 100, "only {twins} twins");
+    }
+
     /// Plays `card` in `game`, a game of self-play, and the rest of the game
     /// after it, on the same deal and with the same `players`, each model
     /// playing the card it scores highest and the players of any card
@@ -3009,6 +5149,10 @@ mod tests {
         level: f64,
         apart: f64,
         by_runs: bool,
+        /// Whether each choice played out on the true deal, when the
+        /// declarer's side is on lead, is also played out in the game
+        /// [`mirrored`], as a choice of its own.
+        mirror: bool,
     }
 
     /// About `count` deals of the hands that the player to play in `game`
@@ -3085,6 +5229,10 @@ mod tests {
         weights: f64,
         scores: f64,
         tricks: f64,
+        /// What the likeliest cards lose, and the number of choices, of the
+        /// choices also played out mirrored and of their mirrored twins.
+        paired_lost: [f64; 2],
+        paired: [usize; 2],
     }
 
     impl Tally {
@@ -3100,6 +5248,10 @@ mod tests {
             self.weights += other.weights;
             self.scores += other.scores;
             self.tricks += other.tricks;
+            for k in 0..2 {
+                self.paired_lost[k] += other.paired_lost[k];
+                self.paired[k] += other.paired[k];
+            }
         }
 
         /// The factor that brings the differences of the scores of a choice
@@ -3188,10 +5340,10 @@ mod tests {
             let mut considered = Vec::new();
             let card = if let Some((weights, learning)) = weights {
                 let (run, count) = if playouts.by_runs { runs_of(&game, &legal) } else { (Vec::new(), 0) };
-                let cards: Vec<(Vec<usize>, f64)> = if playouts.by_runs {
+                let cards: Vec<(Entries, f64)> = if playouts.by_runs {
                     // Each run's chance, shared among its cards.
-                    let entries: Vec<Vec<usize>> = legal.iter().map(|&card| weights.entries(&view, card)).collect();
-                    let all: Vec<f64> = entries.iter().map(|e| weights.network.score(e)).collect();
+                    let entries: Vec<Entries> = legal.iter().map(|&card| weights.entries(&view, card)).collect();
+                    let all: Vec<f64> = entries.iter().map(|e| weights.network.score_of(e)).collect();
                     let (scores, shares) = run_scores(&run, &all, count, temperature);
                     let chances = run_chances(&scores, temperature);
                     entries.into_iter().zip(&run).zip(&shares).map(|((e, &r), share)| (e, chances[r] * share)).collect()
@@ -3251,6 +5403,7 @@ mod tests {
                         weight: if share > 0.0 { 1.0 / share } else { 0.0 },
                         run,
                         runs: count,
+                        mirror: 0,
                     });
                 }
                 legal[chosen]
@@ -3268,6 +5421,7 @@ mod tests {
             game.play(card);
         }
         let any_card = players.iter().any(|p| matches!(p, Player::Random));
+        let mut twins = Vec::new();
         if !later.is_empty() && !any_card {
             let chosen = playouts.per_game.min(later.len());
             let weight = later.len() as f64 / chosen as f64;
@@ -3327,8 +5481,62 @@ mod tests {
                 }
                 decision.played_out = Some(tricks);
                 decision.weight = weight;
+                // The same choice with the opponents' cards to come on the
+                // other side of the declarer's, played out on its own draws
+                // turned round with the table, as a choice of its own.
+                let declarers = game.lead.is_some_and(|lead| chooser(game, lead) as usize % 2 == *side)
+                    && game.dummy().is_some_and(|dummy| dummy as usize % 2 == *side);
+                if playouts.mirror && playouts.by_runs && playouts.deals == 0 && declarers {
+                    if let Some(twin) = mirrored(game) {
+                        let learner = decision.learner;
+                        let model = &learners[learner];
+                        let m = |seat: Seat| reflected(game, seat).unwrap();
+                        let (_, _, seed, qualities) = &deals[0];
+                        let mut turned_players = players;
+                        let mut turned_qualities = *qualities;
+                        for seat in (0..4).map(Seat::from) {
+                            turned_players[m(seat) as usize] = players[seat as usize];
+                            for t in 0..13 {
+                                turned_qualities[t][m(seat) as usize] = qualities[t][seat as usize];
+                            }
+                        }
+                        if let Some(view) = View::new(&twin, convention) {
+                            let legal: Vec<Card> = view.legal().collect();
+                            let (run, count) = runs_of(&twin, &legal);
+                            let entries: Vec<Entries> = legal.iter().map(|&card| model.entries(&view, card)).collect();
+                            let all: Vec<f64> = entries.iter().map(|e| model.network.score_of(e)).collect();
+                            let (scores, shares) = run_scores(&run, &all, count, temperature);
+                            let chances = run_chances(&scores, temperature);
+                            let cards: Vec<(Entries, f64)> =
+                                entries.into_iter().zip(&run).zip(&shares).map(|((e, &r), share)| (e, chances[r] * share)).collect();
+                            let twin_runs: Vec<Card> = crate::ai::playout::one_of_each_run(&twin).collect();
+                            let values: Vec<f64> = twin_runs
+                                .iter()
+                                .map(|&card| {
+                                    let won = playout_at(&twin, card, convention, learners, turned_players, temperature, &turned_qualities, *seed);
+                                    won[*side] as f64
+                                })
+                                .collect();
+                            twins.push(Decision {
+                                learner,
+                                cards,
+                                chosen: 0,
+                                side: *side,
+                                trick: twin.tricks.len(),
+                                won_before: if *side == 0 { twin.ns_tricks } else { twin.ew_tricks },
+                                played_out: Some(legal.iter().map(|&card| values[crate::ai::playout::run_of(&twin_runs, card)]).collect()),
+                                weight,
+                                run,
+                                runs: count,
+                                mirror: 2,
+                            });
+                            decision.mirror = 1;
+                        }
+                    }
+                }
             }
         }
+        decisions.extend(twins);
         let watched = record.then(|| {
             let start: GameState<()> = serde_json::from_str(json).unwrap();
             let dummy = start.dummy().unwrap();
@@ -3424,7 +5632,20 @@ mod tests {
     /// the plays of a deal nearly all the same, and its learning stopped.
     /// Each step also shrinks the weights by `PLAY_SELF_DECAY` (0) times its
     /// size, as AdamW's weight decay does, so that they stay small unless the
-    /// games keep calling for them.
+    /// games keep calling for them.  With `PLAY_SELF_COOLING` (0) set to a
+    /// number of rounds t0, the rate cools as rate·√(t0/(t0 + n)), n rounds
+    /// after round `PLAY_SELF_COOLING_START` (the first of the run), so that a
+    /// run started again there warms up again.  That is Adagrad's cooling:
+    /// Adagrad divides by the root of the sum of the squared slopes, which
+    /// grows as n times their mean square, where Adam divides by the root of
+    /// their mean square.  Adam's momentum does not change the drift or the
+    /// noise over more than ten rounds or so, as its weights sum to one.
+    /// The shapes that read the players' beliefs read them as much the truth
+    /// as `PLAY_SELF_ORACLE` (0) says (see [`ORACLE`]); with
+    /// `PLAY_SELF_ORACLE_ROUNDS` (0) set to n, that fades to 0 in a straight
+    /// line over the n rounds from `PLAY_SELF_ORACLE_START` (the first of the
+    /// run), so that a player that learned with the true deal in sight learns
+    /// to do without it.
     ///
     /// Every `PLAY_SELF_SNAPSHOT` (50) rounds, and at the end, it keeps a
     /// snapshot of each learner for the league (written to the directory
@@ -3487,7 +5708,8 @@ mod tests {
     /// number (taken again in turn if it has fewer, or its game's model if it
     /// has none), grown into the learner's shape (see [`Model::grown_to`]),
     /// or from nothing if it cannot be; with `#K` after the file's name,
-    /// every learner starts from its learner K (from 1).  A learner
+    /// every learner starts from its learner K (from 1), and with `#K,L,...`
+    /// the learners start from its learners K, L, ... in turn.  A learner
     /// with no state of Adam (see `make_play_model_file`) starts with steps
     /// that grow from nothing over 20 rounds, so that its weights are not
     /// jolted while Adam learns their scale.
@@ -3646,6 +5868,13 @@ mod tests {
             },
         );
         let rate = float("PLAY_SELF_RATE", 0.01);
+        // The players' beliefs about where the hidden cards lie, for shapes
+        // that read them: the prior's weights and then the evidence's, one a
+        // line, as `learn_card_locations` writes them.  They do not learn.
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let _ = LOCATIONS.set(read_locations(&path));
+            println!("the players' beliefs come from {path}");
+        }
         let random_share = float("PLAY_SELF_RANDOM", 0.0);
         let past_share = float("PLAY_SELF_PAST", 0.0);
         let entropy_target = float("PLAY_SELF_ENTROPY", 0.25);
@@ -3660,6 +5889,7 @@ mod tests {
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
                 by_runs: false,
+                mirror: false,
             },
             Learning::FreeEnergy => Playouts {
                 share: 0.0,
@@ -3674,6 +5904,7 @@ mod tests {
                 level: f64::INFINITY,
                 apart: f64::INFINITY,
                 by_runs: true,
+                mirror: number("PLAY_SELF_MIRROR", 0) == 1,
             },
             Learning::Playouts => Playouts {
                 share: 0.0,
@@ -3688,6 +5919,7 @@ mod tests {
                 level: float("PLAY_SELF_LEVEL_ACCURACY", 0.5),
                 apart: float("PLAY_SELF_CHOICE_ACCURACY", 0.05),
                 by_runs: false,
+                mirror: false,
             },
         };
         let anneal_from = float("PLAY_SELF_ANNEAL_FROM", 1.0);
@@ -3770,8 +6002,12 @@ mod tests {
         // Or the models of a file, which the learners grow from.
         let mut start = Vec::new();
         if let Ok(path) = std::env::var("PLAY_SELF_START") {
+            // After a `#`, the learners to start from, comma-separated.
             let (path, only) = match path.split_once('#') {
-                Some((file, learner)) => (file.to_string(), Some(learner.parse::<usize>().expect("a learner's number after #"))),
+                Some((file, learners)) => (
+                    file.to_string(),
+                    Some(learners.split(',').map(|l| l.trim().parse::<usize>().expect("a learner's number after #")).collect::<Vec<_>>()),
+                ),
                 None => (path, None),
             };
             let file = model_file::ModelFile::read(&path);
@@ -3783,9 +6019,13 @@ mod tests {
                 file.round
             );
             start = file.learners.into_iter().map(|learner| learner.model).collect();
-            if let Some(learner) = only {
-                start = vec![start.swap_remove(learner - 1)];
-                println!("every learner starts from its learner {learner}");
+            if let Some(chosen) = only {
+                start = chosen.iter().map(|&l| start[l - 1].clone()).collect();
+                if chosen.len() == 1 {
+                    println!("every learner starts from its learner {}", chosen[0]);
+                } else {
+                    println!("the learners start from its learners {chosen:?} in turn");
+                }
             }
             if start.is_empty() {
                 start.push(file.best);
@@ -3794,7 +6034,7 @@ mod tests {
         // The learners that the file lacks take the shapes in turn.
         while learners.len() < population {
             let shape = shapes[learners.len() % shapes.len()];
-            let grown = start.get(learners.len() % start.len().max(1)).and_then(|start| start.grown_to(shape));
+            let grown = start.get(learners.len() % start.len().max(1)).and_then(|start| start.reshaped_to(shape));
             warmups.push(if grown.is_some() { 20 } else { 0 });
             let model = grown.unwrap_or_else(|| Model::new(shape, 11 + learners.len() as u64));
             adams.push(fitting::Adam::new(model.network.params.len()));
@@ -3832,6 +6072,46 @@ mod tests {
             println!("the learners' scores are multiplied by {temperature}, to play as they did at temperature 1");
         }
         let anneal_start = number("PLAY_SELF_ANNEAL_START", first_round);
+        // With `PLAY_SELF_NOISE` 1, the sums of each learner's slopes and of
+        // their squares, weight by weight, and the rounds summed, for how
+        // much of each round's slope is noise (with `PLAY_SELF_RATE` 0 the
+        // learners stay as they are, and every round's slope is a draw of
+        // the same thing).
+        let noise_on = number("PLAY_SELF_NOISE", 0) == 1;
+        let mut noise: Vec<(Vec<f64>, Vec<f64>, usize)> = Vec::new();
+        let cooling = number("PLAY_SELF_COOLING", 0) as f64;
+        let cooling_start = number("PLAY_SELF_COOLING_START", first_round);
+        let cooled = |round: usize| {
+            if cooling > 0.0 {
+                (cooling / (cooling + round.saturating_sub(cooling_start) as f64)).sqrt()
+            } else {
+                1.0
+            }
+        };
+        if cooling > 0.0 {
+            println!(
+                "the rate cools from {} at round {cooling_start} as the root of {cooling}/({cooling} + rounds since), {} at round {first_round}",
+                rate,
+                rate * cooled(first_round)
+            );
+        }
+        let oracle_from = float("PLAY_SELF_ORACLE", 0.0);
+        let oracle_rounds = number("PLAY_SELF_ORACLE_ROUNDS", 0);
+        let oracle_start = number("PLAY_SELF_ORACLE_START", first_round);
+        let oracle_at = |round: usize| {
+            if oracle_rounds == 0 {
+                oracle_from
+            } else {
+                oracle_from * (1.0 - round.saturating_sub(oracle_start) as f64 / oracle_rounds as f64).max(0.0)
+            }
+        };
+        if oracle_from > 0.0 {
+            println!(
+                "the beliefs are {oracle_from} the truth{}, {} at round {first_round}",
+                if oracle_rounds == 0 { String::new() } else { format!(", fading to none over {oracle_rounds} rounds from {oracle_start}") },
+                oracle_at(first_round)
+            );
+        }
         let mut playout_losses = vec![Tally::default(); learners.len()];
         if snapshots.is_empty() {
             snapshots = learners.iter().map(|l| (first_round - 1, l.clone())).collect();
@@ -3864,6 +6144,7 @@ mod tests {
         let workers = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         let started = std::time::Instant::now();
         for round in first_round..=last_round {
+            set_oracle(oracle_at(round));
             // The temperature of the slope, annealed geometrically down to
             // that of the games.
             let annealed = if learning == Learning::FreeEnergy {
@@ -4012,7 +6293,7 @@ mod tests {
                                                 // at the annealed temperature,
                                                 // over the runs, each run's
                                                 // slope shared among its cards.
-                                                let all: Vec<f64> = d.cards.iter().map(|(e, _)| model.network.score(e)).collect();
+                                                let all: Vec<f64> = d.cards.iter().map(|(e, _)| model.network.score_of(e)).collect();
                                                 let mut worth = vec![0.0; d.runs];
                                                 for (&r, &v) in d.run.iter().zip(values) {
                                                     worth[r] = v;
@@ -4020,7 +6301,7 @@ mod tests {
                                                 let (scores, shares) = run_scores(&d.run, &all, d.runs, annealed);
                                                 let slope = free_energy_slope(&scores, &worth, annealed);
                                                 for (((entries, _), &r), share) in d.cards.iter().zip(&d.run).zip(&shares) {
-                                                    model.network.add_gradient(entries, d.weight * slope[r] * share, &mut gradients[d.learner]);
+                                                    model.network.add_gradient_of(entries, d.weight * slope[r] * share, &mut gradients[d.learner]);
                                                 }
                                                 // How far the free energy at
                                                 // the games' temperature falls
@@ -4036,7 +6317,7 @@ mod tests {
                                                     tally.across += d.weight * (s - score_mean) * (v - worth_mean);
                                                     tally.squares += d.weight * (s - score_mean) * (s - score_mean);
                                                 }
-                                                if gathering {
+                                                if gathering && d.mirror != 2 {
                                                     gathered[d.learner].push((all, d.run.clone(), d.runs, worth, d.weight));
                                                 }
                                             }
@@ -4049,7 +6330,7 @@ mod tests {
                                                 // each square divided by
                                                 // that of its accuracy.
                                                 let scores: Vec<f64> =
-                                                    d.cards.iter().map(|(entries, _)| model.network.score(entries)).collect();
+                                                    d.cards.iter().map(|(entries, _)| model.network.score_of(entries)).collect();
                                                 let n = values.len() as f64;
                                                 let value_mean = values.iter().sum::<f64>() / n;
                                                 let score_mean = scores.iter().sum::<f64>() / n;
@@ -4068,7 +6349,7 @@ mod tests {
                                                     tally.weights += w;
                                                     tally.scores += w * score;
                                                     tally.tricks += w * value;
-                                                    model.network.add_gradient(entries, -w * off, &mut gradients[d.learner]);
+                                                    model.network.add_gradient_of(entries, -w * off, &mut gradients[d.learner]);
                                                 }
                                             }
                                         } else {
@@ -4079,7 +6360,7 @@ mod tests {
                                                 let log = if *chance > 0.0 { chance.ln() } else { 0.0 };
                                                 let spreading = -chance * (log + spread);
                                                 let g = (advantage * (wanted - chance) + bonus_now * spreading) / temperature;
-                                                learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                learners_now[d.learner].network.add_gradient_of(entries, g, &mut gradients[d.learner]);
                                             }
                                             if let Some(values) = &d.played_out {
                                                 let weight = playout_weights[d.learner % playout_weights.len()];
@@ -4093,7 +6374,7 @@ mod tests {
                                                     let mean: f64 = values.iter().zip(&soft).map(|(v, p)| v * p).sum();
                                                     for (((entries, _), value), p) in d.cards.iter().zip(values).zip(&soft) {
                                                         let g = weight * d.weight * p * (value - mean) / (softened * temperature);
-                                                        learners_now[d.learner].network.add_gradient(entries, g, &mut gradients[d.learner]);
+                                                        learners_now[d.learner].network.add_gradient_of(entries, g, &mut gradients[d.learner]);
                                                     }
                                                 }
                                             }
@@ -4112,6 +6393,12 @@ mod tests {
                                                 (0..values.len()).max_by(|&a, &b| chance(a).total_cmp(&chance(b))).unwrap();
                                             lost[d.learner].lost += values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
                                             lost[d.learner].choices += 1;
+                                            if d.mirror > 0 {
+                                                let tally = &mut lost[d.learner];
+                                                tally.paired_lost[d.mirror as usize - 1] +=
+                                                    values.iter().copied().fold(f64::MIN, f64::max) - values[likeliest];
+                                                tally.paired[d.mirror as usize - 1] += 1;
+                                            }
                                         }
                                         counts[d.learner] += 1;
                                     }
@@ -4211,6 +6498,18 @@ mod tests {
                 if scale != 1.0 {
                     learner.network.scale_scores(1.0 / scale);
                 }
+                if noise_on {
+                    if noise.len() <= i {
+                        noise.push((vec![0.0; gradient.len()], vec![0.0; gradient.len()], 0));
+                    }
+                    let (sums, squares, rounds) = &mut noise[i];
+                    for ((sum, square), g) in sums.iter_mut().zip(squares.iter_mut()).zip(&gradient) {
+                        *sum += g;
+                        *square += g * g;
+                    }
+                    *rounds += 1;
+                }
+                let rate = rate * cooled(round);
                 for p in &mut learner.network.params {
                     *p *= 1.0 - rate * ramp * decay;
                 }
@@ -4218,6 +6517,31 @@ mod tests {
                 if scale != 1.0 {
                     learner.network.scale_scores(scale);
                 }
+            }
+            if noise_on && watching && noise.first().is_some_and(|n| n.2 > 1) {
+                // For each learner, the mean slope's square, less what its
+                // noise adds to it, against the variance of one round's
+                // slope: summed over the weights, and over the weights each
+                // in units of its own noise.
+                let each: Vec<String> = noise
+                    .iter()
+                    .map(|(sums, squares, rounds)| {
+                        let r = *rounds as f64;
+                        let (mut signal, mut spread, mut whitened) = (0.0, 0.0, 0.0);
+                        for (sum, square) in sums.iter().zip(squares) {
+                            let mean = sum / r;
+                            let variance = (square / r - mean * mean) * r / (r - 1.0);
+                            let squared = mean * mean - variance / r;
+                            signal += squared;
+                            spread += variance;
+                            if variance > 0.0 {
+                                whitened += squared / variance;
+                            }
+                        }
+                        format!("{signal:.3e}/{spread:.3e} = {:.4}, whitened {whitened:.2}", signal / spread)
+                    })
+                    .collect();
+                println!("round {round}: over {} rounds, each learner's slope squared against the variance of a round's: {}", noise[0].2, each.join("; "));
             }
             for result in results {
                 for mut game in result.3 {
@@ -4324,6 +6648,16 @@ mod tests {
                         ", the likeliest cards lose {} tricks a play to the best played out",
                         lost.join(", ")
                     );
+                    if playouts.mirror {
+                        let paired: Vec<String> = playout_losses
+                            .iter()
+                            .map(|t| {
+                                let [a, b] = [0, 1].map(|k| t.paired_lost[k] / t.paired[k].max(1) as f64);
+                                format!("{a:.4} and {b:.4} ({})", t.paired[1])
+                            })
+                            .collect();
+                        print!(", of those also played out mirrored and of their twins {}", paired.join(", "));
+                    }
                     if learning == Learning::FreeEnergy {
                         let short: Vec<String> = playout_losses
                             .iter()
@@ -4486,7 +6820,7 @@ mod tests {
     fn make_play_model_file() {
         let shape = shape_of("PLAY_SHAPE");
         let read = |path: &str| {
-            let network = Network::read(path, shape.entries(), shape.layers);
+            let network = Network::read(path, shape.entries(), shape.layers, shape.heads.count());
             Model { shape, network }
         };
         let weights = read(&std::env::var("PLAY_WEIGHTS").expect("PLAY_WEIGHTS"));
@@ -4529,7 +6863,7 @@ mod tests {
                 .strip_suffix(".txt")
                 .and_then(|stem| SHAPES.iter().filter(|s| stem.ends_with(&format!("-{}", s.name))).max_by_key(|s| s.name.len()));
             let shape = named.copied().unwrap_or_else(|| shape_of("PLAY_SHAPE"));
-            Model { shape, network: Network::read(path, shape.entries(), shape.layers) }
+            Model { shape, network: Network::read(path, shape.entries(), shape.layers, shape.heads.count()) }
         }
     }
 
@@ -4966,7 +7300,7 @@ mod tests {
             };
             debug_assert!(loss == 0.0 || run_of(runs, best) != run_of(runs, played));
             for (sums, card) in sums.iter_mut().zip([played, best]) {
-                for entry in model.entries(&view, card) {
+                for entry in model.entries(&view, card).one {
                     let (count, sum, squares) = &mut sums[entry];
                     *count += 1;
                     *sum += loss;
@@ -5447,6 +7781,1005 @@ mod tests {
         time("playout (100 deals)", Box::new(move |g| player.play(g)));
     }
 
+    /// How long views and entries take with the players' beliefs and
+    /// without.
+    #[test]
+    #[ignore]
+    fn time_views_with_beliefs() {
+        let old = Model::new(&V2_TRUMPS, 3);
+        let new = old.grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let mut rng = StdRng::seed_from_u64(14);
+        let games: Vec<(GameState<()>, std::sync::Arc<Convention>)> = crate::ai::opening_lead::candidates::opening_leads(45, 30)
+            .iter()
+            .map(|game| {
+                let convention = game.system.convention();
+                let mut game = crate::ai::playout::copy_of(game);
+                let leader = game.turn().unwrap();
+                let legal: Vec<Card> = game.hands[leader].collect();
+                game.play(legal[0]);
+                for _ in 0..rng.gen_range(0..40) {
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                }
+                (game, convention)
+            })
+            .collect();
+        let time = |what: &str, f: &dyn Fn(&GameState<()>, &Convention) -> f64| {
+            let started = std::time::Instant::now();
+            let mut sum = 0.0;
+            let n = number("PLAY_TIME_REPEATS", 50) as u32;
+            for _ in 0..n {
+                for (game, convention) in &games {
+                    sum += f(game, convention);
+                }
+            }
+            println!("{what}: {:?} a view ({sum})", started.elapsed() / (n * games.len() as u32));
+        };
+        let scores = |model: &Model, game: &GameState<()>, convention: &Convention| -> f64 {
+            View::new(game, convention).map_or(0.0, |view| view.legal().map(|card| model.score(&view, card)).sum())
+        };
+        time("a view without beliefs", &|game, convention| View::new(game, convention).map_or(0.0, |v| v.mine.len() as f64));
+        time("scores without beliefs", &|game, convention| scores(&old, game, convention));
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        time("a view with beliefs", &|game, convention| View::new(game, convention).map_or(0.0, |v| v.mine.len() as f64));
+        time("scores of the old shape with beliefs", &|game, convention| scores(&old, game, convention));
+        time("scores of the new shape with beliefs", &|game, convention| scores(&new, game, convention));
+        let later2 = Model::new(&V2_TRUMPS_HISTORY_LATER2, 3);
+        let later3 = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        time("scores with Later2", &|game, convention| scores(&later2, game, convention));
+        time("scores with Later3", &|game, convention| scores(&later3, game, convention));
+        let knots = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap();
+        time("scores with Later3Knots", &|game, convention| scores(&knots, game, convention));
+        let suit_tricks = Model::new(shape_spec("Trick+SuitTricks/16"), 3);
+        time("scores with Trick+SuitTricks", &|game, convention| scores(&suit_tricks, game, convention));
+    }
+
+    /// A model grown into a shape of several heads scores every card as it
+    /// did, whichever head scores it, and the heads are chosen by the role:
+    /// every head scores some cards.
+    #[test]
+    fn a_model_given_heads_scores_as_it_did() {
+        let mut rng = StdRng::seed_from_u64(13);
+        let mut old = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
+        old.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
+        for shape in [&V2_TRUMPS_HISTORY_LATER2_SIDES, &V2_TRUMPS_HISTORY_LATER2_DEFENDERS, &V2_TRUMPS_HISTORY_LATER2_ROLES] {
+            let new = old.grown_to(shape).unwrap();
+            assert_eq!(new.network.params.len(), shape.size());
+            assert!(new.grown_to(shape).is_some() && new.grown_to(&V2_TRUMPS_HISTORY_LATER2).is_none());
+            let mut used = vec![0; shape.heads.count()];
+            for game in crate::ai::opening_lead::candidates::opening_leads(43, 4) {
+                let convention = game.system.convention();
+                let mut game = crate::ai::playout::copy_of(&game);
+                while !game.hand_done {
+                    if let Some(view) = View::new(&game, &convention) {
+                        for card in view.legal() {
+                            used[new.entries(&view, card).head] += 1;
+                            let (a, b) = (old.score(&view, card), new.score(&view, card));
+                            assert!((a - b).abs() < 1e-9, "{}: {a} against {b}", shape.name);
+                        }
+                    }
+                    let legal: Vec<Card> = game.could_be_played().collect();
+                    game.play(legal[rng.gen_range(0..legal.len())]);
+                }
+            }
+            assert!(used.iter().all(|&n| n > 0), "{}: {used:?}", shape.name);
+        }
+    }
+
+    #[test]
+    fn a_model_grown_to_read_beliefs_scores_as_it_did() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let old = Model::new(&V2_TRUMPS, 3);
+        let new = old.grown_to(&V2_TRUMPS_BELIEFS).unwrap();
+        let mut rng = StdRng::seed_from_u64(12);
+        let mut weighted = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(41, 20) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        let entries = new.entries(&view, card);
+                        let total: f64 = entries.weighted.iter().map(|w| w.1).sum();
+                        assert!((total - 2.0).abs() < 1e-9, "the chances of each table sum to {total}");
+                        weighted += entries.weighted.len();
+                        let (a, b) = (old.score(&view, card), new.score(&view, card));
+                        assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(weighted > 2000, "only {weighted} weighted entries");
+    }
+
+    #[test]
+    fn beliefs_mixed_with_the_truth_are_mixed_entry_by_entry() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let models = [
+            Model::new(&V2_TRUMPS, 3).grown_to(&V2_TRUMPS_BELIEFS).unwrap(),
+            Model::new(&V2_TRUMPS_HISTORY_LATER2, 3).grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap(),
+            Model::new(shape_spec("Trick+SuitTricks/16"), 3),
+        ];
+        let mut rng = StdRng::seed_from_u64(14);
+        let mut compared = 0;
+        // The chances of the weighted entries of `model` in the views of
+        // `game` with the beliefs `lambda` the truth, each table's summing
+        // to 1.
+        let chances = |model: &Model, game: &GameState<()>, convention: &Convention, lambda: f64| {
+            set_oracle(lambda);
+            let view = View::new(game, convention);
+            set_oracle(0.0);
+            let view = view?;
+            let tables =
+                model.shape.tables.iter().filter(|t| matches!(t, Table::AboveSplit | Table::BelowSplit | Table::Later3 | Table::SuitTricks | Table::Run | Table::RunOdds | Table::RunSure | Table::RunPlan)).count();
+            let mut chances = std::collections::BTreeMap::<(Card, usize), f64>::new();
+            for card in view.legal() {
+                let weighted = model.entries(&view, card).weighted;
+                let total: f64 = weighted.iter().map(|w| w.1).sum();
+                assert!((total - tables as f64).abs() < 1e-9, "the chances of {tables} tables sum to {total}");
+                for (entry, chance) in weighted {
+                    *chances.entry((card, entry)).or_default() += chance;
+                }
+            }
+            Some(chances)
+        };
+        for game in crate::ai::opening_lead::candidates::opening_leads(47, 12) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                for model in &models {
+                    let (Some(believed), Some(truth), Some(half)) = (
+                        chances(model, &game, &convention, 0.0),
+                        chances(model, &game, &convention, 1.0),
+                        chances(model, &game, &convention, 0.5),
+                    ) else {
+                        continue;
+                    };
+                    for (key, &chance) in &truth {
+                        assert_eq!(chance, 1.0, "the truth is one way the cards lie");
+                        assert!(believed.get(key).is_some_and(|&c| c > 0.0), "the beliefs rule out the truth");
+                    }
+                    for (key, &chance) in &half {
+                        let mixed = 0.5 * believed.get(key).copied().unwrap_or(0.0) + 0.5 * truth.get(key).copied().unwrap_or(0.0);
+                        assert!((chance - mixed).abs() < 1e-12, "{chance} against {mixed}");
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 2000, "only {compared} compared");
+    }
+
+    #[test]
+    fn a_suit_is_cashed_from_the_top() {
+        let bits = |ranks: &[u8]| ranks.iter().fold(0u16, |b, &r| b | 1 << r);
+        let (ours, opponents) = ([0, 2], [1, 3]);
+        // A K Q against small cards: three tricks.
+        let hands = [bits(&[14, 13, 12]), bits(&[5, 4, 3]), bits(&[2]), bits(&[9, 8])];
+        assert_eq!(cash(hands, ours, opponents, [false; 2]), 3);
+        // A Q against the king: one trick, then the king wins.
+        let hands = [bits(&[14, 12]), bits(&[13, 3]), bits(&[2]), bits(&[9, 8])];
+        assert_eq!(cash(hands, ours, opponents, [false; 2]), 1);
+        // A K J against a doubleton queen: the queen drops under the king,
+        // and the jack is the best card left.
+        let hands = [bits(&[14, 13, 11]), bits(&[12, 3]), bits(&[2, 4]), bits(&[9, 8, 7])];
+        assert_eq!(cash(hands, ours, opponents, [false; 2]), 3);
+        // A K Q with a void opponent who can ruff: nothing.
+        let hands = [bits(&[14, 13, 12]), 0, bits(&[2]), bits(&[9, 8])];
+        assert_eq!(cash(hands, ours, opponents, [true, false]), 0);
+        // Partner's long suit runs once the opponents are out of it, at most
+        // the most that is counted.
+        let hands = [bits(&[14]), bits(&[3]), bits(&[13, 12, 11, 10, 9, 8]), bits(&[2])];
+        assert_eq!(cash(hands, ours, opponents, [false; 2]), RUN_MOST);
+        // The run odds add up as independent parts do.
+        let a = [0.5, 0.5, 0.0, 0.0, 0.0];
+        assert_eq!(add_runs(&a, &a), [0.25, 0.5, 0.25, 0.0, 0.0]);
+        let b = [0.0, 0.0, 0.0, 1.0, 0.0];
+        assert_eq!(add_runs(&b, &b), [0.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_planned_suit_keeps_its_transport_and_ruffs() {
+        let bits = |ranks: &[u8]| ranks.iter().fold(0u16, |b, &r| b | 1 << r);
+        let (side, opponents) = ([0, 2], [1, 3]);
+        let state = |lead: u8, ours: [u8; 2], theirs: [u8; 2]| RunState { run: 0, lead, ours, ruffed: [0; 2], theirs };
+        // The ace alone opposite K Q J: cashed from the player's hand, the
+        // lead stays there and the suit is blocked after one trick, where
+        // cashing with no transport takes all of them.
+        let hands = [bits(&[14]), bits(&[5, 4, 3]), bits(&[13, 12, 11]), bits(&[9, 8, 7])];
+        assert_eq!(plan_step(hands, state(0, [0; 2], [0; 2]), side, opponents, false, false).run, 1);
+        assert_eq!(cash(hands, side, opponents, [false; 2]), 3);
+        // Small cards opposite a void with two trumps, the opponents holding
+        // the top cards: two ruffs, and then the lead is in the void hand.
+        let hands = [bits(&[5, 4, 3]), bits(&[14, 13]), 0, bits(&[12, 11, 2])];
+        let after = plan_step(hands, state(0, [0, 2], [0, 0]), side, opponents, false, true);
+        assert_eq!((after.run, after.lead, after.ours, after.ruffed), (1, 1, [0, 1], [0, 1]));
+        // ...the void hand on lead has none of the suit, so it stops after one;
+        // a hand on lead with the small cards ruffs again only by coming back.
+        // An opponent with none of the suit and a trump overruffs: no ruff.
+        let hands = [bits(&[5, 4, 3]), 0, 0, bits(&[12, 11, 2])];
+        assert_eq!(plan_step(hands, state(0, [0, 2], [3, 0]), side, opponents, false, true).run, 0);
+        // Cashing trumps draws the opponents': A K Q J against 3 2 and 5 4.
+        let hands = [bits(&[14, 13, 12, 11]), bits(&[3, 2]), bits(&[6]), bits(&[5, 4])];
+        let after = plan_step(hands, state(0, [4, 1], [2, 2]), side, opponents, true, true);
+        assert_eq!((after.run, after.theirs), (4, [0, 0]));
+    }
+
+    #[test]
+    fn the_run_odds_add_up_and_the_sure_run_is_the_least() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let mut rng = StdRng::seed_from_u64(21);
+        let mut checked = 0;
+        let mut runs = [0usize; RUN_MOST + 1];
+        for game in crate::ai::opening_lead::candidates::opening_leads(53, 16) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention).filter(|v| v.beliefs.is_some()) {
+                    for card in view.legal() {
+                        let (odds, sure) = view.run_odds(card);
+                        let total: f64 = odds.iter().sum();
+                        assert!((total - 1.0).abs() < 1e-9, "the odds sum to {total}");
+                        let planned: f64 = view.run_plan(card).iter().sum();
+                        assert!((planned - 1.0).abs() < 1e-9, "the planned odds sum to {planned}");
+                        let least = odds.iter().position(|&p| p > 1e-12).unwrap();
+                        assert_eq!(least, sure, "{odds:?}");
+                        runs[sure] += 1;
+                        checked += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(checked > 1000, "only {checked}");
+        // Some cards of every kind of run.
+        assert!(runs.iter().all(|&n| n > 0), "{runs:?}");
+    }
+
+    /// How often [`Table::RunOdds`]'s median run is [`Table::Run`]'s, and how
+    /// long each takes, over the views of random games.
+    #[test]
+    #[ignore]
+    fn compare_the_run_odds_with_the_run() {
+        let _ = LOCATIONS.set(match std::env::var("PLAY_SELF_LOCATIONS") {
+            Ok(path) => read_locations(&path),
+            Err(_) => (crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()),
+        });
+        let mut rng = StdRng::seed_from_u64(22);
+        let (mut same, mut within_one, mut cards) = (0, 0, 0);
+        let (mut plan_same, mut plan_within_one) = (0, 0);
+        let (mut odds_time, mut run_time, mut plan_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO, std::time::Duration::ZERO);
+        let median = |odds: [f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter()
+                .position(|&p| {
+                    sum += p;
+                    sum >= 0.5
+                })
+                .unwrap()
+        };
+        let mut table = [[0usize; RUN_MOST + 1]; RUN_MOST + 1];
+        for game in crate::ai::opening_lead::candidates::opening_leads(61, number("PLAY_GAMES", 40)) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                // Two views of each moment, so that each table works its own out.
+                if let (Some(a), Some(b)) = (View::new(&game, &convention), View::new(&game, &convention)) {
+                    if a.beliefs.is_some() {
+                        let started = std::time::Instant::now();
+                        let medians: Vec<usize> = a
+                            .legal()
+                            .map(|card| {
+                                let (odds, _) = a.run_odds(card);
+                                let mut sum = 0.0;
+                                odds.iter().position(|&p| {
+                                    sum += p;
+                                    sum >= 0.5
+                                })
+                                .unwrap()
+                            })
+                            .collect();
+                        odds_time += started.elapsed();
+                        let started = std::time::Instant::now();
+                        let theirs: Vec<usize> = b.legal().map(|card| b.run_median(card)).collect();
+                        run_time += started.elapsed();
+                        let started = std::time::Instant::now();
+                        let planned: Vec<usize> = a.legal().map(|card| median(a.run_plan(card))).collect();
+                        plan_time += started.elapsed();
+                        for ((&m, &r), &q) in medians.iter().zip(&theirs).zip(&planned) {
+                            same += usize::from(m == r);
+                            within_one += usize::from(m.abs_diff(r) <= 1);
+                            plan_same += usize::from(q == r);
+                            plan_within_one += usize::from(q.abs_diff(r) <= 1);
+                            table[r][m] += 1;
+                            cards += 1;
+                        }
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        println!(
+            "{cards} cards: the medians agree for {:.1}%, within one for {:.1}%; RunOdds {:?} a card, Run {:?} a card",
+            100.0 * same as f64 / cards as f64,
+            100.0 * within_one as f64 / cards as f64,
+            odds_time / cards as u32,
+            run_time / cards as u32
+        );
+        println!(
+            "RunPlan's medians agree with Run's for {:.1}%, within one for {:.1}%, at {:?} a card",
+            100.0 * plan_same as f64 / cards as f64,
+            100.0 * plan_within_one as f64 / cards as f64,
+            plan_time / cards as u32
+        );
+        println!("rows Run's median, columns RunOdds': {table:?}");
+    }
+
+    /// Whether [`View::run_splits`], the beliefs' chances of each card and
+    /// the deals that [`Table::Run`] makes agree on where each free card is.
+    #[test]
+    #[ignore]
+    fn the_splits_and_the_deals_put_the_cards_alike() {
+        let _ = LOCATIONS.set(match std::env::var("PLAY_SELF_LOCATIONS") {
+            Ok(path) => read_locations(&path),
+            Err(_) => (crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()),
+        });
+        let mut rng = StdRng::seed_from_u64(24);
+        let (mut worst_splits, mut worst_deals, mut views) = (0.0f64, 0.0f64, 0);
+        for game in crate::ai::opening_lead::candidates::opening_leads(61, 10) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention).filter(|v| v.beliefs.is_some()) {
+                    let seen = view.beliefs.as_ref().unwrap();
+                    let beliefs = seen.beliefs.as_ref().unwrap();
+                    let chances = beliefs.chances();
+                    let splits = view.run_splits(seen);
+                    let n = 400;
+                    let deals: Vec<Cards> = (0..n).map(|_| beliefs.deal(&mut rng)).collect();
+                    for c in seen.free {
+                        // The chance of the card in the player's first hidden hand, three ways.
+                        let by_chances = if seen.swapped { 1.0 - chances.card[crate::ai::locations::index(c)] } else { chances.card[crate::ai::locations::index(c)] };
+                        let suit = &splits[c.suit() as usize];
+                        let total: f64 = suit.iter().map(|s| s.1).sum();
+                        let by_splits = suit.iter().filter(|s| s.0[2] & 1 << c.rank() != 0).map(|s| s.1).sum::<f64>() / total;
+                        let by_deals = deals.iter().filter(|d| d.contains(c) != seen.swapped).count() as f64 / n as f64;
+                        let free_in_suit = seen.free.in_suit(c.suit()).len();
+                        if free_in_suit <= RUN_ODDS_MOST_FREE {
+                            worst_splits = worst_splits.max((by_splits - by_chances).abs());
+                        }
+                        worst_deals = worst_deals.max((by_deals - by_chances).abs());
+                        if (by_deals - by_chances).abs() > 0.15 || (free_in_suit <= RUN_ODDS_MOST_FREE && (by_splits - by_chances).abs() > 0.02) {
+                            println!("{c} (of {free_in_suit} free in its suit), swapped {}: chances {by_chances:.3}, splits {by_splits:.3}, deals {by_deals:.3}", seen.swapped);
+                        }
+                    }
+                    views += 1;
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        println!("{views} views: the splits differ from the chances by at most {worst_splits:.4}, the deals by at most {worst_deals:.4}");
+    }
+
+    /// Prints cards where the median of [`Table::RunPlan`] and that of
+    /// [`Table::Run`] differ, `PLAY_SHOW` (6) of each kind (RunPlan longer, Run
+    /// longer), at most one a game, with the hands (the hidden ones as they
+    /// truly are, which neither reads), Run's runs and RunPlan's and RunOdds'
+    /// chances, and how often each kind happens.
+    #[test]
+    #[ignore]
+    fn show_run_disagreements() {
+        let _ = LOCATIONS.set(match std::env::var("PLAY_SELF_LOCATIONS") {
+            Ok(path) => read_locations(&path),
+            Err(_) => (crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()),
+        });
+        let show = number("PLAY_SHOW", 6);
+        let mut rng = StdRng::seed_from_u64(23);
+        let (mut plan_longer, mut run_longer, mut cards) = (0, 0, 0);
+        let mut by_gap = [[0usize; RUN_MOST + 1]; 2];
+        let (mut shown_plan, mut shown_run) = (0, 0);
+        let median = |odds: &[f64; RUN_MOST + 1]| {
+            let mut sum = 0.0;
+            odds.iter()
+                .position(|&p| {
+                    sum += p;
+                    sum >= 0.5
+                })
+                .unwrap()
+        };
+        let odds_text = |odds: &[f64; RUN_MOST + 1]| odds.iter().map(|p| format!("{p:.2}")).collect::<Vec<_>>().join(" ");
+        for game in crate::ai::opening_lead::candidates::opening_leads(61, number("PLAY_GAMES", 40)) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            let mut shown_this_game = false;
+            while !game.hand_done {
+                if let (Some(a), Some(b)) = (View::new(&game, &convention), View::new(&game, &convention)) {
+                    if a.beliefs.is_some() {
+                        for card in a.legal() {
+                            let plan = a.run_plan(card);
+                            let runs = b.run_runs(card);
+                            let (p, r) = (median(&plan), runs[(runs.len() - 1) / 2].0);
+                            cards += 1;
+                            if p == r {
+                                continue;
+                            }
+                            let plan_is_longer = p > r;
+                            if plan_is_longer {
+                                plan_longer += 1;
+                            } else {
+                                run_longer += 1;
+                            }
+                            by_gap[usize::from(!plan_is_longer)][p.abs_diff(r)] += 1;
+                            let shown = if plan_is_longer { &mut shown_plan } else { &mut shown_run };
+                            if *shown >= show || shown_this_game {
+                                continue;
+                            }
+                            *shown += 1;
+                            shown_this_game = true;
+                            let seat = game.hand_playing().unwrap();
+                            let names = ["me", "LHO", "partner", "RHO"];
+                            let dummy = game.dummy().unwrap();
+                            println!(
+                                "\n{} wins: RunPlan {p}, Run {r}.  {} {:?}, the player is {} ({seat:?}), dummy {dummy:?}, tricks done {}, trick so far {:?}, plays {card}",
+                                if plan_is_longer { "RunPlan" } else { "Run" },
+                                game.highest_contract_bid().map_or("?".to_string(), |b| format!("{b:?}")),
+                                a.trump,
+                                ["declarer", "dummy", "defender (LHO of declarer)", "defender (RHO of declarer)"][a.role],
+                                game.tricks.len(),
+                                a.trick.iter().flatten().map(|c| c.to_string()).collect::<Vec<_>>(),
+                            );
+                            for (n, name) in names.iter().enumerate() {
+                                let s = seat + n;
+                                let hidden = n != 0 && s != dummy && !(seat == dummy && n == 2);
+                                println!("    {name:<8}{} {}", if hidden { "(hidden)" } else { "        " }, game.hands[s]);
+                            }
+                            let gave_up = runs.iter().filter(|r| r.1).count();
+                            println!(
+                                "    Run's runs: {:?}{}",
+                                runs.iter().map(|r| r.0).collect::<Vec<_>>(),
+                                if gave_up > 0 { format!(" ({gave_up} searches gave up)") } else { String::new() }
+                            );
+                            println!("    RunPlan's chances of 0..4+: {}", odds_text(&plan));
+                            println!("    RunOdds' chances of 0..4+: {}", odds_text(&a.run_odds(card).0));
+                        }
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        println!(
+            "\n{cards} cards: RunPlan longer for {plan_longer} ({:.1}%), Run longer for {run_longer} ({:.1}%)",
+            100.0 * plan_longer as f64 / cards as f64,
+            100.0 * run_longer as f64 / cards as f64
+        );
+        println!("by how much longer (1, 2, 3, 4): RunPlan {:?}, Run {:?}", &by_gap[0][1..], &by_gap[1][1..]);
+    }
+
+    #[test]
+    fn a_suit_played_out_alone_takes_its_tricks() {
+        let bits = |ranks: &[u8]| ranks.iter().fold(0u16, |b, &r| b | 1 << r);
+        // The player holds A Q, the king is on the right (hand 3), and
+        // partner (hand 2) leads through it: both tricks.  Led from the
+        // player's hand, the queen loses to the king.
+        let hands = [bits(&[14, 12]), bits(&[6, 5]), bits(&[4, 3]), bits(&[13, 2])];
+        assert_eq!(SuitSolver::default().tricks(hands, 2, 0, [0; 4]), 2);
+        assert_eq!(SuitSolver::default().tricks(hands, 0, 0, [0; 4]), 1);
+        // With the king on the left, partner's lead does not help.
+        let hands = [bits(&[14, 12]), bits(&[13, 2]), bits(&[4, 3]), bits(&[6, 5])];
+        assert_eq!(SuitSolver::default().tricks(hands, 2, 0, [0; 4]), 1);
+        // A K Q J opposite nothing take four however the rest lie.
+        let hands = [bits(&[14, 13, 12, 11]), bits(&[10, 9, 8]), 0, bits(&[7, 6, 5, 4])];
+        assert_eq!(SuitSolver::default().tricks(hands, 0, 0, [0; 4]), 4);
+        // Opponents' A K Q opposite our J 10 9 8 7: two tricks, the last two.
+        let hands = [bits(&[11, 10, 9, 8, 7]), bits(&[14, 13, 12]), bits(&[2]), bits(&[3, 4])];
+        assert_eq!(SuitSolver::default().tricks(hands, 0, 0, [0; 4]), 2);
+        // In the middle of a trick: the right has played the king to the
+        // player's lead of the 2 from partner's hand, and the player can
+        // take it with the ace, but then the 3 loses to the 6.
+        let hands = [bits(&[14, 3]), bits(&[5]), bits(&[4]), bits(&[6])];
+        assert_eq!(SuitSolver::default().tricks(hands, 2, 2, [0, 0, 2, 13]), 1);
+    }
+
+    #[test]
+    fn the_hats_add_up_to_the_chance() {
+        for i in 0..=100 {
+            let p = i as f64 / 100.0;
+            let sum: f64 = hats(p).iter().zip(KNOTS).map(|(h, k)| h * k).sum();
+            assert!((sum - p).abs() < 1e-12, "{p}: {sum}");
+        }
+    }
+
+    #[test]
+    fn a_model_grown_to_later3_knots_scores_as_it_did() {
+        let _ = LOCATIONS.set((crate::ai::locations::Prior::walls(10.0), crate::ai::locations::Evidence::none()));
+        let mut rng = StdRng::seed_from_u64(16);
+        let mut later2 = Model::new(&V2_TRUMPS_HISTORY_LATER2, 5);
+        later2.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.5..0.5));
+        let later3 = later2.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        let knots = [later2.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap(), later3.grown_to(&V2_TRUMPS_HISTORY_LATER3_KNOTS).unwrap()];
+        let mut compared = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(49, 10) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        let a = later3.score(&view, card);
+                        for model in &knots {
+                            let b = model.score(&view, card);
+                            assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                        }
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 1000, "only {compared}");
+    }
+
+    #[test]
+    fn a_model_without_tables_scores_without_them() {
+        let mut rng = StdRng::seed_from_u64(18);
+        let mut full = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
+        full.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
+        assert!(full.grown_to(&V2_LEAN).is_none(), "growing never drops a table");
+        let lean = full.reshaped_to(&V2_LEAN).unwrap();
+        let dropped = [Table::Below, Table::FirstPoints, Table::SecondPoints];
+        let mut compared = 0;
+        for game in crate::ai::opening_lead::candidates::opening_leads(55, 6) {
+            let convention = game.system.convention();
+            let mut game = crate::ai::playout::copy_of(&game);
+            while !game.hand_done {
+                if let Some(view) = View::new(&game, &convention) {
+                    for card in view.legal() {
+                        // The full model's score with the dropped tables' entries left out.
+                        let entries = full.entries(&view, card);
+                        let kept: Vec<usize> = entries.one.iter().copied().filter(|&e| !dropped_entry(&full, e, &dropped)).collect();
+                        let a = full.network.score(&kept);
+                        let b = lean.score(&view, card);
+                        assert!((a - b).abs() < 1e-9, "{a} against {b}");
+                        compared += 1;
+                    }
+                }
+                let legal: Vec<Card> = game.could_be_played().collect();
+                game.play(legal[rng.gen_range(0..legal.len())]);
+            }
+        }
+        assert!(compared > 300, "only {compared}");
+    }
+
+    /// Whether `entry` of the model's tables laid end to end is in one of `dropped`.
+    fn dropped_entry(model: &Model, entry: usize, dropped: &[Table]) -> bool {
+        let mut start = 0;
+        for &table in model.shape.tables {
+            if entry < start + table.size() {
+                return dropped.contains(&table);
+            }
+            start += table.size();
+        }
+        false
+    }
+
+    #[test]
+    fn a_model_grown_from_later2_to_later3_keeps_its_weights() {
+        let old = Model::new(&V2_TRUMPS_HISTORY_LATER2, 5);
+        let mut old = old;
+        let mut rng = StdRng::seed_from_u64(15);
+        old.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-1.0..1.0));
+        let new = old.grown_to(&V2_TRUMPS_HISTORY_LATER3).unwrap();
+        assert_eq!(old.network.params, new.network.params, "the same tables and entries, so the same weights");
+    }
+
+    /// The prior and the evidence of the players' beliefs in the file at
+    /// `path`: the prior's weights and then the evidence's, one a line, as
+    /// `learn_card_locations` writes them (see [`Evidence::from_weights`]).
+    ///
+    /// [`Evidence::from_weights`]: crate::ai::locations::Evidence::from_weights
+    fn read_locations(path: &str) -> (crate::ai::locations::Prior, crate::ai::locations::Evidence) {
+        let weights: Vec<f64> = std::fs::read_to_string(path).unwrap().lines().map(|l| l.parse().expect("a weight")).collect();
+        let mut prior = crate::ai::locations::Prior::none();
+        let (a, b) = weights.split_at(prior.weights.len());
+        prior.weights.copy_from_slice(a);
+        (prior, crate::ai::locations::Evidence::from_weights(b))
+    }
+
+    /// A tracker's beliefs after a play, what the play added to them if it
+    /// showed something, the first hidden hand then, the tricks done before
+    /// the play, and whether the tracker is a defender's.
+    type Tracked = (crate::ai::locations::Beliefs, Option<crate::ai::locations::Update>, Cards, usize, bool);
+
+    /// A tracker's beliefs before the opening lead, the entries of the prior
+    /// they started from, and the first and second hidden hands.
+    type Started = (crate::ai::locations::Beliefs, crate::ai::locations::Opening, Cards, Cards);
+
+    /// The beliefs of the declarer and both defenders before the opening
+    /// lead, from `prior`, and after each play, with
+    /// `evidence`, in `json` played out by `model` at every seat (each card
+    /// the one it scores highest, the opening lead by
+    /// `likely_opening_leads`), with what each update added, the first
+    /// hidden hand as it then was, and the tricks done before the play.
+    fn tracked_beliefs(
+        json: &str,
+        convention: &Convention,
+        model: &Model,
+        prior: &crate::ai::locations::Prior,
+        evidence: &crate::ai::locations::Evidence,
+    ) -> (Vec<Started>, Vec<Tracked>) {
+        use crate::ai::locations::Tracker;
+        use crate::ai::opening_lead::{likely_opening_leads, Auction};
+        let mut game: GameState<()> = serde_json::from_str(json).unwrap();
+        let Some(dummy) = game.dummy() else {
+            return (Vec::new(), Vec::new());
+        };
+        let declarer = dummy + 2;
+        let mut trackers: Vec<Tracker> =
+            [declarer, declarer + 1, declarer + 3].iter().filter_map(|&viewer| Tracker::new(&game, viewer)).collect();
+        // `PLAY_LOC_POINTS` 0 leaves the hands' points out of the beliefs.
+        let points = std::env::var("PLAY_LOC_POINTS").map_or(true, |v| v != "0");
+        let started: Vec<Started> = trackers
+            .iter_mut()
+            .map(|tracker| {
+                tracker.beliefs.points = points;
+                let opening = tracker.start(&game, convention, prior);
+                (tracker.beliefs.clone(), opening, game.hands[tracker.first], game.hands[tracker.second])
+            })
+            .collect();
+        let mut seen = Vec::new();
+        while !game.hand_done {
+            let card = if game.tricks.is_empty() && game.played.is_empty() {
+                let leader = game.turn().unwrap();
+                likely_opening_leads(&Auction::new(&game).unwrap(), game.hands[leader])[0]
+            } else {
+                model_card(model, &game, convention)
+            };
+            let done = game.tricks.len();
+            let updates: Vec<_> = trackers.iter_mut().map(|t| t.observe(&game, card, evidence)).collect();
+            game.play(card);
+            // The declarer's tracker comes first, and then the defenders'.
+            for (i, (tracker, update)) in trackers.iter().zip(updates).enumerate() {
+                if !tracker.beliefs.unseen.is_empty() {
+                    seen.push((tracker.beliefs.clone(), update, game.hands[tracker.first], done, i > 0));
+                }
+            }
+        }
+        (started, seen)
+    }
+
+    /// Learns what the auction shows of the hidden hands and what their
+    /// plays show (see [`crate::ai::locations::Tracker`]) by log loss on
+    /// the true deal, from games of the play model `PLAY_MODEL` (see
+    /// [`read_model`]) at every seat: `PLAY_LOC_ROUNDS` (200) rounds of
+    /// `PLAY_LOC_GAMES` (128) fresh deals, each giving the beliefs of each
+    /// player before the opening lead to the prior and `PLAY_LOC_EXAMPLES`
+    /// (8) of its plays at random to the evidence, with a step of Adam of
+    /// size `PLAY_LOC_RATE` (0.01) a round for each, the beliefs before each
+    /// play taken as they are, with no slope through them.  The prior starts
+    /// as `PLAY_LOC_PRIOR` (walls, or none): walls make each length and
+    /// number of points outside what the calls showed cost `PLAY_LOC_WALL`
+    /// (10).  Every `PLAY_LOC_REPORT` (20) rounds it prints the log loss a
+    /// play on `PLAY_LOC_HELD` (200) other deals, before the opening lead
+    /// and by the tricks done, against vacant places and the walls (each
+    /// with the exact bookkeeping and no evidence), how often a hand is
+    /// outside what its calls showed, and the calibration of the cards'
+    /// chances.  It writes the prior's and the evidence's weights to
+    /// `PLAY_LOC_OUT` if that is set, and uses `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn learn_card_locations() {
+        use crate::ai::locations::{Evidence, Prior};
+        let model = read_model(&std::env::var("PLAY_MODEL").expect("PLAY_MODEL"));
+        let rounds = number("PLAY_LOC_ROUNDS", 200);
+        let games = number("PLAY_LOC_GAMES", 128);
+        let examples = number("PLAY_LOC_EXAMPLES", 8);
+        let float = |name: &str, default: f64| -> f64 { std::env::var(name).map_or(default, |v| v.parse().expect(name)) };
+        let rate = float("PLAY_LOC_RATE", 0.01);
+        let wall = float("PLAY_LOC_WALL", 10.0);
+        let report = number("PLAY_LOC_REPORT", 20);
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        let deals = |seed: u64, count: usize| -> Vec<String> {
+            crate::ai::opening_lead::candidates::opening_leads(seed, count)
+                .iter()
+                .map(|game| serde_json::to_string(game).unwrap())
+                .collect()
+        };
+        let held = deals(77, number("PLAY_LOC_HELD", 200));
+        let convention_of = |json: &str| serde_json::from_str::<GameState<()>>(json).unwrap().system.convention();
+        // Before the opening lead, then by the tricks done.
+        let stage = |done: usize| match done {
+            0 => 1,
+            1..=4 => 2,
+            5..=8 => 3,
+            _ => 4,
+        };
+        // For the declarer's beliefs and the defenders', the log likelihood
+        // summed and the beliefs by stage, the hands outside what their calls
+        // showed, and with `calibrate`, for each tenth of the chances, the
+        // chances and the cards there summed and their number.
+        type Judged = ([[(f64, usize); 5]; 2], usize, [(f64, f64, usize); 10]);
+        let judge = |prior: &Prior, evidence: &Evidence, calibrate: bool| -> Judged {
+            let results: Vec<Judged> = workers.install(|| {
+                held.par_iter()
+                    .map(|json| {
+                        let mut by_stage = [[(0.0, 0); 5]; 2];
+                        let mut outside = 0;
+                        let mut bins = [(0.0, 0.0, 0); 10];
+                        let (started, seen) = tracked_beliefs(json, &convention_of(json), &model, prior, evidence);
+                        for (i, (beliefs, opening, first, second)) in started.iter().enumerate() {
+                            let s = &mut by_stage[usize::from(i > 0)][0];
+                            s.0 += beliefs.log_likelihood(*first);
+                            s.1 += 1;
+                            outside += usize::from(opening.outside(*first, *second));
+                        }
+                        for (i, (beliefs, _, first, done, defender)) in seen.iter().enumerate() {
+                            let s = &mut by_stage[usize::from(*defender)][stage(*done)];
+                            s.0 += beliefs.log_likelihood(*first);
+                            s.1 += 1;
+                            if calibrate && i % 4 == 0 {
+                                let chances = beliefs.chances();
+                                for card in beliefs.unseen - beliefs.in_first - beliefs.in_second {
+                                    let p = chances.card[crate::ai::locations::index(card)];
+                                    let bin = &mut bins[((p * 10.0) as usize).min(9)];
+                                    bin.0 += p;
+                                    bin.1 += f64::from(u8::from(first.contains(card)));
+                                    bin.2 += 1;
+                                }
+                            }
+                        }
+                        (by_stage, outside, bins)
+                    })
+                    .collect()
+            });
+            let mut total: Judged = ([[(0.0, 0); 5]; 2], 0, [(0.0, 0.0, 0); 10]);
+            for (s, o, b) in results {
+                for (sum, part) in total.0.iter_mut().flatten().zip(s.iter().flatten()) {
+                    sum.0 += part.0;
+                    sum.1 += part.1;
+                }
+                total.1 += o;
+                for (sum, part) in total.2.iter_mut().zip(b) {
+                    sum.0 += part.0;
+                    sum.1 += part.1;
+                    sum.2 += part.2;
+                }
+            }
+            total
+        };
+        // For each kind of player, the nats lost a play, from the opening
+        // lead on, and by stage.
+        let show = |kinds: &[[(f64, usize); 5]; 2]| -> String {
+            let one = |stages: &[(f64, usize); 5]| -> String {
+                let total: f64 = stages[1..].iter().map(|s| s.0).sum();
+                let count: usize = stages[1..].iter().map(|s| s.1).sum();
+                let each: Vec<String> = stages.iter().map(|s| format!("{:.4}", -s.0 / s.1.max(1) as f64)).collect();
+                format!("{:.4} ({})", -total / count.max(1) as f64, each.join(", "))
+            };
+            format!(
+                "declarer {}, defenders {} a play (before the lead, then by tricks done 0, 1–4, 5–8, 9–12)",
+                one(&kinds[0]),
+                one(&kinds[1])
+            )
+        };
+        let (vacant, _, _) = judge(&Prior::none(), &Evidence::none(), false);
+        let walls = Prior::walls(wall);
+        let (walled, outside, _) = judge(&walls, &Evidence::none(), false);
+        println!("vacant places lose {} nats", show(&vacant));
+        println!(
+            "the walls at {wall} lose {} nats, with {outside} of the {} players' views having a hidden hand outside what its calls showed",
+            show(&walled),
+            walled[0][0].1 + walled[1][0].1
+        );
+        if let Ok(path) = std::env::var("PLAY_LOC_BEFORE") {
+            let (prior, evidence) = read_locations(&path);
+            let (before, _, _) = judge(&prior, &evidence, false);
+            println!("the beliefs of {path} lose {} nats", show(&before));
+        }
+        let mut prior = match std::env::var("PLAY_LOC_PRIOR").as_deref() {
+            Ok("none") => Prior::none(),
+            _ => walls.clone(),
+        };
+        let mut evidence = Evidence::none();
+        let mut prior_adam = fitting::Adam::new(prior.weights.len());
+        let mut evidence_adam = fitting::Adam::new(evidence.weights.len());
+        let started = std::time::Instant::now();
+        for round in 1..=rounds {
+            let dealt = deals(1000 + round as u64, games);
+            let parts: Vec<(Vec<f64>, usize, Vec<f64>, usize)> = workers.install(|| {
+                dealt
+                    .par_iter()
+                    .enumerate()
+                    .map(|(g, json)| {
+                        let mut rng = StdRng::seed_from_u64(round as u64 * 100_003 + g as u64);
+                        let (begun, seen) = tracked_beliefs(json, &convention_of(json), &model, &prior, &evidence);
+                        let mut prior_slope = vec![0.0; prior.weights.len()];
+                        for (beliefs, opening, first, _) in &begun {
+                            opening.add_slope(beliefs, *first, &mut prior_slope);
+                        }
+                        let mut slope = vec![0.0; evidence.weights.len()];
+                        let updated: Vec<_> = seen.iter().filter_map(|(b, u, f, _, _)| Some((b, u.as_ref()?, f))).collect();
+                        let chosen = examples.min(updated.len());
+                        for i in rand::seq::index::sample(&mut rng, updated.len(), chosen) {
+                            let (beliefs, update, first) = updated[i];
+                            update.add_slope(beliefs, *first, &mut slope);
+                        }
+                        (prior_slope, begun.len(), slope, chosen)
+                    })
+                    .collect()
+            });
+            let mean = |slopes: Vec<(&Vec<f64>, usize)>, len: usize| -> Vec<f64> {
+                let count: usize = slopes.iter().map(|s| s.1).sum();
+                let mut gradient = vec![0.0; len];
+                for (slope, _) in slopes {
+                    for (g, s) in gradient.iter_mut().zip(slope) {
+                        *g += s / count.max(1) as f64;
+                    }
+                }
+                gradient
+            };
+            let prior_gradient = mean(parts.iter().map(|p| (&p.0, p.1)).collect(), prior.weights.len());
+            let gradient = mean(parts.iter().map(|p| (&p.2, p.3)).collect(), evidence.weights.len());
+            prior_adam.step(&mut prior.weights, &prior_gradient, rate);
+            evidence_adam.step(&mut evidence.weights, &gradient, rate);
+            if round % report == 0 || round == rounds {
+                let (learned, _, bins) = judge(&prior, &evidence, true);
+                let calibration: Vec<String> = bins
+                    .iter()
+                    .filter(|b| b.2 > 0)
+                    .map(|b| format!("{:.3}/{:.3} ({})", b.0 / b.2 as f64, b.1 / b.2 as f64, b.2))
+                    .collect();
+                let (blind, _, _) = judge(&prior, &evidence.without_the_dummy(), false);
+                println!(
+                    "round {round} at {:.0} s: the beliefs lose {} nats, and {} with the dummy's plays showing nothing; predicted/observed {}",
+                    started.elapsed().as_secs_f64(),
+                    show(&learned),
+                    show(&blind),
+                    calibration.join(", ")
+                );
+                if let Ok(path) = std::env::var("PLAY_LOC_OUT") {
+                    let text: Vec<String> = prior.weights.iter().chain(&evidence.weights).map(|w| w.to_string()).collect();
+                    std::fs::write(&path, text.join("\n") + "\n").unwrap();
+                }
+            }
+        }
+    }
+
+    /// The snapshots of learner `learner` in the directory `directory` from
+    /// round `from` to `to`, with their rounds and paths, and their average.
+    fn averaged(directory: &str, learner: usize, from: usize, to: usize) -> (Vec<(usize, String)>, Vec<Model>, Model) {
+        let mut paths: Vec<(usize, String)> = std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path().to_str()?.to_string();
+                let name = path.rsplit('/').next()?;
+                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
+                let round: usize = digits.parse().ok()?;
+                let rest = name.strip_prefix(&format!("round-{digits}-learner-{learner}-"))?;
+                (rest.ends_with(".txt") && (from..=to).contains(&round)).then_some((round, path))
+            })
+            .collect();
+        paths.sort();
+        assert!(!paths.is_empty(), "no snapshots of learner {learner} in {directory} from round {from} to {to}");
+        let snapshots: Vec<Model> = paths.iter().map(|(_, path)| read_model(path)).collect();
+        let mut average = snapshots[0].clone();
+        for (j, p) in average.network.params.iter_mut().enumerate() {
+            *p = snapshots.iter().map(|s| s.network.params[j]).sum::<f64>() / snapshots.len() as f64;
+        }
+        (paths, snapshots, average)
+    }
+
+    /// Plays arms of play models against the model of `PLAY_SELF_REFERENCE`
+    /// in two-table matches on `PLAY_MATCH_DEALS` (6000) deals that the robot
+    /// bid (the tournament's, from seed 17), the same deals for every model,
+    /// and compares the arms with the first, deal by deal.  `PLAY_MATCH_ARMS`
+    /// lists the arms, separated by `;`, each a name, `=`, and its models
+    /// separated by `,`: a model file or snapshot (see [`read_model`]), or
+    /// `DIRECTORY@LEARNER@FROM@TO` for the average of a learner's snapshots
+    /// (see [`averaged`]).  An arm's result on a deal is the mean of its
+    /// models'.  Each deal is split into what the arm's side took as the
+    /// declarer's side, at the table where it declares, and as the defence
+    /// at the other, each against the reference, so that the difference of
+    /// two arms is reported by who played (declarer or defence) and by the
+    /// contract (suit or notrump), with standard errors deal by deal.  It
+    /// uses `PLAY_THREADS` (1) threads.
+    #[test]
+    #[ignore]
+    fn match_arms_by_group() {
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let _ = LOCATIONS.set(read_locations(&path));
+        }
+        let reference = read_model(&std::env::var("PLAY_SELF_REFERENCE").expect("PLAY_SELF_REFERENCE"));
+        let arms: Vec<(String, Vec<Model>)> = std::env::var("PLAY_MATCH_ARMS")
+            .expect("PLAY_MATCH_ARMS")
+            .split(';')
+            .map(|arm| {
+                let (name, models) = arm.split_once('=').expect("an arm's name and =");
+                let models = models
+                    .split(',')
+                    .map(|spec| match spec.trim().split('@').collect::<Vec<_>>()[..] {
+                        [directory, learner, from, to] => {
+                            averaged(directory, learner.parse().unwrap(), from.parse().unwrap(), to.parse().unwrap()).2
+                        }
+                        _ => read_model(spec.trim()),
+                    })
+                    .collect();
+                (name.trim().to_string(), models)
+            })
+            .collect();
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(17, number("PLAY_MATCH_DEALS", 6000))
+            .iter()
+            .map(|game| serde_json::to_string(game).unwrap())
+            .collect();
+        // Each deal's contract (suit 0 or notrump 1), and the side that declares.
+        let kinds: Vec<(usize, usize)> = deals
+            .iter()
+            .map(|json| {
+                let game: GameState<()> = serde_json::from_str(json).unwrap();
+                let notrump = game.bids.iter().rev().find(|b| matches!(b, Bid::Suit(..) | Bid::NT(_))).is_some_and(|b| matches!(b, Bid::NT(_)));
+                (usize::from(notrump), game.find_declarer().unwrap() as usize % 2)
+            })
+            .collect();
+        let workers = rayon::ThreadPoolBuilder::new().num_threads(number("PLAY_THREADS", 1)).build().unwrap();
+        // For each arm and deal, the tricks of its side as declarer and as
+        // the defence, each its models' mean.
+        let results: Vec<Vec<[f64; 2]>> = arms
+            .iter()
+            .map(|(_, models)| {
+                workers.install(|| {
+                    deals
+                        .par_iter()
+                        .zip(&kinds)
+                        .map(|(json, &(_, declarer))| {
+                            let game: GameState<()> = serde_json::from_str(json).unwrap();
+                            let convention = game.system.convention();
+                            let mut sum = [0.0; 2];
+                            for model in models {
+                                for (part, side) in [declarer, 1 - declarer].into_iter().enumerate() {
+                                    let ns = play_at_a_table(json, &convention, model, side, Some(&reference)) as f64;
+                                    sum[part] += if side == 0 { ns } else { 13.0 - ns };
+                                }
+                            }
+                            sum.map(|s| s / models.len() as f64)
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        let mean_and_error = |values: &[f64]| {
+            let n = values.len() as f64;
+            let mean = values.iter().sum::<f64>() / n;
+            (mean, (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt())
+        };
+        let names = ["declarer, suit", "declarer, notrump", "defence, suit", "defence, notrump"];
+        for (a, (name, models)) in arms.iter().enumerate() {
+            let gains: Vec<f64> = results[a].iter().map(|[d, e]| d + e - 13.0).collect();
+            let (mean, error) = mean_and_error(&gains);
+            print!("{name} ({} models): {mean:+.4} ({error:.4}) tricks a deal against the reference", models.len());
+            if a == 0 {
+                println!();
+                continue;
+            }
+            let more: Vec<f64> = results[a].iter().zip(&results[0]).map(|(x, y)| x[0] + x[1] - y[0] - y[1]).collect();
+            let (mean, error) = mean_and_error(&more);
+            println!(", {mean:+.4} ({error:.4}) more than {}", arms[0].0);
+            for (g, group) in names.iter().enumerate() {
+                let (part, kind) = (g / 2, g % 2);
+                let at: Vec<f64> =
+                    (0..deals.len()).filter(|&i| kinds[i].0 == kind).map(|i| results[a][i][part] - results[0][i][part]).collect();
+                let (mean, error) = mean_and_error(&at);
+                println!("    {group:<17} {:>5} deals: {mean:+.4} ({error:.4}) tricks a deal of the kind", at.len());
+            }
+        }
+    }
+
     /// Averages the weights of learner `PLAY_LEARNER` (1) over its snapshots
     /// in the directory `PLAY_SELF_SNAPSHOTS` from round `PLAY_FROM` to
     /// `PLAY_TO`, and plays the average, and each of those snapshots, against
@@ -5462,26 +8795,15 @@ mod tests {
     #[ignore]
     fn averaged_snapshots() {
         let directory = std::env::var("PLAY_SELF_SNAPSHOTS").expect("PLAY_SELF_SNAPSHOTS");
+        // The players' beliefs, for learners of the shapes that read them.
+        if let Ok(path) = std::env::var("PLAY_SELF_LOCATIONS") {
+            let _ = LOCATIONS.set(read_locations(&path));
+        }
+        // How much the beliefs are the truth, as the learner learned with.
+        set_oracle(std::env::var("PLAY_SELF_ORACLE").map_or(0.0, |v| v.parse().expect("PLAY_SELF_ORACLE")));
         let learner = number("PLAY_LEARNER", 1);
         let (from, to) = (number("PLAY_FROM", 0), number("PLAY_TO", usize::MAX));
-        let mut paths: Vec<(usize, String)> = std::fs::read_dir(&directory)
-            .unwrap()
-            .filter_map(|entry| {
-                let path = entry.unwrap().path().to_str()?.to_string();
-                let name = path.rsplit('/').next()?;
-                let digits: String = name.strip_prefix("round-")?.chars().take_while(char::is_ascii_digit).collect();
-                let round: usize = digits.parse().ok()?;
-                let rest = name.strip_prefix(&format!("round-{digits}-learner-{learner}-"))?;
-                (rest.ends_with(".txt") && (from..=to).contains(&round)).then_some((round, path))
-            })
-            .collect();
-        paths.sort();
-        assert!(!paths.is_empty(), "no snapshots of learner {learner} from round {from} to {to}");
-        let snapshots: Vec<Model> = paths.iter().map(|(_, path)| read_model(path)).collect();
-        let mut average = snapshots[0].clone();
-        for (j, p) in average.network.params.iter_mut().enumerate() {
-            *p = snapshots.iter().map(|s| s.network.params[j]).sum::<f64>() / snapshots.len() as f64;
-        }
+        let (paths, snapshots, average) = averaged(&directory, learner, from, to);
         if let Ok(path) = std::env::var("PLAY_AVERAGE") {
             average.network.write(&path);
         }

@@ -228,6 +228,13 @@ pub struct GameState<C> {
     /// The bidding system the robots play and the bid descriptions explain.
     #[serde(default)]
     pub system: BiddingSystem,
+
+    /// For each seat, the seat whose calls describe the hand it holds, when
+    /// the hands have been moved since the auction, as training's mirrored
+    /// games move the defenders'; `None` when every seat holds the hand it
+    /// bid with.  Only the play model reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hands_called_by: Option<Seated<Seat>>,
 }
 
 /// No cards at any seat.
@@ -272,7 +279,18 @@ impl<C> GameState<C> {
             tricks: Vec::new(),
             last_action: Some(std::time::Instant::now()),
             system: BiddingSystem::default(),
+            hands_called_by: None,
         }
+    }
+
+    /// The seat whose calls describe the hand that `seat` holds.
+    pub fn hand_called_by(&self, seat: Seat) -> Seat {
+        self.hands_called_by.map_or(seat, |callers| callers[seat])
+    }
+
+    /// The seat that holds the hand that the calls of `caller` describe.
+    pub fn hand_of_caller(&self, caller: Seat) -> Seat {
+        (0..4).map(Seat::from).find(|&seat| self.hand_called_by(seat) == caller).unwrap_or(caller)
     }
 
     /// Switch to another bidding system.  Players should do this only before
