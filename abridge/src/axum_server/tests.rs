@@ -1,6 +1,6 @@
 use super::*;
 use crate::{close_idle_tables, WsSender, CLOSED_FOR_INACTIVITY};
-use bridge_deck::{Cards, Suit};
+use bridge_deck::{Card, Cards, Suit};
 use futures::{SinkExt, StreamExt};
 use robot::{Action, Bid, GameState};
 use std::future::IntoFuture;
@@ -415,24 +415,117 @@ async fn only_legal_bids_count() {
     assert_eq!(4, game.read().await.bids.len());
 }
 
+/// The number of the question that `message`, the table as the robot sees it,
+/// asks the robot.
+fn question(message: tungstenite::Message) -> u64 {
+    let table: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+    table["robot_asked"]
+        .as_u64()
+        .expect("a question has a number")
+}
+
+/// Sends the robot's answer to the question numbered `asked`, as its tab does.
+async fn answer(robot: &mut Client, asked: u64, action: &Action) {
+    let answer = serde_json::json!({ "asked": asked, "action": action });
+    robot
+        .send(tungstenite::Message::text(answer.to_string()))
+        .await
+        .unwrap();
+}
+
+/// Connects a robot tab at `t`, and returns it with the number of the first
+/// question it is asked, which comes at once when a seat nobody is at is to
+/// call or play.
+async fn robot_tab(addr: SocketAddr) -> (Client, u64) {
+    let (mut robot, _) = tokio_tungstenite::connect_async(ws_url(addr, "t/south/robot/ws"))
+        .await
+        .unwrap();
+    let asked = question(recv(&mut robot).await);
+    (robot, asked)
+}
+
 #[tokio::test]
 async fn the_robot_acts_only_for_seats_nobody_is_at() {
     let (addr, app) = serve().await;
     let game = Arc::clone(&app.tables.entry("t".to_string()));
-    let mut robot = connect(addr, "t/south/robot/ws").await;
+    let (mut robot, asked) = robot_tab(addr).await;
     let mut south = connect(addr, "t/south/ws").await;
 
     // South is here, so the robot can't bid for South.
-    send(&mut robot, &Action::Bid(Seat::South, Bid::Pass)).await;
+    answer(&mut robot, asked, &Action::Bid(Seat::South, Bid::Pass)).await;
     recv(&mut south).await;
     assert!(game.read().await.bids.is_empty());
 
     // Nobody is at West, so the robot bids for West.
     send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
     recv(&mut south).await;
-    send(&mut robot, &Action::Bid(Seat::West, Bid::Pass)).await;
+    let asked = question(recv(&mut robot).await);
+    answer(&mut robot, asked, &Action::Bid(Seat::West, Bid::Pass)).await;
     recv(&mut south).await;
     assert_eq!(vec![Bid::Pass, Bid::Pass], game.read().await.bids);
+}
+
+/// South declares 1NT, and North, dummy, led the ♠3 to a trick to which East
+/// played the ♠4 and South the ♠5.  West, the robot's, plays last, and wins
+/// with either the ♠A or the ♠K.
+async fn west_to_play_last(game: &RwLock<GameState<WsSender>>) {
+    let mut g = game.write().await;
+    g.bids = vec![Bid::NT(1), Bid::Pass, Bid::Pass, Bid::Pass];
+    g.hands = ["H 4 D 4 C 4", "S AK H 5 D 5", "H 2 D 2 C 2", "H 3 D 3 C 3"]
+        .map(|hand| hand.parse().unwrap())
+        .into();
+    g.lead = Some(Seat::North);
+    g.played = vec![Card::S3, Card::S4, Card::S5];
+}
+
+#[tokio::test]
+async fn the_robot_answers_only_the_latest_question() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let (mut robot, _) = robot_tab(addr).await;
+    let mut south = connect(addr, "t/south/ws").await;
+    west_to_play_last(&game).await;
+
+    // South does something twice while it is West's turn, and each time the
+    // robot is asked again what West plays.
+    send(&mut south, &Action::ToggleCountForMe).await;
+    let first = question(recv(&mut robot).await);
+    send(&mut south, &Action::ToggleCountForMe).await;
+    let second = question(recv(&mut robot).await);
+    // Its tab answers each question, with one winning spade and then the
+    // other.  Only the answer to the latest question is West's play.
+    answer(&mut robot, first, &Action::Play(Seat::West, Card::SK)).await;
+    answer(&mut robot, second, &Action::Play(Seat::West, Card::SA)).await;
+    // West won the trick, and the robot is asked what West leads to the next.
+    // The other spade, chosen to win the last trick, is not the lead.
+    let lead = question(recv(&mut robot).await);
+    answer(&mut robot, lead, &Action::Play(Seat::West, Card::H5)).await;
+    assert!(
+        eventually(&game, |g| g.played == [Card::H5]).await,
+        "West led {:?}",
+        game.read().await.played
+    );
+    assert!(game.read().await.hands[Seat::West].contains(Card::SK));
+}
+
+#[tokio::test]
+async fn the_robot_bids_in_a_new_deal_only_for_the_new_hand() {
+    let (addr, app) = serve().await;
+    let game = Arc::clone(&app.tables.entry("t".to_string()));
+    let mut south = connect(addr, "t/south/ws").await;
+    send(&mut south, &Action::Bid(Seat::South, Bid::Pass)).await;
+    recv(&mut south).await;
+    // The robot is asked what West bids, and while it thinks South redeals.
+    // West deals the new hand, so the robot is asked again.
+    let (mut robot, old_hand) = robot_tab(addr).await;
+    send(&mut south, &Action::Redeal).await;
+    let new_hand = question(recv(&mut robot).await);
+    // The bid it chose with West's old hand is not West's opening bid.
+    let opening = Action::Bid(Seat::West, Bid::Suit(1, Suit::Clubs));
+    answer(&mut robot, old_hand, &opening).await;
+    answer(&mut robot, new_hand, &Action::Bid(Seat::West, Bid::Pass)).await;
+    assert!(eventually(&game, |g| !g.bids.is_empty()).await);
+    assert_eq!(vec![Bid::Pass], game.read().await.bids);
 }
 
 #[tokio::test]
