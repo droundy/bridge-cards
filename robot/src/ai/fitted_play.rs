@@ -567,6 +567,11 @@ pub(crate) const V2_BIG: Shape = Shape {
     tables: v2_tables_and!(Table::Later, Table::Trumps, Table::History, Table::Later2),
     layers: &[64, 32, 16],
 };
+/// [`V2_BIG`] with a head for the declarer and one for the defence (see
+/// [`Heads`]).
+pub(crate) const V2_BIG_SIDES: Shape = Shape { name: "v2-big-sides", heads: Heads::Sides, ..V2_BIG };
+/// [`V2_BIG`] with a head for the declarer and one for each defender.
+pub(crate) const V2_BIG_DEFENDERS: Shape = Shape { name: "v2-big-defenders", heads: Heads::Defenders, ..V2_BIG };
 /// [`V2_TRUMPS_HISTORY`] and [`Table::Later`].
 pub(crate) const V2_LATER_TRUMPS_HISTORY: Shape =
     v2_and("v2-later-trumps-history", v2_tables_and!(Table::Later, Table::Trumps, Table::History));
@@ -845,6 +850,8 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_LATER_TRUMPS_HISTORY,
     &V2_TRUMPS_HISTORY_DEEP,
     &V2_BIG,
+    &V2_BIG_SIDES,
+    &V2_BIG_DEFENDERS,
     &V2_TRUMPS_HISTORY_LATER2,
     &V2_TRUMPS_HISTORY_LATER2_SIDES,
     &V2_TRUMPS_HISTORY_LATER2_DEFENDERS,
@@ -4411,6 +4418,55 @@ mod tests {
             let (mean, error) = stats(&|r| r[x] - r[y]);
             println!("{name}: {mean:+.3} ({error:.3})");
         }
+    }
+
+    /// Writes the play model file `PLAY_START_OUT` for an arm of a test of
+    /// heads: the file `PLAY_CHECKPOINT` (of one head, as a run writes it),
+    /// with each learner's weights replaced by the averages in the files
+    /// `PLAY_AVERAGES`/round-L-learner-1-SHAPE.txt (L from 1, SHAPE the name of
+    /// the checkpoint's shape), grown into the shape `PLAY_START_SHAPE` (the
+    /// same shape, or that with more heads) by copies, and the state of Adam
+    /// of each learner grown by copies in the same way, so that a run that
+    /// resumes from it takes the same steps as the unsplit run would and
+    /// plays exactly as the averages do.  The scales go beside it, as
+    /// `.scales`, as they are beside the checkpoint.
+    #[test]
+    #[ignore]
+    fn make_heads_start() {
+        let checkpoint = std::env::var("PLAY_CHECKPOINT").expect("PLAY_CHECKPOINT");
+        let averages = std::env::var("PLAY_AVERAGES").expect("PLAY_AVERAGES");
+        let out = std::env::var("PLAY_START_OUT").expect("PLAY_START_OUT");
+        let target = Shape::named(&std::env::var("PLAY_START_SHAPE").expect("PLAY_START_SHAPE")).expect("a shape");
+        let mut file = model_file::ModelFile::read(&checkpoint);
+        for (l, learner) in file.learners.iter_mut().enumerate() {
+            let old = learner.model.shape;
+            assert_eq!(old.heads, Heads::One, "the checkpoint's learners have one head");
+            assert_eq!(old.tables.len(), target.tables.len(), "the same tables");
+            let path = format!("{averages}/round-{}-learner-1-{}.txt", l + 1, old.name);
+            let average = Network::read(&path, old.entries(), old.layers, 1);
+            let heads = target.heads.count();
+            // The weights every head shares: the entries' and the first layer's.
+            let shared = old.entries() * (1 + old.layers[0]) + old.layers[0];
+            let grow = |params: &[f64]| -> Vec<f64> {
+                let mut grown = params[..shared].to_vec();
+                for _ in 0..heads {
+                    grown.extend_from_slice(&params[shared..]);
+                }
+                grown
+            };
+            let weights = grow(&average.params);
+            assert_eq!(weights.len(), target.size());
+            learner.model = Model::with_params(target, weights);
+            if let Some(adam) = &learner.adam {
+                let (first, second, steps) = adam.parts();
+                learner.adam = Some(fitting::Adam::from_parts(grow(first), grow(second), steps));
+            }
+        }
+        file.write(&out);
+        if let Ok(scales) = std::fs::read(format!("{checkpoint}.scales")) {
+            std::fs::write(format!("{out}.scales"), scales).unwrap();
+        }
+        println!("wrote {out}: {} learners of the shape {} at round {}", file.learners.len(), target.name, file.round);
     }
 
     /// Writes a corpus of situations of the play valued by playouts, in the
