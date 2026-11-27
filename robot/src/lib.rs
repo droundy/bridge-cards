@@ -211,6 +211,12 @@ pub struct GameState<C> {
 
     #[serde(skip)]
     pub last_action: Option<std::time::Instant>,
+    /// How many times the server has asked the robot what to do at this
+    /// table.  The robot sends the number back with its answer, so that the
+    /// server can ignore an answer to an earlier question: the same position
+    /// asked about again, or the deal before a redeal.
+    #[serde(default)]
+    pub robot_asked: u64,
 
     /// The bidding system the robots play and the bid descriptions explain.
     #[serde(default)]
@@ -266,6 +272,7 @@ impl<C> GameState<C> {
             ew_tricks: 0,
             shown_out: no_cards(),
             last_action: Some(std::time::Instant::now()),
+            robot_asked: 0,
             system: BiddingSystem::default(),
             conventions,
         }
@@ -357,6 +364,9 @@ impl<C> GameState<C> {
         let count_for_me = self.count_for_me;
         let system = self.system;
         let conventions = std::mem::take(&mut self.conventions);
+        // The questions keep counting, so that an answer about the old deal
+        // is not taken for one about the new.
+        let robot_asked = self.robot_asked;
         *self = Self {
             names,
             dealer,
@@ -364,6 +374,7 @@ impl<C> GameState<C> {
             ai,
             count_for_me,
             system,
+            robot_asked,
             ..GameState::with_conventions(conventions)
         }
     }

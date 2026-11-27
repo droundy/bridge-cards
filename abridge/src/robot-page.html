@@ -25,6 +25,9 @@
             console.log('connected');
         };
         ws.onmessage = async function (event) {
+            // The number of the question, which goes back with the answer, so
+            // that the server can ignore answers to questions it asked before.
+            const asked = JSON.parse(event.data).robot_asked;
             document.getElementById('main').innerHTML = "Thinking...";
             const min_play_time = 1000; // Ensure each play takes at least this many ms
             const time_to_load = 100; // Time to wait before using the CPU so that the player UI doesn't get bogged down.
@@ -39,7 +42,7 @@
             }
 
             document.getElementById('main').innerHTML = action;
-            ws.send(action);
+            ws.send(JSON.stringify({ asked: asked, action: JSON.parse(action) }));
         };
         ws.onclose = function (event) {
             console.log('disconnected');

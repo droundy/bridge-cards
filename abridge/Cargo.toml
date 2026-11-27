@@ -11,6 +11,7 @@ edition = "2021"
 bridge-deck = { version = "0.1.1", path = "..", features = ["display-as"] }
 robot = { version = "0.1.0", path = "../robot" }
 
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 percent-encoding = "2.3.0"
 rand = "0.8.0"

@@ -150,6 +150,23 @@ impl<'a> DisplayAs<HTML> for IsMe<PlayerName> {}
 
 type WsSender = mpsc::UnboundedSender<Message>;
 
+/// What a robot tab sends: its action, and the number of the question it
+/// answers (see `GameState::robot_asked`).
+#[derive(serde::Deserialize)]
+struct RobotAnswer {
+    asked: u64,
+    action: Action,
+}
+
+/// An action read from a websocket, with the number of the question it
+/// answers if a robot tab sent it.
+fn read_action(myseat: Option<Seat>, text: &str) -> serde_json::Result<(Option<u64>, Action)> {
+    match myseat {
+        Some(_) => serde_json::from_str(text).map(|action| (None, action)),
+        None => serde_json::from_str(text).map(|a: RobotAnswer| (Some(a.asked), a.action)),
+    }
+}
+
 /// Names as robots the seats the robot plays: every seat nobody is
 /// connected to, while a robot tab is, including one whose page was loaded
 /// but never connected.  Returns whether any name changed.
@@ -196,7 +213,7 @@ async fn ws_connected(
         }
         g.touch();
         name_robot_seats(&mut g);
-        send_player_updates(&g);
+        send_player_updates(&mut g);
         println!("sending table update: {:?}", table_updates.send(()).is_ok());
     }
     tokio::task::spawn(async move {
@@ -226,13 +243,26 @@ async fn ws_connected(
             // Pings, which axum answers itself, and whatever else.
             _ => continue,
         };
-        match serde_json::from_str::<Action>(text.as_str()) {
+        match read_action(myseat, text.as_str()) {
             Err(e) => {
                 eprintln!("Bad JSON: {:?}", e);
             }
-            Ok(action) => {
-                println!("Doing {:?}", action);
+            Ok((asked, action)) => {
                 let mut g = game.write().await;
+                // The robot's tab answers every question it is asked, so an
+                // answer to an earlier one is about a position that has
+                // passed, or comes again for the same one.  Played anyway, a
+                // card chosen to follow could become a lead, or a bid chosen
+                // for the last deal's hand an opening bid.  It is ignored,
+                // and asks nothing new.
+                if let Some(asked) = asked.filter(|&asked| asked != g.robot_asked) {
+                    println!(
+                        "Ignoring the robot's answer to question {asked}, since {} is the latest",
+                        g.robot_asked
+                    );
+                    continue;
+                }
+                println!("Doing {:?}", action);
                 match action {
                     Action::ToggleCountForMe => {
                         if let Some(myseat) = myseat {
@@ -288,7 +318,7 @@ async fn ws_connected(
                 if name_robot_seats(&mut g) {
                     println!("sending table update: {:?}", table_updates.send(()).is_ok());
                 }
-                send_player_updates(&g);
+                send_player_updates(&mut g);
             }
         }
     }
@@ -322,7 +352,7 @@ async fn ws_connected(
         }
     }
     println!("sending table update: {:?}", table_updates.send(()).is_ok());
-    send_player_updates(&g);
+    send_player_updates(&mut g);
 }
 
 /// Whether the connection for `myseat` (`None` for the robot) may act for
@@ -335,7 +365,9 @@ fn may_act_for(g: &GameState<WsSender>, myseat: Option<Seat>, seat: Seat) -> boo
     }
 }
 
-fn send_player_updates(g: &GameState<WsSender>) {
+/// Sends each player their page, and when a seat nobody is at is to act,
+/// asks the robot what to do, as a new question.
+fn send_player_updates(g: &mut GameState<WsSender>) {
     for seat in [Seat::North, Seat::South, Seat::East, Seat::West] {
         if let Some(s) = &g.connections[seat] {
             let pp = Player { seat, game: g };
@@ -343,12 +375,12 @@ fn send_player_updates(g: &GameState<WsSender>) {
             s.send(Message::Text(msg.into_string().into())).ok();
         }
     }
-    if let Some(seat) = g.turn() {
-        if g.connections[seat].is_none() {
-            if let Some(s) = &g.ai {
-                s.send(Message::Text(serde_json::to_string(g).unwrap().into()))
-                    .ok();
-            }
+    let robot_turn = g.turn().is_some_and(|seat| g.connections[seat].is_none());
+    if robot_turn && g.ai.is_some() {
+        g.robot_asked += 1;
+        let question = serde_json::to_string(&*g).unwrap();
+        if let Some(s) = &g.ai {
+            s.send(Message::Text(question.into())).ok();
         }
     }
 }
