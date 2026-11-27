@@ -27,34 +27,18 @@ pub enum Action {
 #[with_template(r#" onclick="send_message('"# serde_json::to_string(self).unwrap() r#"')""#)]
 impl DisplayAs<HTML> for Action {}
 
+/// The order of calls: pass, double and redouble, and then the contracts
+/// from 1♣ up to 7NT, by level and, at each level, from clubs up to notrump.
+/// A contract may follow only those below it.
+impl Ord for Bid {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order().cmp(&other.order())
+    }
+}
+
 impl PartialOrd for Bid {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use Bid::*;
-        if let Some(self_l) = self.level() {
-            if let Some(other_l) = other.level() {
-                if self == other {
-                    return Some(std::cmp::Ordering::Equal);
-                } else if self_l != other_l {
-                    return self_l.partial_cmp(&other_l);
-                } else if let NT(_) = self {
-                    return Some(std::cmp::Ordering::Greater);
-                } else if let NT(_) = other {
-                    return Some(std::cmp::Ordering::Less);
-                } else if let (Suit(_, me), Suit(_, them)) = (*self, *other) {
-                    return me.partial_cmp(&them);
-                }
-            }
-        }
-        if self == other {
-            return Some(std::cmp::Ordering::Equal);
-        }
-        if *self == Pass || other.is_contract() || *self == Redouble {
-            return Some(std::cmp::Ordering::Greater);
-        }
-        if *other == Pass || self.is_contract() || *other == Redouble {
-            return Some(std::cmp::Ordering::Less);
-        }
-        None
+        Some(self.cmp(other))
     }
 }
 
@@ -98,6 +82,36 @@ fn bid_comparisons() {
     assert!(Bid::NT(1).is_contract());
     assert_eq!(Some(1), Bid::NT(1).level());
     assert_eq!(Some(3), Bid::NT(3).level());
+}
+
+/// The calls that can be made are in the order of their `index`, and every
+/// call has one place in the order, even a contract that cannot be made.
+#[test]
+fn calls_are_in_one_order() {
+    use bridge_deck::Suit::*;
+    use Bid::*;
+    let calls: Vec<Bid> = (0..Bid::CALLS).map(Bid::from_index).collect();
+    assert_eq!([Pass, Double, Redouble, Suit(1, Clubs)], calls[..4]);
+    assert_eq!([Suit(1, Spades), NT(1), Suit(2, Clubs)], calls[6..9]);
+    assert_eq!(Some(&NT(7)), calls.last());
+    for (i, &call) in calls.iter().enumerate() {
+        assert_eq!(i, call.index());
+    }
+    assert!(calls.windows(2).all(|pair| pair[0] < pair[1]));
+    let mut odd = [NT(8), Suit(0, Clubs), Pass, NT(0), Suit(8, Clubs), NT(7)];
+    odd.sort();
+    assert_eq!(
+        [Pass, Suit(0, Clubs), NT(0), NT(7), Suit(8, Clubs), NT(8)],
+        odd
+    );
+    let all = [&calls[..], &odd[..]].concat();
+    for a in &all {
+        for b in &all {
+            assert_eq!(a == b, a.cmp(b).is_eq(), "{a:?} and {b:?}");
+            assert_eq!(a.cmp(b), b.cmp(a).reverse(), "{a:?} and {b:?}");
+            assert_eq!(Some(a.cmp(b)), a.partial_cmp(b), "{a:?} and {b:?}");
+        }
+    }
 }
 
 #[test]
@@ -165,6 +179,52 @@ impl Bid {
             (Bid::Suit(_, me), Bid::Suit(_, she)) => me == she,
             (Bid::NT(_), Bid::NT(_)) => true,
             _ => false,
+        }
+    }
+
+    /// How many calls can be made: pass, double, redouble and the 35
+    /// contracts.
+    pub(crate) const CALLS: usize = 38;
+
+    /// The call's level, which a pass, a double and a redouble do not have,
+    /// and its place among the calls of the same level: 0, 1 and 2 for a
+    /// pass, a double and a redouble, and for a contract from 0 in clubs up
+    /// to 4 in notrump.  Calls are ordered by these, which gives a place even
+    /// to a contract below one or above seven, though it cannot be made.
+    fn order(self) -> (Option<usize>, usize) {
+        let place = match self {
+            Bid::Pass => 0,
+            Bid::Double => 1,
+            Bid::Redouble => 2,
+            Bid::Suit(_, suit) => suit as usize,
+            Bid::NT(_) => 4,
+        };
+        (self.level(), place)
+    }
+
+    /// Where the call comes among the calls that can be made, in order, from
+    /// 0 for a pass up to 37 for 7NT, so that a set of calls can be a bit
+    /// for each.  A contract below one or above seven has no place.
+    pub(crate) fn index(self) -> usize {
+        match self.order() {
+            (None, place) => place,
+            (Some(level), place) => 3 + 5 * (level - 1) + place,
+        }
+    }
+
+    /// The call whose `index` is `index`, which is less than `Bid::CALLS`.
+    pub(crate) fn from_index(index: usize) -> Bid {
+        match index {
+            0 => Bid::Pass,
+            1 => Bid::Double,
+            2 => Bid::Redouble,
+            _ => {
+                let level = (index - 3) / 5 + 1;
+                match (index - 3) % 5 {
+                    4 => Bid::NT(level),
+                    suit => Bid::Suit(level, bridge_deck::Suit::ALL[suit]),
+                }
+            }
         }
     }
 }

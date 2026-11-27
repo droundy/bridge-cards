@@ -20,54 +20,21 @@
 //!   groups, which make a pattern with and without them.
 
 use crate::Bid;
-use bridge_deck::Suit;
 
-/// How many different calls there are: P, X, XX and the 35 contracts.
-const CALLS: u32 = 38;
-
-/// A set of calls.
+/// A set of calls, with a bit for each at its `Bid::index`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallSet(u64);
 
 impl CallSet {
-    /// The place of `bid` among all the calls, in the order that `all_bids`
-    /// lists them.
-    fn index(bid: Bid) -> u32 {
-        match bid {
-            Bid::Pass => 0,
-            Bid::Double => 1,
-            Bid::Redouble => 2,
-            Bid::Suit(level, suit) => {
-                let suit = Suit::ALL.iter().position(|&s| s == suit).unwrap() as u32;
-                3 + (level as u32 - 1) * 5 + suit
-            }
-            Bid::NT(level) => 3 + (level as u32 - 1) * 5 + 4,
-        }
-    }
-    /// The call at place `index`.
-    fn call(index: u32) -> Bid {
-        match index {
-            0 => Bid::Pass,
-            1 => Bid::Double,
-            2 => Bid::Redouble,
-            i => {
-                let level = (i - 3) / 5 + 1;
-                match (i - 3) % 5 {
-                    4 => Bid::NT(level as usize),
-                    suit => Bid::Suit(level as usize, Suit::ALL[suit as usize]),
-                }
-            }
-        }
-    }
     /// The calls in the set, from lowest to highest.
     fn members(self) -> impl Iterator<Item = Bid> {
-        (0..CALLS)
+        (0..Bid::CALLS)
             .filter(move |i| self.0 & (1 << i) != 0)
-            .map(Self::call)
+            .map(Bid::from_index)
     }
     /// Is `bid` one of the calls?
     pub fn contains(self, bid: Bid) -> bool {
-        self.0 & (1 << Self::index(bid)) != 0
+        self.0 & (1 << bid.index()) != 0
     }
     /// The call that this set is the only member of, if it is.
     fn only(self) -> Option<Bid> {
@@ -83,8 +50,8 @@ impl CallSet {
 fn call_texts() -> &'static [Vec<char>] {
     static TEXTS: std::sync::OnceLock<Vec<Vec<char>>> = std::sync::OnceLock::new();
     TEXTS.get_or_init(|| {
-        (0..CALLS)
-            .map(|i| text(CallSet::call(i)).chars().collect())
+        (0..Bid::CALLS)
+            .map(|i| text(Bid::from_index(i)).chars().collect())
             .collect()
     })
 }
@@ -503,16 +470,6 @@ mod tests {
 
     fn matches(notation: &str, bids: &[Bid]) -> bool {
         auctions(notation).matches(bids)
-    }
-
-    #[test]
-    fn calls_are_in_the_order_of_all_bids() {
-        let all = all_bids();
-        assert_eq!(CALLS as usize, all.len());
-        for (i, &bid) in all.iter().enumerate() {
-            assert_eq!(i as u32, CallSet::index(bid));
-            assert_eq!(bid, CallSet::call(i as u32));
-        }
     }
 
     #[test]

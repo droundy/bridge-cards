@@ -60,6 +60,7 @@
 //! a major.  (Splinters are not part of SAYC.)  Auctions the tables do not
 //! mention fall back on the natural bids shared with the other conventions.
 use super::{Auctions, Convention, Fit, Forcing, ShapeRule, StrongTwo};
+use crate::Bid;
 use bridge_deck::{HandValuation, Suit};
 use display_as::{format_as, HTML};
 use ShapeRule::{AtLeastAsLong, Balanced, Longer};
@@ -1561,8 +1562,8 @@ fn call(level: usize, strain: Option<Suit>) -> String {
 
 /// Is the bid at `level` in `strain` higher than `than`?
 fn above(level: usize, strain: Option<Suit>, than: &Shown) -> bool {
-    let rank = |strain: Option<Suit>| strain.map_or(4, |s| s as usize);
-    (level, rank(strain)) > (than.level, rank(than.strain))
+    let bid = |level, strain: Option<Suit>| strain.map_or(Bid::NT(level), |s| Bid::Suit(level, s));
+    bid(level, strain) > bid(than.level, than.strain)
 }
 
 /// Opener's rebids after `1{opening} P {level}{response} P`, as

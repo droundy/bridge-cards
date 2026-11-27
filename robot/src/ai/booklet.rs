@@ -24,7 +24,7 @@ mod page;
 mod walk;
 
 use page::Page;
-use walk::{rank, walk, Meanings, Node, Openings, Stage};
+use walk::{walk, Meanings, Node, Openings, Stage};
 
 /// A chapter of the booklet: the bidding after some opening bids.
 struct Part {
@@ -137,10 +137,10 @@ fn naturals(table: &Convention) -> Vec<Natural> {
         }
     }
     for natural in naturals.iter_mut() {
-        natural.bids.sort_by_key(|&bid| rank(bid));
+        natural.bids.sort();
         natural.bids.dedup();
     }
-    naturals.sort_by_key(|n| rank(n.bids[0]));
+    naturals.sort_by_key(|n| n.bids[0]);
     naturals
 }
 

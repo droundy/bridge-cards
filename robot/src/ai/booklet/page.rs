@@ -2,7 +2,7 @@
 //! calls that mean the same and show the same hand.
 
 use super::notation::{merged, pattern, written, Filling, Line, Slot, SEAT};
-use super::walk::{followed_by, from_opening, rank, Meanings, Node, Stage};
+use super::walk::{followed_by, from_opening, Meanings, Node, Stage};
 use crate::ai::advice::Feature;
 use crate::ai::{legal_bids, Forcing};
 use crate::Bid;
@@ -288,8 +288,8 @@ impl Page {
             .into_values()
             .map(|calls| {
                 let place = |call: &&Call| {
-                    let ranks: Vec<usize> = call.calls.iter().map(|&bid| rank(bid)).collect();
-                    (call.slots.len(), call.slots.clone(), ranks, call.entry)
+                    let auction = call.calls.clone();
+                    (call.slots.len(), call.slots.clone(), auction, call.entry)
                 };
                 let first = calls.iter().map(place).min();
                 (first, Row::new(meanings, &calls, &all))
