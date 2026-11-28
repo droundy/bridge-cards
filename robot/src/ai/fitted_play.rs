@@ -434,6 +434,8 @@ pub(crate) enum Heads {
     Defenders,
     /// One for each role.
     Roles,
+    /// One for the defence at notrump, and one for everything else.
+    DefenceAtNotrump,
 }
 
 impl Heads {
@@ -444,16 +446,18 @@ impl Heads {
             Heads::Sides => 2,
             Heads::Defenders => 3,
             Heads::Roles => 4,
+            Heads::DefenceAtNotrump => 2,
         }
     }
 
     /// The head for a player of `role` (see [`Table`]).
-    pub(crate) fn head(self, role: usize) -> usize {
+    pub(crate) fn head(self, role: usize, notrump: bool) -> usize {
         match self {
             Heads::One => 0,
             Heads::Sides => usize::from(role >= 2),
             Heads::Defenders => role.saturating_sub(1),
             Heads::Roles => role,
+            Heads::DefenceAtNotrump => usize::from(role >= 2 && notrump),
         }
     }
 }
@@ -586,6 +590,10 @@ pub(crate) const V2_TRUMPS_HISTORY_LATER2_DEFENDERS: Shape =
 /// [`V2_TRUMPS_HISTORY_LATER2`] with a head for each role.
 pub(crate) const V2_TRUMPS_HISTORY_LATER2_ROLES: Shape =
     Shape { name: "v2-trumps-history-later2-roles", heads: Heads::Roles, ..V2_TRUMPS_HISTORY_LATER2 };
+/// [`V2_TRUMPS_HISTORY_LATER2`] with a head of its own for the defence at
+/// notrump.
+pub(crate) const V2_TRUMPS_HISTORY_LATER2_DEFENCE_NT: Shape =
+    Shape { name: "v2-trumps-history-later2-defence-nt", heads: Heads::DefenceAtNotrump, ..V2_TRUMPS_HISTORY_LATER2 };
 
 /// [`V2_TRUMPS`] reading the player's beliefs about where the hidden cards
 /// lie: [`Table::AboveSplit`] and [`Table::BelowSplit`] in place of
@@ -849,6 +857,7 @@ pub(crate) const SHAPES: &[&Shape] = &[
     &V2_TRUMPS_HISTORY_LATER2_SIDES,
     &V2_TRUMPS_HISTORY_LATER2_DEFENDERS,
     &V2_TRUMPS_HISTORY_LATER2_ROLES,
+    &V2_TRUMPS_HISTORY_LATER2_DEFENCE_NT,
     &V2_TRUMPS_BELIEFS,
     &V2_TRUMPS_HISTORY_LATER3,
     &V2_TRUMPS_HISTORY_LATER3_KNOTS,
@@ -2879,7 +2888,7 @@ impl View {
             }
             offset += table.size();
         }
-        Entries { one, weighted, head: shape.heads.head(self.role) }
+        Entries { one, weighted, head: shape.heads.head(self.role, self.trump.is_none()) }
     }
 }
 
@@ -7602,12 +7611,17 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(13);
         let mut old = Model::new(&V2_TRUMPS_HISTORY_LATER2, 4);
         old.network.params.iter_mut().for_each(|p| *p = rng.gen_range(-0.3..0.3));
-        for shape in [&V2_TRUMPS_HISTORY_LATER2_SIDES, &V2_TRUMPS_HISTORY_LATER2_DEFENDERS, &V2_TRUMPS_HISTORY_LATER2_ROLES] {
+        for shape in [
+            &V2_TRUMPS_HISTORY_LATER2_SIDES,
+            &V2_TRUMPS_HISTORY_LATER2_DEFENDERS,
+            &V2_TRUMPS_HISTORY_LATER2_ROLES,
+            &V2_TRUMPS_HISTORY_LATER2_DEFENCE_NT,
+        ] {
             let new = old.grown_to(shape).unwrap();
             assert_eq!(new.network.params.len(), shape.size());
             assert!(new.grown_to(shape).is_some() && new.grown_to(&V2_TRUMPS_HISTORY_LATER2).is_none());
             let mut used = vec![0; shape.heads.count()];
-            for game in crate::ai::opening_lead::candidates::opening_leads(43, 4) {
+            for game in crate::ai::opening_lead::candidates::opening_leads(43, 12) {
                 let convention = game.system.convention();
                 let mut game = crate::ai::playout::copy_of(&game);
                 while !game.hand_done {
@@ -8438,7 +8452,8 @@ mod tests {
 
     /// Plays arms of play models against the model of `PLAY_SELF_REFERENCE`
     /// in two-table matches on `PLAY_MATCH_DEALS` (6000) deals that the robot
-    /// bid (the tournament's, from seed 17), the same deals for every model,
+    /// bid (the tournament's, from seed 17, or `PLAY_MATCH_SEED`), the same
+    /// deals for every model,
     /// and compares the arms with the first, deal by deal.  `PLAY_MATCH_ARMS`
     /// lists the arms, separated by `;`, each a name, `=`, and its models
     /// separated by `,`: a model file or snapshot (see [`read_model`]), or
@@ -8474,7 +8489,7 @@ mod tests {
                 (name.trim().to_string(), models)
             })
             .collect();
-        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(17, number("PLAY_MATCH_DEALS", 6000))
+        let deals: Vec<String> = crate::ai::opening_lead::candidates::opening_leads(number("PLAY_MATCH_SEED", 17) as u64, number("PLAY_MATCH_DEALS", 6000))
             .iter()
             .map(|game| serde_json::to_string(game).unwrap())
             .collect();
