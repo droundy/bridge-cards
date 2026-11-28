@@ -611,6 +611,7 @@ pub(crate) mod candidates {
     /// The lead that the weights `notrump` or `suit` score highest, among the
     /// leads that the conventions allow if `constrained`, or among all the
     /// cards of the hand if not.
+    #[cfg(test)]
     pub(crate) fn lead_by(auction: &Auction, hand: Cards, constrained: bool, notrump: &[f64; FEATURES.len()], suit: &[f64; FEATURES.len()]) -> Card {
         let weights = if auction.trump.is_some() { suit } else { notrump };
         let allowed: Cards = hand.filter(|&card| !constrained || lead_allowed(auction, hand, card)).fold(Cards::EMPTY, Cards::insert);
@@ -621,12 +622,14 @@ pub(crate) mod candidates {
     }
 
     /// The weights of the code, for notrump and suit contracts.
+    #[cfg(test)]
     pub(crate) fn current_weights() -> ([f64; FEATURES.len()], [f64; FEATURES.len()]) {
         (NOTRUMP_WEIGHTS, SUIT_WEIGHTS)
     }
 
     /// The weights of [`FEATURES`] against notrump before the lead
     /// conventions, which the unconstrained leads of a match start from.
+    #[cfg(test)]
     pub(crate) const OLD_NOTRUMP_WEIGHTS: [f64; FEATURES.len()] = [
         2.766, -0.064, -0.437, 1.541, -2.635, -1.428, 2.199, 1.598, 1.272, -0.317, 0.000, 2.710, -1.624,
         -2.589, 2.499, 1.484, -1.498, -1.330, -0.571, 0.302, 2.631, 3.948, 0.072, 0.018, 0.000, 0.039,
