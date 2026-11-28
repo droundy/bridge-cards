@@ -8975,4 +8975,185 @@ mod tests {
             spread / n.sqrt(),
         );
     }
+
+    /// The calls of `auction`, separated by spaces: `P`, `X`, `XX`, `1C`, `3N`.
+    fn calls(auction: &str) -> Vec<Bid> {
+        auction
+            .split_whitespace()
+            .map(|b| match b {
+                "P" => Bid::Pass,
+                "X" => Bid::Double,
+                "XX" => Bid::Redouble,
+                _ => {
+                    let level = b[..1].parse().unwrap();
+                    match &b[1..] {
+                        "N" => Bid::NT(level),
+                        "C" => Bid::Suit(level, Suit::Clubs),
+                        "D" => Bid::Suit(level, Suit::Diamonds),
+                        "H" => Bid::Suit(level, Suit::Hearts),
+                        "S" => Bid::Suit(level, Suit::Spades),
+                        _ => panic!("unknown call {b:?}"),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Plays the declarer's problems of the file `PLAY_PUZZLES` by the model
+    /// of `PLAY_MODEL` (a model file or snapshot, see [`read_model`], or
+    /// `DIRECTORY@LEARNER@FROM@TO`, see [`averaged`]), in every seat, from the
+    /// problem's position, on `PLAY_PUZZLE_LAYOUTS` (200) layouts of the two
+    /// hidden hands that fit what the declarer sees (the sizes, the suits
+    /// shown out of, the auction's bounds and the lead), and on the problem's
+    /// own layout.  It reports the declarer's lines, as the first
+    /// `PLAY_PUZZLE_CARDS` (6) cards of the declarer and the dummy, how often
+    /// each was played, and the tricks and the chance of making with each,
+    /// so that the lines can be compared with the problem's answer.  With
+    /// `PLAY_PUZZLE_SEARCH` deals (0, none), the declarer instead chooses
+    /// each card by [`PlayoutPlay`](crate::PlayoutPlay) with the model and
+    /// that many deals.
+    ///
+    /// A problem is a block of `key: value` lines, blocks separated by a blank
+    /// line: `name`, `dealer` (N, E, S or W), `auction` (as in [`calls`]),
+    /// the hands `north`, `east`, `south` and `west` (as in
+    /// [`Cards::from_str`], such as `S A K 4 H 10 9`) and `played`, the cards
+    /// played so far in order (such as `SA S3 S4 S9`).  Other keys are
+    /// ignored.  The bidding is read by SAYC.
+    #[test]
+    #[ignore]
+    fn play_puzzles() {
+        use std::str::FromStr;
+        let spec = std::env::var("PLAY_MODEL").expect("PLAY_MODEL");
+        let model = match spec.split('@').collect::<Vec<_>>()[..] {
+            [directory, learner, from, to] => {
+                averaged(directory, learner.parse().unwrap(), from.parse().unwrap(), to.parse().unwrap()).2
+            }
+            _ => read_model(&spec),
+        };
+        let layouts = number("PLAY_PUZZLE_LAYOUTS", 200);
+        let depth = number("PLAY_PUZZLE_CARDS", 6);
+        let search = number("PLAY_PUZZLE_SEARCH", 0);
+        let text = std::fs::read_to_string(std::env::var("PLAY_PUZZLES").expect("PLAY_PUZZLES")).unwrap();
+        let card = |s: &str| {
+            let cards = Cards::from_str(s).unwrap();
+            assert_eq!(cards.len(), 1, "not one card: {s:?}");
+            cards.max().unwrap()
+        };
+        for block in text.split("\n\n").filter(|b| !b.trim().is_empty()) {
+            let field = |key: &str| {
+                block
+                    .lines()
+                    .find_map(|line| line.strip_prefix(&format!("{key}:")).map(|v| v.trim().to_string()))
+                    .unwrap_or_else(|| panic!("no {key} in {block}"))
+            };
+            let seat = |s: &str| match s {
+                "S" => Seat::South,
+                "W" => Seat::West,
+                "N" => Seat::North,
+                "E" => Seat::East,
+                _ => panic!("unknown seat {s:?}"),
+            };
+            let name = field("name");
+            let hand = |key: &str| Cards::from_str(&field(key)).unwrap();
+            let hands: Seated<Cards> = [hand("south"), hand("west"), hand("north"), hand("east")].into();
+            for s in hands.iter() {
+                assert_eq!(s.len(), 13, "{name}: a hand of {} cards", s.len());
+            }
+            assert_eq!(hands.iter().fold(Cards::EMPTY, |a, &h| a + h), Cards::ALL, "{name}: not a deal");
+            let mut game: GameState<()> = GameState::new();
+            game.set_system(crate::BiddingSystem::Sayc);
+            game.dealer = seat(&field("dealer"));
+            game.hands = hands;
+            game.original_hands = hands;
+            game.bids = calls(&field("auction"));
+            let declarer = game.find_declarer().expect("a contract");
+            let contract = game.bids.iter().rev().find(|b| matches!(b, Bid::Suit(..) | Bid::NT(_))).copied().unwrap();
+            let level = match contract {
+                Bid::Suit(level, _) | Bid::NT(level) => level,
+                _ => unreachable!(),
+            };
+            game.lead = Some(declarer.next());
+            for c in field("played").split_whitespace() {
+                let c = card(c);
+                assert!(game.could_be_played().contains(c), "{name}: {c} cannot be played");
+                game.play(c);
+            }
+            let convention = game.system.convention();
+            let dummy = game.dummy().unwrap();
+            let tricks_of = |g: &GameState<()>| if (declarer as usize).is_multiple_of(2) { g.ns_tricks } else { g.ew_tricks };
+            // Plays a layout to the end, and gives the declarer's line and tricks.
+            let text_of = |c: Card| format!("{}{}", ["C", "D", "H", "S"][c.suit() as usize], c.rankchar());
+            // Plays a layout to the end, and gives the declarer's line, every
+            // card played with its seat, and the declarer's tricks.
+            let play = |mut g: GameState<()>| {
+                use crate::ai::PlayAI;
+                let mut line = Vec::new();
+                let mut record = Vec::new();
+                let mut searcher =
+                    (search > 0).then(|| crate::PlayoutPlay::seeded(7).with_model(model.clone()).with_deals(search));
+                while !g.hand_done {
+                    let player = g.hand_playing().unwrap();
+                    let ours = player == declarer || player == dummy;
+                    let c = match &mut searcher {
+                        Some(searcher) if ours => searcher.play(&g),
+                        _ => model_card(&model, &g, &convention),
+                    };
+                    if ours && line.len() < depth {
+                        line.push(format!("{}{}", if player == dummy { "d" } else { "" }, text_of(c)));
+                    }
+                    record.push(format!("{}:{}", player.name(), text_of(c)));
+                    g.play(c);
+                }
+                (line.join(" "), record, tricks_of(&g))
+            };
+            let json = serde_json::to_string(&game).unwrap();
+            let copy = || -> GameState<()> { serde_json::from_str(&json).unwrap() };
+            let (own_line, own_record, own_tricks) = play(copy());
+            let hidden = Hidden::new(&game, &convention).unwrap();
+            let seats = hidden.seats();
+            let mut rng = StdRng::seed_from_u64(1);
+            let mut dealt = hidden.within_bounds(&mut rng, layouts);
+            // When the auction's bounds fit too few layouts, as when a player
+            // bid as SAYC would not, the rest only fit the play.
+            let fitting = dealt.deals.len();
+            while dealt.deals.len() < layouts {
+                dealt.deals.push(hidden.sample(&mut rng).unwrap().0);
+            }
+            let mut lines: Vec<(String, Vec<usize>)> = Vec::new();
+            for deal in &dealt.deals {
+                let mut g = copy();
+                for k in 0..2 {
+                    let played = game.original_hands[seats[k]] - game.hands[seats[k]];
+                    g.hands[seats[k]] = deal[k];
+                    g.original_hands[seats[k]] = deal[k] + played;
+                }
+                let (line, _, tricks) = play(g);
+                match lines.iter_mut().find(|(l, _)| *l == line) {
+                    Some((_, t)) => t.push(tricks),
+                    None => lines.push((line, vec![tricks])),
+                }
+            }
+            lines.sort_by_key(|(_, t)| std::cmp::Reverse(t.len()));
+            let needed = 6 + level;
+            let summary = |t: &[usize]| {
+                let n = t.len() as f64;
+                let made = t.iter().filter(|&&x| x >= needed).count() as f64;
+                format!("{:5.2} tricks, made {:3.0}%", t.iter().sum::<usize>() as f64 / n, 100.0 * made / n)
+            };
+            let all: Vec<usize> = lines.iter().flat_map(|(_, t)| t.iter().copied()).collect();
+            println!(
+                "{name}: {contract:?} by {declarer:?}, {} layouts ({fitting} fit the auction, of {} tried): {}",
+                all.len(),
+                dealt.tried,
+                summary(&all)
+            );
+            println!("    own layout: {own_line}: {own_tricks} tricks");
+            for trick in own_record.chunks(4) {
+                println!("        {}", trick.join(" "));
+            }
+            for (line, t) in &lines {
+                println!("    {:4} {line}: {}", t.len(), summary(t));
+            }
+        }
+    }
 }
